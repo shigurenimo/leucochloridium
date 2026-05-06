@@ -3,7 +3,11 @@ import {
   slackMessageEventSchema,
   slackReactionEventSchema,
 } from "@/channels/slack/slack-schemas"
-import type { SlackEvent, SlackMessageEvent, SlackReactionEvent } from "@/channels/slack/slack-types"
+import type {
+  SlackEvent,
+  SlackMessageEvent,
+  SlackReactionEvent,
+} from "@/channels/slack/slack-types"
 
 type Props = {
   botUserId: string | null

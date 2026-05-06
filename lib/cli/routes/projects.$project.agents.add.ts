@@ -57,7 +57,13 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
   })
   if (tomlPath instanceof Error) return c.text(`leuco: ${tomlPath.message}`, 400)
 
-  const nextAgent: Agent = { name: agentName, enabled: true, channels: [] }
+  const nextAgent: Agent = {
+    name: agentName,
+    enabled: true,
+    useCommonInstructions: true,
+    prompts: ["friendly"],
+    channels: [],
+  }
   const saved = store.save({ ...project, agents: [...project.agents, nextAgent] })
   if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 

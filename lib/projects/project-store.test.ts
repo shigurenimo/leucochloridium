@@ -13,6 +13,8 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
     {
       name: "reviewer",
       enabled: true,
+      useCommonInstructions: true,
+      prompts: ["friendly" as const],
       channels: [
         {
           id: "11111111-1111-4111-8111-111111111111",
@@ -71,6 +73,8 @@ describe("LeucoProjectStore", () => {
         {
           name: "reviewer",
           enabled: true,
+          useCommonInstructions: true,
+          prompts: ["friendly" as const],
           channels: [
             {
               id: "22222222-2222-4222-8222-222222222222",
@@ -129,10 +133,7 @@ describe("LeucoProjectStore", () => {
   it("returns Error when zod validation fails", () => {
     const path = store.getPaths().projectSettingsPath("demo")
     require("node:fs").mkdirSync(require("node:path").dirname(path), { recursive: true })
-    require("node:fs").writeFileSync(
-      path,
-      JSON.stringify({ name: "", path: "p", agents: [] }),
-    )
+    require("node:fs").writeFileSync(path, JSON.stringify({ name: "", path: "p", agents: [] }))
     expect(store.load("demo")).toBeInstanceOf(Error)
   })
 

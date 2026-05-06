@@ -1,5 +1,6 @@
 import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
+import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
@@ -21,6 +22,24 @@ type Props = {
   projectStore?: LeucoProjectStore
   codex: CodexClientPort
   plugins: ChannelPlugin[]
+  /**
+   * When true (default), prepend the dynamic leuco preamble (bot identity,
+   * loop avoidance, sub-agent paths) to the agent's developer instructions.
+   * When false, only `agentSpec.developerInstructions` is sent through.
+   */
+  useCommonInstructions?: boolean
+  /**
+   * Called every time a turn starts to gather the current list of project
+   * sub-agents. Injected so tests can provide a deterministic list without
+   * touching the filesystem. Result is folded into the dynamic preamble.
+   */
+  listSubagents?: () => SubagentEntry[]
+  /**
+   * Pre-resolved preset bodies (already looked up from
+   * `LeucoPromptPresets`). Spliced in between the dynamic preamble and the
+   * per-agent TOML text on every turn.
+   */
+  presets?: string[]
   onLog?: Logger
   bus?: LeucoEventBus
 }
@@ -51,6 +70,9 @@ export class LeucoTenant {
   private readonly log: Logger
   private readonly bus: LeucoEventBus
   private readonly projectStore: LeucoProjectStore | null
+  private readonly useCommonInstructions: boolean
+  private readonly listSubagents: () => SubagentEntry[]
+  private readonly presets: string[]
   private agentThreadId: string | null
   /** True once the agent thread is loaded into the running codex app-server. */
   private agentThreadLive = false
@@ -67,6 +89,9 @@ export class LeucoTenant {
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
     this.projectStore = props.projectStore ?? null
+    this.useCommonInstructions = props.useCommonInstructions ?? true
+    this.listSubagents = props.listSubagents ?? (() => [])
+    this.presets = props.presets ?? []
     this.agentThreadId = props.initialCodexThreadId ?? null
   }
 
@@ -190,11 +215,13 @@ export class LeucoTenant {
   private async ensureAgentThread(): Promise<string> {
     if (this.agentThreadId !== null && this.agentThreadLive) return this.agentThreadId
 
+    const developerInstructions = this.composeDeveloperInstructions()
+
     if (this.agentThreadId !== null) {
       const resumed = await this.codex.resumeThread({
         threadId: this.agentThreadId,
         cwd: this.projectPath,
-        developerInstructions: this.agentSpec.developerInstructions,
+        developerInstructions,
         excludeTurns: true,
       })
       if (resumed !== null) {
@@ -210,7 +237,7 @@ export class LeucoTenant {
 
     const result = await this.codex.startThread({
       cwd: this.projectPath,
-      developerInstructions: this.agentSpec.developerInstructions,
+      developerInstructions,
       model: this.agentSpec.model,
     })
     this.agentThreadId = result.thread.id
@@ -218,6 +245,27 @@ export class LeucoTenant {
     this.persistAgentThread()
     this.log(`[leuco] started codex thread ${this.agentThreadId} for ${this.key}`)
     return this.agentThreadId
+  }
+
+  private composeDeveloperInstructions(): string | undefined {
+    const tail = this.agentSpec.developerInstructions ?? null
+    const hasPresets = this.presets.length > 0
+
+    if (!this.useCommonInstructions && !hasPresets) {
+      return tail ?? undefined
+    }
+
+    const builder = new LeucoSystemPromptBuilder({
+      projectName: this.projectName,
+      projectPath: this.projectPath,
+      agentName: this.agentName,
+      identities: this.plugins.map((p) => p.getIdentity()),
+      subagents: this.listSubagents(),
+      presets: this.presets,
+      perAgentInstructions: tail,
+      usePreamble: this.useCommonInstructions,
+    })
+    return builder.build()
   }
 
   private persistAgentThread(): void {

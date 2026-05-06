@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import type { ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
+import type { SubagentEntry } from "@/engine/system-prompt-builder"
 import { LeucoTenant } from "@/engine/tenant"
 
 const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort => ({
@@ -13,7 +14,10 @@ const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort =>
   ...overrides,
 })
 
-const fakePlugin = (name: string): ChannelPlugin & { ctx: ChannelPluginContext | null } => {
+const fakePlugin = (
+  name: string,
+  identity?: Partial<ChannelIdentity>,
+): ChannelPlugin & { ctx: ChannelPluginContext | null } => {
   const plugin: ChannelPlugin & { ctx: ChannelPluginContext | null } = {
     name,
     ctx: null,
@@ -23,17 +27,31 @@ const fakePlugin = (name: string): ChannelPlugin & { ctx: ChannelPluginContext |
     async stop() {
       plugin.ctx = null
     },
+    getIdentity: () => ({ name, type: "slack", botUserId: null, ...identity }),
   }
   return plugin
 }
 
-const buildTenant = (overrides: { codex?: CodexClientPort; plugins?: ChannelPlugin[] } = {}) =>
+type BuildOverrides = {
+  codex?: CodexClientPort
+  plugins?: ChannelPlugin[]
+  agentSpec?: { developerInstructions?: string; model?: string }
+  useCommonInstructions?: boolean
+  listSubagents?: () => SubagentEntry[]
+  presets?: string[]
+}
+
+const buildTenant = (overrides: BuildOverrides = {}) =>
   new LeucoTenant({
     projectName: "demo",
     projectPath: "/tmp/demo",
     agentName: "default",
     codex: overrides.codex ?? fakeCodex(),
     plugins: overrides.plugins ?? [],
+    agentSpec: overrides.agentSpec,
+    useCommonInstructions: overrides.useCommonInstructions,
+    listSubagents: overrides.listSubagents,
+    presets: overrides.presets,
     onLog: () => {},
   })
 
@@ -191,5 +209,103 @@ describe("LeucoTenant introspection", () => {
   it("isCodexRunning delegates to the codex port", () => {
     const tenant = buildTenant({ codex: fakeCodex({ isRunning: () => false }) })
     expect(tenant.isCodexRunning()).toBe(false)
+  })
+})
+
+describe("LeucoTenant developer instructions", () => {
+  it("prepends the dynamic preamble by default and folds in identities + subagents", async () => {
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "t1" },
+    }))
+    const tenant = buildTenant({
+      codex: fakeCodex({ startThread }),
+      plugins: [fakePlugin("general", { botUserId: "U777" })],
+      agentSpec: { developerInstructions: "you are mochi" },
+      listSubagents: () => [{ name: "reviewer", path: "/tmp/demo/.codex/agents/reviewer.toml" }],
+    })
+
+    await tenant.runTextTurn("k", "hi")
+
+    const arg = startThread.mock.calls[0]?.[0]
+    if (arg === undefined) throw new Error("startThread was never called")
+    expect(arg.developerInstructions).toContain("# leuco built-in instructions")
+    expect(arg.developerInstructions).toContain("`U777`")
+    expect(arg.developerInstructions).toContain("/tmp/demo/.codex/agents/reviewer.toml")
+    expect(arg.developerInstructions).toContain("\n---\n\nyou are mochi")
+  })
+
+  it("passes the per-agent instructions verbatim when useCommonInstructions=false", async () => {
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "t1" },
+    }))
+    const tenant = buildTenant({
+      codex: fakeCodex({ startThread }),
+      plugins: [fakePlugin("general", { botUserId: "U777" })],
+      agentSpec: { developerInstructions: "raw instructions only" },
+      useCommonInstructions: false,
+    })
+
+    await tenant.runTextTurn("k", "hi")
+
+    const arg = startThread.mock.calls[0]?.[0]
+    if (arg === undefined) throw new Error("startThread was never called")
+    expect(arg.developerInstructions).toBe("raw instructions only")
+  })
+
+  it("omits developer instructions entirely when neither preamble nor per-agent text is configured", async () => {
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "t1" },
+    }))
+    const tenant = buildTenant({
+      codex: fakeCodex({ startThread }),
+      useCommonInstructions: false,
+    })
+
+    await tenant.runTextTurn("k", "hi")
+
+    const arg = startThread.mock.calls[0]?.[0]
+    if (arg === undefined) throw new Error("startThread was never called")
+    expect(arg.developerInstructions).toBeUndefined()
+  })
+
+  it("splices configured presets between the preamble and the per-agent tail", async () => {
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "t1" },
+    }))
+    const tenant = buildTenant({
+      codex: fakeCodex({ startThread }),
+      agentSpec: { developerInstructions: "you are mochi" },
+      presets: ["# Friendly\nbe warm"],
+    })
+
+    await tenant.runTextTurn("k", "hi")
+
+    const arg = startThread.mock.calls[0]?.[0]
+    if (arg === undefined) throw new Error("startThread was never called")
+    const out = arg.developerInstructions ?? ""
+    const preambleAt = out.indexOf("# leuco built-in instructions")
+    const presetAt = out.indexOf("# Friendly")
+    const tailAt = out.indexOf("you are mochi")
+    expect(preambleAt).toBeGreaterThanOrEqual(0)
+    expect(preambleAt).toBeLessThan(presetAt)
+    expect(presetAt).toBeLessThan(tailAt)
+  })
+
+  it("emits presets only (no preamble) when useCommonInstructions=false but presets are set", async () => {
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "t1" },
+    }))
+    const tenant = buildTenant({
+      codex: fakeCodex({ startThread }),
+      useCommonInstructions: false,
+      presets: ["# Friendly\nbe warm"],
+      agentSpec: { developerInstructions: "tail" },
+    })
+
+    await tenant.runTextTurn("k", "hi")
+
+    const arg = startThread.mock.calls[0]?.[0]
+    if (arg === undefined) throw new Error("startThread was never called")
+    expect(arg.developerInstructions).toBe("# Friendly\nbe warm\n\n---\n\ntail")
   })
 })

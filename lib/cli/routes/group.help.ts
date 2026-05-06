@@ -23,14 +23,20 @@ usage:
   leuco projects <p> agents <a> start                 enable an agent (daemon reload)
   leuco projects <p> agents <a> stop                  disable an agent (daemon reload, memories preserved)
   leuco projects <p> agents <a> restart               rebuild this agent's tenant to pick up persona / token / ack changes
+  leuco projects <p> agents <a> reset                  drop the codex thread id (codex memories preserved)
 
-  leuco projects <p> agents <a> channels list                  list channels under <a>
-  leuco projects <p> agents <a> channels add slack             register a slack channel under <a>
-  leuco projects <p> agents <a> channels <c> remove            remove a channel
-  leuco projects <p> agents <a> channels <c> rename <new>      rename a channel
-  leuco projects <p> agents <a> channels <c> start             enable a channel
-  leuco projects <p> agents <a> channels <c> stop              disable a channel
-  leuco projects <p> agents <a> channels <c> restart           rebuild the parent tenant to pick up channel changes
+  leuco projects <p> agents <a> channels list                          list channels under <a>
+  leuco projects <p> agents <a> channels add slack                     register a slack channel under <a>
+  leuco projects <p> agents <a> channels <c> remove                    remove a channel
+  leuco projects <p> agents <a> channels <c> rename <new>              rename a channel
+  leuco projects <p> agents <a> channels <c> start                     enable a channel
+  leuco projects <p> agents <a> channels <c> stop                      disable a channel
+  leuco projects <p> agents <a> channels <c> restart                   rebuild the parent tenant
+  leuco projects <p> agents <a> channels <c> set-tokens                update Slack bot / app tokens (\`-\` reads one from stdin)
+
+  leuco config list                                            print every key in ~/.leuco/settings.json
+  leuco config get <key>                                       print one key
+  leuco config set <key> <value>                               write one key
 
   leuco slack call <method> --project <p> --agent <a> [--body '<json>'] [--channel <c>]
                                                               forward a Slack Web API call (same surface as the MCP slack_call tool)
@@ -40,9 +46,10 @@ cwd shortcut: when invoked from inside a registered project's path, you can drop
 \`projects <p>\` prefix — \`leuco agents list\` works as \`leuco projects <p> agents list\`.
 
 Layout:
-  daemon:  ~/.leuco/daemon/{pid,log}                      (machine-wide, single process)
-  project: ~/.leuco/projects/<p>/settings.json            (chmod 600, registration + tokens)
-  codex:   ~/.leuco/projects/<p>/agents/<a>/home/         (CODEX_HOME, memories)
+  daemon:   ~/.leuco/daemon/{pid,log}                     (machine-wide, single process)
+  global:   ~/.leuco/settings.json                        (machine-wide; \`leuco config set\`)
+  project:  ~/.leuco/projects/<p>/settings.json           (chmod 600, registration + tokens)
+  codex:    ~/.leuco/projects/<p>/agents/<a>/home/        (CODEX_HOME, memories)
 
 env (optional):
   LEUCO_CODEX_BIN                  codex binary path (default: "codex")

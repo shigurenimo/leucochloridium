@@ -48,15 +48,7 @@ describe("toRequest", () => {
   })
 
   it("expands the full /projects/<p>/agents/<a>/channels/<name>/<leaf>", () => {
-    const r = toRequest([
-      "projects",
-      "p",
-      "agents",
-      "reviewer",
-      "channels",
-      "main",
-      "remove",
-    ])
+    const r = toRequest(["projects", "p", "agents", "reviewer", "channels", "main", "remove"])
     expect(r.path).toBe("/projects/p/agents/reviewer/channels/main/remove")
     expect(r.parsed.args).toEqual([])
   })

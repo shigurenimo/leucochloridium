@@ -1,9 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js"
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import { findAgent } from "@/cli/utils/lookup-config"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -39,7 +36,7 @@ const TOOL_INPUT_SCHEMA = {
     channel_name: {
       type: "string",
       description:
-        'Optional leuco-side channel identifier when the agent has multiple slack channels. Defaults to the first enabled one.',
+        "Optional leuco-side channel identifier when the agent has multiple slack channels. Defaults to the first enabled one.",
     },
   },
 }
@@ -66,6 +63,11 @@ export const startMcpServer = async (props: Props): Promise<void> => {
         name: TOOL_NAME,
         description: TOOL_DESCRIPTION,
         inputSchema: TOOL_INPUT_SCHEMA,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          openWorldHint: true,
+        },
       },
     ],
   }))

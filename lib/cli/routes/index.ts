@@ -1,5 +1,9 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
+import { configGetHandler } from "@/cli/routes/config.get"
+import { help as configHelp } from "@/cli/routes/config.help"
+import { configListHandler } from "@/cli/routes/config.list"
+import { configSetHandler } from "@/cli/routes/config.set"
 import { help as groupHelp } from "@/cli/routes/group.help"
 import { logsHandler } from "@/cli/routes/logs"
 import { projectsAddHandler } from "@/cli/routes/projects.add"
@@ -17,11 +21,13 @@ import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.agents
 import { channelsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.remove"
 import { agentsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.remove"
 import { agentsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.rename"
+import { agentsResetHandler } from "@/cli/routes/projects.$project.agents.$agent.reset"
 import { agentsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.restart"
 import { agentsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.start"
 import { agentsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.stop"
 import { channelsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.rename"
 import { channelsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.restart"
+import { channelsSetTokensHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.set-tokens"
 import { channelsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.start"
 import { channelsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.stop"
 import { help as projectsNamedHelp } from "@/cli/routes/projects.$project.help"
@@ -91,6 +97,7 @@ export const app = base
   .post("/projects/:project/agents/:agent/start", ...agentsStartHandler)
   .post("/projects/:project/agents/:agent/stop", ...agentsStopHandler)
   .post("/projects/:project/agents/:agent/restart", ...agentsRestartHandler)
+  .post("/projects/:project/agents/:agent/reset", ...agentsResetHandler)
 
   .post("/projects/:project/agents/:agent/channels", ...groupHelpHandler(channelsHelp))
   .post("/projects/:project/agents/:agent/channels/list", ...channelsListHandler)
@@ -103,10 +110,16 @@ export const app = base
   .post("/projects/:project/agents/:agent/channels/:channel/rename", ...channelsRenameHandler)
   .post("/projects/:project/agents/:agent/channels/:channel/start", ...channelsStartHandler)
   .post("/projects/:project/agents/:agent/channels/:channel/stop", ...channelsStopHandler)
+  .post("/projects/:project/agents/:agent/channels/:channel/restart", ...channelsRestartHandler)
   .post(
-    "/projects/:project/agents/:agent/channels/:channel/restart",
-    ...channelsRestartHandler,
+    "/projects/:project/agents/:agent/channels/:channel/set-tokens",
+    ...channelsSetTokensHandler,
   )
 
   .post("/slack", ...groupHelpHandler(slackHelp))
   .post("/slack/call", ...slackCallHandler)
+
+  .post("/config", ...groupHelpHandler(configHelp))
+  .post("/config/list", ...configListHandler)
+  .post("/config/get", ...configGetHandler)
+  .post("/config/set", ...configSetHandler)

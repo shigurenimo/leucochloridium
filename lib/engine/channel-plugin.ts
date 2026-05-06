@@ -12,9 +12,21 @@ export type ChannelPluginContext = {
   agentName: string
 }
 
+/**
+ * Plugin self-description used by the system prompt builder. `botUserId` is
+ * null until the plugin's underlying transport is connected (e.g. before the
+ * Slack listener finishes `auth.test`).
+ */
+export type ChannelIdentity = {
+  name: string
+  type: "slack"
+  botUserId: string | null
+}
+
 export type ChannelPlugin = {
   /** Stable identifier — matches `settings.channels[].name`. */
   readonly name: string
   start(ctx: ChannelPluginContext): Promise<void>
   stop(): Promise<void>
+  getIdentity(): ChannelIdentity
 }

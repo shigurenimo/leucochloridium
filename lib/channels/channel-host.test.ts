@@ -3,11 +3,7 @@ import { LeucoChannelHost } from "@/channels/channel-host"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import type { Agent, Channel } from "@/config/config-schema"
 
-const slackChannel = (
-  name: string,
-  botToken = "xoxb-1",
-  appToken = "xapp-1",
-): Channel => ({
+const slackChannel = (name: string, botToken = "xoxb-1", appToken = "xapp-1"): Channel => ({
   id: "11111111-1111-4111-8111-111111111111",
   name,
   type: "slack",
@@ -25,6 +21,8 @@ const slackChannel = (
 const agent = (channels: Agent["channels"]): Agent => ({
   name: "default",
   enabled: true,
+  useCommonInstructions: true,
+  prompts: ["friendly"],
   channels,
 })
 

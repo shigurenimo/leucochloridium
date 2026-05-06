@@ -13,11 +13,7 @@ export const findAgent = (project: Project, name: string): Agent | Error => {
   return agent
 }
 
-export const findChannel = (
-  agent: Agent,
-  projectName: string,
-  name: string,
-): Channel | Error => {
+export const findChannel = (agent: Agent, projectName: string, name: string): Channel | Error => {
   const channel = agent.channels.find((ch) => ch.name === name)
   if (!channel) {
     return new Error(`channel '${name}' not found in ${projectName}/${agent.name}`)

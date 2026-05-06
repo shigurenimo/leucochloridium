@@ -34,16 +34,16 @@ TUI.
 
 ## Commands
 
-| command | what it does |
-| --- | --- |
-| `leuco` | open TUI when running, otherwise start the daemon |
-| `leuco start` | start the daemon in background |
-| `leuco run` | run in foreground (debug; logs to stdout) |
-| `leuco stop` | stop the daemon |
-| `leuco restart` | stop + start |
-| `leuco status` | daemon + per-project state |
-| `leuco logs [-f]` | print daemon log (`-f` to follow) |
-| `leuco tui` | force-open the live event viewer |
+| command                  | what it does                                                             |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `leuco`                  | open TUI when running, otherwise start the daemon                        |
+| `leuco start`            | start the daemon in background                                           |
+| `leuco run`              | run in foreground (debug; logs to stdout)                                |
+| `leuco stop`             | stop the daemon                                                          |
+| `leuco restart`          | stop + start                                                             |
+| `leuco status`           | daemon + per-project state                                               |
+| `leuco logs [-f]`        | print daemon log (`-f` to follow)                                        |
+| `leuco tui`              | force-open the live event viewer                                         |
 | `leuco update [--check]` | install the latest published leuco (`--check` only reports the registry) |
 
 Project / agent / channel management:
@@ -129,11 +129,11 @@ Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per
 
 ## Environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `LEUCO_CODEX_BIN` | Codex binary path (default: `codex`) |
-| `LEUCO_PORT` | HTTP gateway port for IPC (default: off; e.g. `9743`) |
-| `LEUCO_CWD` | Override Codex working directory (default: project path) |
+| Variable          | Purpose                                                  |
+| ----------------- | -------------------------------------------------------- |
+| `LEUCO_CODEX_BIN` | Codex binary path (default: `codex`)                     |
+| `LEUCO_PORT`      | HTTP gateway port for IPC (default: off; e.g. `9743`)    |
+| `LEUCO_CWD`       | Override Codex working directory (default: project path) |
 
 `.env.local` and `.env` are read from the cwd at CLI invocation. Existing
 process env wins over the files.

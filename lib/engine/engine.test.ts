@@ -105,7 +105,13 @@ describe("LeucoEngine.reconcile", () => {
     path: `/tmp/${name}`,
     agents,
   })
-  const agent = (name: string, enabled = true): Agent => ({ name, enabled, channels: [] })
+  const agent = (name: string, enabled = true): Agent => ({
+    name,
+    enabled,
+    useCommonInstructions: true,
+    prompts: ["friendly"],
+    channels: [],
+  })
 
   it("stops tenants whose agent has been disabled", async () => {
     const stops: string[] = []
@@ -181,7 +187,11 @@ describe("LeucoEngine.reconcile", () => {
 
 describe("LeucoEngine introspection", () => {
   it("listThreads exposes the agent's single codex thread once a turn has run", async () => {
-    const a = buildTenant("demo", "a", fakeCodex({ startThread: async () => ({ thread: { id: "tA" } }) }))
+    const a = buildTenant(
+      "demo",
+      "a",
+      fakeCodex({ startThread: async () => ({ thread: { id: "tA" } }) }),
+    )
     await a.runTextTurn("k1", "x")
 
     const engine = new LeucoEngine({
@@ -201,8 +211,20 @@ describe("LeucoEngine introspection", () => {
         name: "demo",
         path: "/tmp/demo",
         agents: [
-          { name: "a", enabled: true, channels: [] },
-          { name: "b", enabled: false, channels: [] },
+          {
+            name: "a",
+            enabled: true,
+            useCommonInstructions: true,
+            prompts: ["friendly" as const],
+            channels: [],
+          },
+          {
+            name: "b",
+            enabled: false,
+            useCommonInstructions: true,
+            prompts: ["friendly" as const],
+            channels: [],
+          },
         ],
       },
     ]

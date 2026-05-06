@@ -1,25 +1,25 @@
 {
   "name": "leuco",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "Self-hosted multi-tenant gateway that runs the Codex app-server as a Slack bot. Bun-only.",
+  "keywords": [
+    "bot",
+    "bun",
+    "codex",
+    "gateway",
+    "mcp",
+    "slack",
+    "tui"
+  ],
+  "homepage": "https://github.com/shigurenimo/leuco#readme",
+  "bugs": {
+    "url": "https://github.com/shigurenimo/leuco/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shigurenimo/leuco.git"
   },
-  "homepage": "https://github.com/shigurenimo/leuco#readme",
-  "bugs": {
-    "url": "https://github.com/shigurenimo/leuco/issues"
-  },
-  "keywords": [
-    "codex",
-    "slack",
-    "bot",
-    "gateway",
-    "mcp",
-    "bun",
-    "tui"
-  ],
   "bin": {
     "leuco": "./lib/index.ts"
   },

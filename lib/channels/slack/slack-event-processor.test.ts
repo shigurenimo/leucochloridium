@@ -31,13 +31,12 @@ const expectMessage = (
   result: ReturnType<LeucoSlackEventProcessor["processMessage"]>,
 ): Extract<typeof result, { skip: false }>["event"] & { kind: "message" } => {
   if (result.skip) throw new Error(`expected emit, got skip: ${result.reason}`)
-  if (result.event.kind !== "message") throw new Error(`expected message event, got ${result.event.kind}`)
+  if (result.event.kind !== "message")
+    throw new Error(`expected message event, got ${result.event.kind}`)
   return result.event
 }
 
-const expectReaction = (
-  result: ReturnType<LeucoSlackEventProcessor["processReaction"]>,
-) => {
+const expectReaction = (result: ReturnType<LeucoSlackEventProcessor["processReaction"]>) => {
   if (result.skip) throw new Error(`expected emit, got skip: ${result.reason}`)
   if (result.event.kind === "message") throw new Error("expected reaction event, got message")
   return result.event

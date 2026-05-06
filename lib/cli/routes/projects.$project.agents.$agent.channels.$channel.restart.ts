@@ -44,9 +44,7 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
       a.name === agentName
         ? {
             ...a,
-            channels: a.channels.map((ch) =>
-              ch.name === channelName ? { ...ch, enabled } : ch,
-            ),
+            channels: a.channels.map((ch) => (ch.name === channelName ? { ...ch, enabled } : ch)),
           }
         : a,
     ),
@@ -64,7 +62,5 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
 
   const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
-  return c.text(
-    `restarted channel ${projectName}/${agentName}/${channelName}${tail} ${reloadMsg}`,
-  )
+  return c.text(`restarted channel ${projectName}/${agentName}/${channelName}${tail} ${reloadMsg}`)
 })

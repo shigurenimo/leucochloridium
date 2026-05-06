@@ -1,4 +1,12 @@
-import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { LeucoChannelHost } from "@/channels/channel-host"
@@ -6,6 +14,7 @@ import type { Agent, Project } from "@/config/config-schema"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { LeucoEngine } from "@/engine/engine"
+import { LeucoPromptPresets } from "@/engine/prompt-presets"
 import { LeucoTenant, type TenantAgentSpec } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { LeucoPaths } from "@/paths/leuco-paths"
@@ -198,6 +207,14 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     model: spec.model ?? undefined,
   }
 
+  const listSubagents = () =>
+    tomlStore
+      .list("project")
+      .filter((entry) => entry.name !== props.agent.name)
+      .map((entry) => ({ name: entry.name, path: entry.path }))
+
+  const presets = LeucoPromptPresets.resolveAll(props.agent.prompts)
+
   return new LeucoTenant({
     projectName: props.project.name,
     projectPath: props.project.path,
@@ -209,6 +226,9 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     bus: props.bus,
     initialCodexThreadId: props.agent.codexThreadId,
     projectStore: props.projectStore,
+    useCommonInstructions: props.agent.useCommonInstructions,
+    listSubagents,
+    presets,
   })
 }
 
@@ -219,10 +239,14 @@ const ensureCodexHome = (paths: LeucoPaths, projectName: string, agentName: stri
 }
 
 /**
- * Write the tenant's CODEX_HOME `config.toml`. Two things go in here:
+ * Write the tenant's CODEX_HOME `config.toml`. Three things go in here:
  *   1. project trust (so codex loads the repo's `.codex/`)
  *   2. an `mcp_servers.leuco` entry so codex can call the leuco MCP tool
- *      surface (`slack_call` etc.) scoped to this exact (project, agent).
+ *      surface (`slack_call` etc.) scoped to this exact (project, agent)
+ *   3. an `approval_mode = "approve"` override on `slack_call` so codex
+ *      auto-approves Slack writes instead of stalling on a prompt no one
+ *      can answer (the daemon has no terminal). Other tools and the global
+ *      approval policy are untouched.
  */
 const ensureTenantConfigToml = (
   codexHome: string,
@@ -236,6 +260,9 @@ const ensureTenantConfigToml = (
     `[mcp_servers.leuco]`,
     `command = "leuco"`,
     `args = ["mcp", "--project", ${tomlKeyString(tenant.projectName)}, "--agent", ${tomlKeyString(tenant.agentName)}]`,
+    "",
+    `[mcp_servers.leuco.tools.slack_call]`,
+    `approval_mode = "approve"`,
     "",
   ]
   writeFileSync(path, lines.join("\n"))

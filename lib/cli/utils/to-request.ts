@@ -8,8 +8,18 @@ const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", 
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const AGENT_LEAFS = new Set(["list", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
-const NAMED_LEAFS = new Set(["remove", "show", "rename", "start", "stop", "restart"])
+const NAMED_LEAFS = new Set([
+  "remove",
+  "show",
+  "rename",
+  "start",
+  "stop",
+  "restart",
+  "reset",
+  "set-tokens",
+])
 const SLACK_LEAFS = new Set(["call"])
+const CONFIG_LEAFS = new Set(["list", "get", "set"])
 
 type Stage =
   | "top"
@@ -20,6 +30,7 @@ type Stage =
   | "channels"
   | "named-channel"
   | "slack"
+  | "config"
   | "done"
 
 export type CliRequestBody = {
@@ -47,9 +58,10 @@ export type CliRequest = {
  *   leuco projects <name> agents <name> channels <chan-leaf>  → /projects/<name>/agents/<name>/channels/<leaf>
  *   leuco projects <name> agents <name> channels <name> <named-leaf>
  *
- * `top-leafs`: run | start | stop | restart | status | logs
+ * `top-leafs`: run | start | stop | restart | status | logs | tui | update
  * `project-leafs` / `agent-leafs` / `channel-leafs`: list | create | add
- * `named-leafs` (after a name): remove | show
+ * `config-leafs`: list | get | set
+ * `named-leafs` (after a name): remove | show | rename | start | stop | restart | reset | set-tokens
  *
  * Anything past the recognised leaf becomes positional `args`. `--key value`
  * and bare `--flag` populate `flags`; single-letter `-x` expands via SHORT_FLAGS.
@@ -125,11 +137,17 @@ const step = (stage: Stage, arg: string): StepDecision => {
     if (TOP_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     if (arg === "projects") return { kind: "segment", next: "projects" }
     if (arg === "slack") return { kind: "segment", next: "slack" }
+    if (arg === "config") return { kind: "segment", next: "config" }
     return { kind: "segment", next: "done" }
   }
 
   if (stage === "slack") {
     if (SLACK_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "config") {
+    if (CONFIG_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     return { kind: "positional" }
   }
 

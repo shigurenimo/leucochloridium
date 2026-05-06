@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 type Props = {
@@ -89,7 +90,34 @@ export class LeucoDaemon {
     writeFileSync(status.pidPath, `${child.pid}\n`)
     child.unref()
 
+    this.maybeKeepAwake(child.pid)
+
     return { pid: child.pid, logPath: status.logPath }
+  }
+
+  /**
+   * macOS only: spawn `caffeinate -i -w <pid>` so the system stays awake while
+   * the daemon runs, then exits as soon as the daemon does. The daemon's own
+   * pid is unchanged — caffeinate is a sidecar, not a wrapper. Disabled when
+   * `~/.leuco/settings.json#keepAwake` is false. Failure is non-fatal.
+   */
+  private maybeKeepAwake(daemonPid: number): void {
+    if (process.platform !== "darwin") return
+
+    const settings = new LeucoGlobalSettingsStore({ paths: this.paths }).load()
+    if (settings instanceof Error) return
+    if (!settings.keepAwake) return
+
+    try {
+      const caf = spawn("caffeinate", ["-i", "-w", String(daemonPid)], {
+        stdio: "ignore",
+        detached: true,
+      })
+      caf.on("error", () => {})
+      caf.unref()
+    } catch {
+      // caffeinate not on PATH; fall through silently
+    }
   }
 
   stop(): DaemonStopResult {

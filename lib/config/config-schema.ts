@@ -1,11 +1,9 @@
 import { z } from "zod"
+import { PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
-const safeName = z
-  .string()
-  .min(1)
-  .regex(NAME_PATTERN, "must match ^[a-z][a-z0-9_-]*$")
+const safeName = z.string().min(1).regex(NAME_PATTERN, "must match ^[a-z][a-z0-9_-]*$")
 
 const ackIconsSchema = z
   .object({
@@ -50,6 +48,21 @@ const agentSchema = z.object({
    * Absent until the first turn fires.
    */
   codexThreadId: z.string().min(1).optional(),
+  /**
+   * When true (default) leuco prepends a built-in dynamic preamble to the
+   * agent's `developer_instructions` covering the bot's own Slack identity,
+   * loop avoidance, sub-agent paths, and self-edit guidance. Set to false to
+   * pass the per-agent TOML instructions through verbatim.
+   */
+  useCommonInstructions: z.boolean().default(true),
+  /**
+   * Named system-prompt presets to splice in between the dynamic preamble and
+   * the per-agent TOML text. Names are validated against the registered set
+   * in `lib/engine/prompt-presets.ts`. Defaults to `["friendly"]` so a fresh
+   * agent has a usable Slack persona without extra configuration; pass an
+   * empty array to opt out.
+   */
+  prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
   channels: z.array(channelSchema).default([]),
 })
 

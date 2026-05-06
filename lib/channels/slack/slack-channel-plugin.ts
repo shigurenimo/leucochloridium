@@ -1,11 +1,7 @@
 import { LeucoSlackAdapter } from "@/channels/slack/slack-adapter"
 import { LeucoSlackListener } from "@/channels/slack/slack-listener"
-import type {
-  SlackEvent,
-  SlackMessageEvent,
-  SlackReactionEvent,
-} from "@/channels/slack/slack-types"
-import type { ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
+import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import { errorMessage } from "@/error-message"
 
 export type SlackAckMode = "off" | "mention" | "always"
@@ -34,10 +30,11 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
 
 /**
  * Bridges a single Slack workspace to the engine. Forwards every accepted
- * event (no mention gating, no thread-active state, including reactions) to
- * the agent through `ctx.runTextTurn`, wrapped in a structured envelope so
- * the agent has the metadata it needs to decide whether to reply. If the
- * agent returns empty text, the plugin posts nothing.
+ * `message` event (no mention gating, no thread-active state) to the agent
+ * through `ctx.runTextTurn`, wrapped in a structured envelope so the agent
+ * has the metadata it needs to decide whether to reply. If the agent returns
+ * empty text, the plugin posts nothing. Reactions are emitted to the bus for
+ * telemetry only and never trigger an agent turn — see `handleEvent`.
  */
 export class LeucoSlackChannelPlugin implements ChannelPlugin {
   readonly name: string
@@ -67,7 +64,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const started = await this.listener.start()
     this.botUserId = started.botUserId
     const who = started.botUserId ? `<@${started.botUserId}>` : "(bot)"
-    ctx.onLog(`[${this.name}] ready — forwarding all events to agent (bot=${who})`)
+    ctx.onLog(`[${this.name}] ready — forwarding messages to agent (bot=${who})`)
   }
 
   async stop(): Promise<void> {
@@ -75,6 +72,11 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     this.listener = null
     this.adapter = null
     this.ctx = null
+    this.botUserId = null
+  }
+
+  getIdentity(): ChannelIdentity {
+    return { name: this.name, type: "slack", botUserId: this.botUserId }
   }
 
   private async handleEvent(event: SlackEvent): Promise<void> {
@@ -90,11 +92,12 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       })
     }
 
-    if (event.kind === "message") {
-      await this.handleMessage(event)
-      return
-    }
-    await this.handleReaction(event)
+    // Reactions (including the bot's own ack hourglass / checkmark) are
+    // surfaced to the bus for telemetry only — never to a codex turn. Letting
+    // them through would loop the agent on every ack it just placed.
+    if (event.kind !== "message") return
+
+    await this.handleMessage(event)
   }
 
   private async handleMessage(msg: SlackMessageEvent): Promise<void> {
@@ -143,31 +146,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     if (mode === "always") return true
     return msg.mentioned
   }
-
-  private async handleReaction(event: SlackReactionEvent): Promise<void> {
-    const ctx = this.ctx
-    const adapter = this.adapter
-    if (!ctx || !adapter) return
-
-    // Reactions go into a dedicated codex turn keyed off the reacted-to
-    // message so the agent can correlate them. We do not try to surface a
-    // visible Slack reply unless the agent explicitly produces text.
-    const threadKey = `${this.name}:${event.channel}:reaction:${event.targetTs}`
-
-    try {
-      const reply = await ctx.runTextTurn(threadKey, formatReactionInput(this.name, event, this.botUserId))
-      const text = reply.trim()
-      if (text.length === 0) return
-
-      await adapter.postReply({
-        channel: event.channel,
-        threadTs: event.targetTs,
-        text,
-      })
-    } catch (err) {
-      ctx.onLog(`[${this.name}] reaction turn failed: ${errorMessage(err)}`)
-    }
-  }
 }
 
 const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string => {
@@ -175,16 +153,5 @@ const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string
     `<slack-event channel-config="${channelName}" channel="${msg.channel}" user="${msg.user}" ts="${msg.ts}" thread_ts="${msg.threadTs}" mentioned="${msg.mentioned}" source="${msg.source}">`,
     msg.text,
     `</slack-event>`,
-  ].join("\n")
-}
-
-const formatReactionInput = (
-  channelName: string,
-  event: SlackReactionEvent,
-  botUserId: string | null,
-): string => {
-  const onBotMessage = botUserId !== null && event.targetUser === botUserId
-  return [
-    `<slack-${event.kind} channel-config="${channelName}" channel="${event.channel}" user="${event.user}" emoji="${event.emoji}" target_ts="${event.targetTs}" target_user="${event.targetUser ?? ""}" on_bot_message="${onBotMessage}" />`,
   ].join("\n")
 }
