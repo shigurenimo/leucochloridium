@@ -36,7 +36,24 @@ export const updateHandler = factory.createHandlers(async (c) => {
   if (code !== 0) {
     return c.text(`leuco: bun add -g leuco@${latest} exited with ${code}`, 500)
   }
-  return c.text(`[leuco] updated to ${latest}`)
+
+  // bun add only swaps files in node_modules — the running daemon is still on
+  // old code in memory. Restart it so the freshly installed bin is loaded.
+  const daemon = c.var.daemon
+  const wasRunning = daemon.status().pid !== null
+  if (!wasRunning) {
+    return c.text(`[leuco] updated to ${latest} (daemon not running)`)
+  }
+
+  daemon.stop()
+  const started = daemon.start({ binPath: c.var.binPath, env: process.env })
+  if (started instanceof Error) {
+    return c.text(
+      `[leuco] updated to ${latest}, but daemon restart failed: ${started.message}`,
+      500,
+    )
+  }
+  return c.text(`[leuco] updated to ${latest} — daemon restarted (pid ${started.pid})`)
 })
 
 const fetchLatestVersion = async (): Promise<string | Error> => {
