@@ -38,6 +38,10 @@ usage:
   leuco config get <key>                                       print one key
   leuco config set <key> <value>                               write one key
 
+  leuco boot install                                           macOS only: install LaunchAgent so the daemon starts at login
+  leuco boot uninstall                                         remove the LaunchAgent
+  leuco boot status                                            show LaunchAgent install + load state
+
   leuco slack call <method> --project <p> --agent <a> [--body '<json>'] [--channel <c>]
                                                               forward a Slack Web API call (same surface as the MCP slack_call tool)
   leuco mcp --project <p> --agent <a>                          stdio MCP server (spawned by codex; not for direct use)

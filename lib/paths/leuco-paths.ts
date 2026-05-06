@@ -89,4 +89,14 @@ export class LeucoPaths {
   agentHome(projectName: string, agentName: string): string {
     return join(this.agentDir(projectName, agentName), "home")
   }
+
+  /** macOS LaunchAgents directory under the user's Library. */
+  launchAgentsDir(): string {
+    return join(this.home, "Library", "LaunchAgents")
+  }
+
+  /** macOS launchd plist that auto-starts the daemon at login. */
+  launchAgentPlistPath(): string {
+    return join(this.launchAgentsDir(), "io.leuco.daemon.plist")
+  }
 }

@@ -20,6 +20,7 @@ const NAMED_LEAFS = new Set([
 ])
 const SLACK_LEAFS = new Set(["call"])
 const CONFIG_LEAFS = new Set(["list", "get", "set"])
+const BOOT_LEAFS = new Set(["install", "uninstall", "status"])
 
 type Stage =
   | "top"
@@ -31,6 +32,7 @@ type Stage =
   | "named-channel"
   | "slack"
   | "config"
+  | "boot"
   | "done"
 
 export type CliRequestBody = {
@@ -61,6 +63,7 @@ export type CliRequest = {
  * `top-leafs`: run | start | stop | restart | status | logs | tui | update
  * `project-leafs` / `agent-leafs` / `channel-leafs`: list | create | add
  * `config-leafs`: list | get | set
+ * `boot-leafs`: install | uninstall | status
  * `named-leafs` (after a name): remove | show | rename | start | stop | restart | reset | set-tokens
  *
  * Anything past the recognised leaf becomes positional `args`. `--key value`
@@ -138,7 +141,13 @@ const step = (stage: Stage, arg: string): StepDecision => {
     if (arg === "projects") return { kind: "segment", next: "projects" }
     if (arg === "slack") return { kind: "segment", next: "slack" }
     if (arg === "config") return { kind: "segment", next: "config" }
+    if (arg === "boot") return { kind: "segment", next: "boot" }
     return { kind: "segment", next: "done" }
+  }
+
+  if (stage === "boot") {
+    if (BOOT_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
   }
 
   if (stage === "slack") {

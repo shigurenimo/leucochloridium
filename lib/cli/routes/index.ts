@@ -1,5 +1,9 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
+import { bootInstallHandler } from "@/cli/routes/boot.install"
+import { help as bootHelp } from "@/cli/routes/boot.help"
+import { bootStatusHandler } from "@/cli/routes/boot.status"
+import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
 import { configGetHandler } from "@/cli/routes/config.get"
 import { help as configHelp } from "@/cli/routes/config.help"
 import { configListHandler } from "@/cli/routes/config.list"
@@ -123,3 +127,8 @@ export const app = base
   .post("/config/list", ...configListHandler)
   .post("/config/get", ...configGetHandler)
   .post("/config/set", ...configSetHandler)
+
+  .post("/boot", ...groupHelpHandler(bootHelp))
+  .post("/boot/install", ...bootInstallHandler)
+  .post("/boot/uninstall", ...bootUninstallHandler)
+  .post("/boot/status", ...bootStatusHandler)

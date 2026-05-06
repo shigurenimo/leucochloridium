@@ -80,6 +80,12 @@ describe("toRequest", () => {
     expect(r.parsed.args).toEqual(["extra"])
   })
 
+  it("expands /boot/<leaf>", () => {
+    expect(toRequest(["boot", "install"]).path).toBe("/boot/install")
+    expect(toRequest(["boot", "uninstall"]).path).toBe("/boot/uninstall")
+    expect(toRequest(["boot", "status"]).path).toBe("/boot/status")
+  })
+
   it("collects --key value flags interspersed with segments", () => {
     const r = toRequest(["projects", "create", "/p", "--name", "foo"])
     expect(r.path).toBe("/projects/create")
