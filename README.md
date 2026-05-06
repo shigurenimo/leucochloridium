@@ -1,15 +1,190 @@
-# react
+# Leuco
 
-To install dependencies:
+Self-hosted gateway that bridges chat channels (Slack today) to the
+[Codex](https://github.com/openai/codex) `app-server`. One machine-wide
+daemon supervises every registered project and runs each `(project, agent)`
+pair as an isolated tenant with its own `CODEX_HOME`.
+
+## Install
+
+```bash
+bun i -g leuco
+```
+
+leuco is Bun-only. Install Bun from <https://bun.sh> first.
+
+To work from a checkout instead:
 
 ```bash
 bun install
+bun link              # exposes the `leuco` bin from this checkout
 ```
 
-To run:
+## Quick start
 
 ```bash
-bun dev
+cd your-repo
+leuco projects add .  # register the cwd as a leuco project
+leuco                 # starts the daemon (or opens the TUI if one is already running)
 ```
 
-This project was created using `bun create tui`. [create-tui](https://git.new/create-tui) is the easiest way to get started with OpenTUI.
+`leuco` (no args) opens the live event TUI when the daemon is running and
+otherwise spawns the daemon in the background. ESC, `q`, or Ctrl-C exits the
+TUI.
+
+## Commands
+
+| command | what it does |
+| --- | --- |
+| `leuco` | open TUI when running, otherwise start the daemon |
+| `leuco start` | start the daemon in background |
+| `leuco run` | run in foreground (debug; logs to stdout) |
+| `leuco stop` | stop the daemon |
+| `leuco restart` | stop + start |
+| `leuco status` | daemon + per-project state |
+| `leuco logs [-f]` | print daemon log (`-f` to follow) |
+| `leuco tui` | force-open the live event viewer |
+| `leuco update [--check]` | install the latest published leuco (`--check` only reports the registry) |
+
+Project / agent / channel management:
+
+```
+leuco projects list
+leuco projects create <path>            # mkdir + git init + register
+leuco projects add [<path>]             # register an existing repo
+leuco projects <p> remove [--cascade]
+leuco projects <p> rename <new>
+
+leuco projects <p> agents list
+leuco projects <p> agents add <a>
+leuco projects <p> agents <a> {remove,rename,start,stop,restart}
+
+leuco projects <p> agents <a> channels list
+leuco projects <p> agents <a> channels add slack
+leuco projects <p> agents <a> channels <c> {remove,rename,start,stop,restart}
+```
+
+Cwd shortcut: when invoked from inside a registered project's path you can
+drop the `projects <p>` prefix — `leuco agents list` resolves to
+`leuco projects <p> agents list`.
+
+Other entry points:
+
+```
+leuco slack call <method> --project <p> --agent <a> [--body '<json>'] [--channel <c>]
+leuco mcp --project <p> --agent <a>     # stdio MCP server (spawned by codex)
+```
+
+## How it works
+
+```
+Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per tenant)
+                            │                    │
+                            │   thread/start { cwd: <project.path> }
+                            │   turn/start  { input: [{type:"text", text}] }
+                            ▼
+                       chat.postMessage (in thread)
+```
+
+- One daemon per machine; the daemon supervises every enabled
+  `(project, agent)` tenant.
+- Each tenant has a dedicated `CODEX_HOME` under
+  `~/.leuco/projects/<p>/agents/<a>/home/`. `auth.json` is symlinked from
+  `~/.codex/auth.json` so all tenants share the user's codex login while
+  keeping memories isolated.
+- One Slack thread maps to one Codex thread. Turns within a thread serialise;
+  separate threads run in parallel.
+- Mention gating, ack reactions, and bot-message filtering are configurable
+  per channel (`ackMode: off | mention | always`, custom `ackIcons`).
+- Codex picks up the project's `AGENTS.md` / `AGENTS.override.md` and any
+  files listed in `~/.codex/config.toml`'s `project_doc_fallback_filenames`.
+
+## Filesystem layout
+
+```
+~/.leuco/
+├── settings.json                          machine-wide settings
+├── daemon/
+│   ├── pid
+│   ├── log
+│   └── events.jsonl                       newline-delimited LeucoEvent stream
+└── projects/
+    └── <projectName>/
+        ├── settings.json                  project config + per-channel tokens (chmod 600)
+        └── agents/
+            └── <agentName>/
+                └── home/                  CODEX_HOME for this tenant
+                    ├── auth.json          symlink → ~/.codex/auth.json
+                    └── config.toml        project trust + mcp_servers.leuco
+```
+
+## Requirements
+
+- [Bun](https://bun.sh) 1.3+
+- `codex` CLI on `PATH`, signed in via `codex login`
+- A Slack App in Socket Mode
+  - Bot scopes: `app_mentions:read`, `chat:write`, `reactions:write`
+  - Event subscriptions: `app_mention`, `message.channels` (optionally `reaction_added`)
+  - App-level token with `connections:write`
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `LEUCO_CODEX_BIN` | Codex binary path (default: `codex`) |
+| `LEUCO_PORT` | HTTP gateway port for IPC (default: off; e.g. `9743`) |
+| `LEUCO_CWD` | Override Codex working directory (default: project path) |
+
+`.env.local` and `.env` are read from the cwd at CLI invocation. Existing
+process env wins over the files.
+
+Per-channel Slack tokens (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) are stored in
+`~/.leuco/projects/<p>/settings.json` and are entered via
+`leuco projects <p> agents <a> channels add slack` — no env vars required at
+runtime.
+
+## Live event viewer
+
+`leuco tui` (or bare `leuco` while the daemon is running) tails
+`~/.leuco/daemon/events.jsonl` and renders typed events in real time with
+the newest at the top. The same JSONL is the source of truth — any consumer
+can tail it without running the TUI.
+
+Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
+`slack.event`, `turn.start`, `turn.complete`, `turn.error`,
+`codex.notification`, `log`. See `lib/events/leuco-event-types.ts`.
+
+## Library usage
+
+```ts
+import { LeucoRuntime } from "leuco"
+
+const runtime = LeucoRuntime.build({ env: process.env })
+if (runtime instanceof Error) throw runtime
+
+const start = await runtime.start()
+if (start instanceof Error) throw start
+```
+
+Lower-level building blocks (`LeucoEngine`, `LeucoTenant`,
+`LeucoCodexClient`, `LeucoSlackChannelPlugin`, `LeucoChannelHost`,
+`LeucoEventBus`, `LeucoProjectStore`, …) are exported from the package
+entry point. Every IO boundary is a port type so tests can substitute fakes.
+
+## Troubleshooting
+
+```bash
+leuco stop
+leuco run               # foreground, logs to stdout
+```
+
+Common causes when nothing happens on mention:
+
+- Slack App is missing the `app_mention` event subscription
+- Bot is not invited to the channel (`/invite @yourbot`)
+- App-level token is missing `connections:write`
+- Channel has `ackMode: "off"` and the agent returned empty text
+
+## License
+
+MIT

@@ -1,20 +1,71 @@
 {
-  "name": "open-codex-bolt",
-  "module": "src/index.tsx",
+  "name": "leuco",
+  "version": "0.1.0",
+  "description": "Self-hosted multi-tenant gateway that runs the Codex app-server as a Slack bot. Bun-only.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shigurenimo/leuco.git"
+  },
+  "homepage": "https://github.com/shigurenimo/leuco#readme",
+  "bugs": {
+    "url": "https://github.com/shigurenimo/leuco/issues"
+  },
+  "keywords": [
+    "codex",
+    "slack",
+    "bot",
+    "gateway",
+    "mcp",
+    "bun",
+    "tui"
+  ],
+  "bin": {
+    "leuco": "./lib/index.ts"
+  },
+  "files": [
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "lib/non-bun-stub.js",
+    "!lib/**/*.test.ts",
+    "!lib/**/*.test.tsx",
+    "README.md"
+  ],
   "type": "module",
-  "private": true,
+  "main": "./lib/api.ts",
+  "module": "./lib/api.ts",
+  "types": "./lib/api.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/api.ts",
+      "bun": "./lib/api.ts",
+      "default": "./lib/non-bun-stub.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
-    "dev": "bun run --watch src/index.tsx"
+    "dev": "bun run lib/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opentui/core": "^0.2.2",
+    "@opentui/react": "^0.2.2",
+    "@slack/bolt": "^4.7.2",
+    "@slack/web-api": "^7.15.1",
+    "hono": "^4.12.16",
+    "react": "^19.2.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19.2.14",
+    "vite-plus": "^0.1.20",
+    "vitest": "^4.1.5"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
-  "dependencies": {
-    "@opentui/core": "^0.2.1",
-    "@opentui/react": "^0.2.1",
-    "react": "^19.2.4"
+  "engines": {
+    "bun": ">=1.3.0"
   }
 }

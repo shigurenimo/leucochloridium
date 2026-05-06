@@ -1,0 +1,7 @@
+{
+  "files.exclude": {
+    ".agents": true,
+    "node_modules": true,
+    "tsconfig.tsbuildinfo": true
+  }
+}
