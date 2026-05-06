@@ -49,6 +49,15 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("return an empty string")
   })
 
+  it("explains that turn output is monologue and slack writes go via MCP", () => {
+    const out = new LeucoSystemPromptBuilder(baseProps).build()
+    expect(out).toContain("## How to reply")
+    expect(out).toContain("leuco does NOT post your turn text to Slack")
+    expect(out).toContain("`slack_call` MCP tool")
+    expect(out).toContain("`chat.postMessage`")
+    expect(out).toContain("`thread_ts`")
+  })
+
   it("lists sub-agent files and points at the .codex/agents directory", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,

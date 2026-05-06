@@ -100,6 +100,15 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     await this.handleMessage(event)
   }
 
+  /**
+   * Run a turn for the message but never post the codex reply text directly.
+   * The model's `runTextTurn` return value is internal monologue — to surface
+   * anything to Slack the agent must call the `slack_call` MCP tool itself.
+   * This plugin only adds the small visible signals that don't compose well
+   * as tool calls: the progress/success/error reactions and a turn-failed
+   * `:x:` so the human can see something went wrong even if codex never
+   * spoke up.
+   */
   private async handleMessage(msg: SlackMessageEvent): Promise<void> {
     const ctx = this.ctx
     const adapter = this.adapter
@@ -113,25 +122,11 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
 
     try {
-      const reply = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
-      const text = reply.trim()
-
-      if (text.length === 0) {
-        ctx.onLog(`[${this.name}] agent silent (msg ts=${msg.ts})`)
-        if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
-        return
-      }
-
-      await adapter.postReply({ channel: msg.channel, threadTs: msg.threadTs, text })
+      const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
+      logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
     } catch (err) {
-      const message = errorMessage(err)
-      ctx.onLog(`[${this.name}] turn failed: ${message}`)
-      await adapter.postReply({
-        channel: msg.channel,
-        threadTs: msg.threadTs,
-        text: `⚠️ ${message}`,
-      })
+      ctx.onLog(`[${this.name}] turn failed: ${errorMessage(err)}`)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
     } finally {
       if (wantsAck) {
@@ -154,4 +149,24 @@ const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string
     msg.text,
     `</slack-event>`,
   ].join("\n")
+}
+
+const MONOLOGUE_LOG_LIMIT = 200
+
+const logMonologue = (
+  onLog: (line: string) => void,
+  pluginName: string,
+  ts: string,
+  monologue: string,
+): void => {
+  const trimmed = monologue.trim()
+  if (trimmed.length === 0) {
+    onLog(`[${pluginName}] agent silent (msg ts=${ts})`)
+    return
+  }
+  const preview =
+    trimmed.length <= MONOLOGUE_LOG_LIMIT
+      ? trimmed
+      : `${trimmed.slice(0, MONOLOGUE_LOG_LIMIT - 1)}…`
+  onLog(`[${pluginName}] monologue (msg ts=${ts}): ${preview}`)
 }

@@ -38,7 +38,9 @@ type Props = {
  *   2. Slack identity per channel — the bot's own user id, used by codex to
  *      filter out its own messages and avoid bot loops
  *   3. response policy — discourage replying to every event
- *   4. sub-agent paths — the agent is encouraged to edit these TOML files
+ *   4. how to reply — turn output is monologue, Slack writes go through MCP
+ *   5. loop avoidance — never reply to your own bot user id, etc.
+ *   6. sub-agent paths — the agent is encouraged to edit these TOML files
  */
 export class LeucoSystemPromptBuilder {
   constructor(private readonly props: Props) {
@@ -53,6 +55,7 @@ export class LeucoSystemPromptBuilder {
         this.headerSection(),
         this.identitySection(),
         this.responseSection(),
+        this.replySection(),
         this.loopSection(),
         this.subagentSection(),
       ]
@@ -108,6 +111,18 @@ export class LeucoSystemPromptBuilder {
       "## When to respond",
       "",
       'You do not need to reply to every message. Reply only when the user clearly addresses you (`mentioned="true"`), when a thread you are already participating in continues, or when you have a clear reason to interject. Otherwise return an empty string — the gateway will stay silent.',
+    ].join("\n")
+  }
+
+  private replySection(): string {
+    return [
+      "## How to reply",
+      "",
+      "Your turn output is internal monologue. **leuco does NOT post your turn text to Slack.** It is logged for the operator and discarded.",
+      "",
+      "To send anything visible in Slack you MUST call the `slack_call` MCP tool with a Web API method such as `chat.postMessage`. Always pass `thread_ts` from the incoming `<slack-event>` envelope so the reply lands in the same thread.",
+      "",
+      "If you decide not to post — because the message wasn't for you, or another bot is handling it, or there's nothing to add — simply finish the turn without calling the tool. Returning text without calling the tool is the same as silence, and silence is often the correct answer.",
     ].join("\n")
   }
 
