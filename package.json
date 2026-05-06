@@ -1,6 +1,6 @@
 {
   "name": "leuco",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Self-hosted multi-tenant gateway that runs the Codex app-server as a Slack bot. Bun-only.",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,7 @@
     "lib/non-bun-stub.js",
     "!lib/**/*.test.ts",
     "!lib/**/*.test.tsx",
+    "tsconfig.json",
     "README.md"
   ],
   "type": "module",

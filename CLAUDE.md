@@ -1,174 +1,84 @@
 # CLAUDE.md
 
-Notes for AI assistants working in this repo.
+`leuco` は Codex `app-server` を Slack bot 化する自ホスト型のマルチテナント gateway。1 マシン 1 daemon が、登録された `(project, agent)` を全て supervise する。daemon、CLI、TUI、ライブラリは全て `lib/runtime/runtime.ts` の `LeucoRuntime` を合成ルートに持つ。
 
-## What this is
+ユーザー向けの利用フローは README.md。本ファイルは AI が最短でコードを読み進めるための地図に徹する。
 
-`leuco` is a self-hosted, multi-tenant gateway that runs the Codex
-`app-server` as a Slack bot (other channel types may follow). One daemon
-per machine supervises every registered `(project, agent)` pair. The
-daemon, the CLI, the live TUI, and the importable library all share a
-single composition root in `lib/runtime/runtime.ts` (`LeucoRuntime`).
+## スタック
 
-The user-facing flows are documented in README.md — keep this file focused
-on conventions and codebase shape.
+Bun >= 1.3 / TypeScript / ESM。HTTP は Hono（CLI も argv → POST に変換して同じ Hono に流す）。バリデーションは Zod で、wire 型は全て `z.infer`。Slack は `@slack/bolt` Socket Mode + `@slack/web-api`。TUI は `@opentui/core` + `@opentui/react`。MCP は `@modelcontextprotocol/sdk`（codex が stdio で spawn）。ツールチェインは vite-plus + vitest。
 
-## Stack
-
-- Runtime: Bun >= 1.3, TypeScript, ESM
-- HTTP: Hono (also used internally to route the CLI: argv → POST request)
-- Validation: Zod (every wire type is `z.infer<typeof schema>`)
-- Slack: `@slack/bolt` Socket Mode listener + `@slack/web-api`
-- TUI: `@opentui/core` + `@opentui/react`
-- MCP: `@modelcontextprotocol/sdk` (stdio server spawned by codex)
-- Tooling: vite-plus (`fmt` / `lint` / `check` / `test`), vitest
-
-## Layout
+## ディレクトリ
 
 ```
 lib/
-├── index.ts              CLI entry (also handles `leuco mcp` and `--version`)
-├── api.ts                public library surface
-├── cli/                  hono app, route handlers (one file per route), argv parser
-├── runtime/runtime.ts    composition root: scans projects → tenants → engine
-├── engine/               LeucoEngine, LeucoTenant, ChannelPlugin port, codex/
-├── channels/             channel-host + slack/ adapter / listener / processor
-├── codex/ (under engine) codex client port, JSON-RPC protocol, agent TOML store
-├── config/               zod schemas for projects/agents/channels
-├── projects/             project registry + scaffolder
-├── daemon/leuco-daemon.ts pid/log/spawn supervisor (one daemon per machine)
+├── index.ts              CLI entry。`leuco mcp` と `--version` も
+├── api.ts                ライブラリ公開面
+├── cli/                  Hono ルート（routes/）と argv パーサ（utils/to-request.ts）
+├── runtime/runtime.ts    合成ルート: projects → tenants → engine
+├── engine/               LeucoEngine、LeucoTenant、ChannelPlugin port、codex/
+├── channels/             channel-host + slack/（adapter / listener / processor）
+├── actions/slack/        CLI から呼ぶ Slack アクション（slack-call）
+├── config/               projects/agents/channels の zod schemas
+├── projects/             プロジェクトレジストリ + scaffolder
+├── daemon/leuco-daemon.ts  pid/log/spawn supervisor（1 マシン 1 daemon）
 ├── events/               typed event bus + events.jsonl writer
-├── gateway/              optional HTTP gateway for IPC
-├── mcp/start-mcp-server  stdio MCP server (spawned by codex per tenant)
-├── paths/leuco-paths.ts  single source of truth for ~/.leuco/* paths
-├── tui/                  opentui app, useEvents tail hook, launch-tui
-├── env/                  zod-typed env loader
-└── error-message.ts      narrow `unknown` to a string for logging
+├── gateway/              IPC 用 HTTP gateway
+├── mcp/start-mcp-server  stdio MCP server（codex がテナント毎に spawn）
+├── paths/leuco-paths.ts  ~/.leuco/* のパスは全てここ。inline 禁止
+├── tui/                  opentui アプリ + useEvents tail hook
+└── env/                  zod 型付き env loader
 ```
 
-`~/.leuco` filesystem layout is documented in `lib/paths/leuco-paths.ts`
-and the README. Every path goes through `LeucoPaths` — never compute it
-inline.
+## リクエストの流れ
 
-## Conventions (must follow)
+Slack message → `slack-listener` → `slack-event-processor` → `LeucoTenant` → `LeucoCodexClient`（codex stdio、JSON-RPC）→ tool 呼び出しは `lib/mcp/start-mcp-server` 経由 → 応答は `slack-adapter` で post。並行して `LeucoEventBus` が `events.jsonl` に書き、TUI は `useEvents` で同じログを tail する。
 
-These are enforced project-wide. See `.claude/rules/*.md` for the source.
+## 合成ルート
 
-TypeScript:
+`LeucoRuntime.build({ env })` が唯一の wiring 点。`~/.leuco/projects/<p>/settings.json` を `LeucoProjectStore` で読み、無効な agent / channel を除外し、有効な `(project, agent)` ごとに `LeucoTenant` を作る。テナントは固有の `CODEX_HOME` を持ち、`LeucoChannelHost` から channel plugins を組み立て、`LeucoEventBus` に ack/onLog を bind する。最後に `LeucoEngine` が reconcile / start / stop を所有。`leuco run`、background 子プロセス、TUI 起動はいずれも `LeucoRuntime.build(...).start()` の薄いラッパ。
 
-- One function or class per file. `kebab-case.ts` filename matches the
-  exported name (`startHandler` → `start.ts`).
-- Imports use the `@/` absolute alias only — no relative paths.
-- `type` only. No `interface`, no `enum`.
-- `unknown` for unknowns. `any` and `as` are forbidden. `as unknown as T`
-  is a last resort — if you reach for it, stop and find the root cause.
-- Absence is `null`, not `undefined` or empty string. Optional fields use
-  `T | null`.
-- Wire types come from Zod schemas via `z.infer`. Never hand-roll a wire
-  type next to a schema.
-- Errors at the backend: do not `throw`. Return `T | Error` and discriminate
-  with `instanceof Error`. The CLI / handler layer turns it into a 400/500.
-- Functions: ≤ 3 args (use `props: Props` for 4+), ≤ 20 lines, prefer pure.
-- Classes: `constructor(private readonly props: Props)` + `Object.freeze(this)`,
-  immutable updates via `with*()`, `ReadonlyArray` over `T[]`.
-- No destructuring. Use `props.foo`. `const` only.
-- `for-of`, early return, `if`. No `switch` except in reducer-style
-  exhaustive Action branches.
-- Insert a blank line between statements at indent depth ≤ 2; tighten at
-  deeper levels. See `.claude/rules/ts.md` for the canonical example.
-- Comments are rare. Only when behaviour is non-obvious and the *why*
-  isn't visible from the code. No `@param` / `@return`.
+## CLI ルート
 
-React (TUI only):
+argv → URL/body 変換は `lib/cli/utils/to-request.ts`、各サブコマンドは `lib/cli/routes/` の `POST /<segments>`。素の `leuco` は `/` に解決され、daemon が居れば TUI を、居なければ daemon を起動する（`leuco start` と同じ経路）。
 
-- Define `type Props`, `export function Foo(props: Props)`. Don't destructure.
-- `useEffect` and `useCallback` are forbidden. `useMemo` only when computing
-  over 1000+ items, with a comment explaining why.
-- Use `gap-` / `space-` over `pb-` (n/a in opentui, kept here for symmetry
-  with web).
-- Mutations: `onError`. Plain async: `try/catch` + `instanceof Error`.
+ファイル名はドット区切りで URL を表現する。
 
-Git:
-
-- English commit subjects, imperative, lower-case, no period.
-- Prefix with `update:`, `fix:`, `feat:`, `refactor:`, `docs:`, `chore:`.
-
-## Composition root
-
-`LeucoRuntime.build({ env })` is the single wiring point. It:
-
-1. Reads every project from `~/.leuco/projects/<p>/settings.json` via
-   `LeucoProjectStore`.
-2. Filters disabled agents/channels.
-3. For each enabled `(project, agent)` builds a `LeucoTenant` with its own
-   `LeucoCodexClient` (separate `CODEX_HOME`), channel plugins via
-   `LeucoChannelHost`, and ack/onLog hooks bound to the shared
-   `LeucoEventBus`.
-4. Wraps everything in a `LeucoEngine` that owns reconcile / start / stop.
-
-The daemon (`leuco run` or the spawned background child) just calls
-`LeucoRuntime.build(...).start()`. The TUI tails the same event log.
-
-## Ports and tests
-
-Every IO boundary has a port type and the IO-heavy class extracts a pure
-inner class so the whole thing is mockable. Examples:
-
-- `CodexClientPort` ↔ `LeucoCodexClient` (real codex stdio process).
-- `WebClientPort` ↔ Slack `WebClient`.
-- `LeucoChannelHost` builds plugins from config; tests inject a fake host.
-
-Tests live next to the source (`*.test.ts`). The repo uses `vite-plus`
-directly (no wrapper scripts in `package.json` beyond `dev`):
-
-```bash
-vp test run          # one-shot test run
-vp check             # fmt + lint + typecheck + test
-tsc -b               # typecheck only
-bun run dev          # run lib/index.ts in foreground
+```
+projects.$project.agents.$agent.channels.$channel.start.ts
+  → POST /projects/:project/agents/:agent/channels/:channel/start
 ```
 
-## CLI shape
+ルート追加手順。
 
-Argv → URL/body conversion lives in `lib/cli/utils/to-request.ts`. Each
-subcommand is a `POST /<segments>` route in `lib/cli/routes/`. Bare `leuco`
-is `/`, which:
+- `lib/cli/routes/<name>.ts` で `<name>Handler` を export
+- 隣に `<name>.help.ts` を置き、ハンドラ冒頭で `if (flagBool(body.flags.help)) return c.text(help)`
+- `lib/cli/routes/index.ts` に登録
+- 新しいトップレベル動詞なら `to-request.ts` の `TOP_LEAFS` と `group.help.ts` も更新
 
-- launches the TUI when the daemon is running (`rootHandler`)
-- otherwise starts the daemon (same code path as `leuco start`)
+help テキストは plain ASCII、2 スペースインデント。隣の help を見て揃える。
 
-When you add a new route:
+## ports とテスト
 
-1. Add a `lib/cli/routes/<name>.ts` exporting `<name>Handler`.
-2. Add a `lib/cli/routes/<name>.help.ts` with the help text and gate it via
-   `if (flagBool(body.flags.help)) return c.text(help)`.
-3. Register the route in `lib/cli/routes/index.ts`.
-4. If it adds a new top-level verb, add it to `TOP_LEAFS` in `to-request.ts`
-   and update `lib/cli/routes/group.help.ts`.
+IO 境界は port 型を持ち、IO の重い class は純粋 inner class を切り出してモック可能にする。例として `CodexClientPort` ↔ `LeucoCodexClient`、`WebClientPort` ↔ Slack `WebClient`、`LeucoChannelHost` はテストで fake を注入できる。テストは `*.test.ts` でソースの隣。
 
-Help text is plain ASCII and uses two-space indentation; check sibling
-files for tone.
+```
+vp test run        単発テスト
+vp check           fmt + lint + typecheck + test
+tsc -b             typecheck のみ
+bun run dev        lib/index.ts をフォアグラウンド実行
+```
 
-## Common gotchas
+## 規約
 
-- `process.exit(0)` after `await launchTui()` is required: the Hono
-  handler's response would otherwise echo onto stdout while the renderer
-  is still tearing down.
-- Codex `app-server` requires the JSON-RPC `initialize` handshake before
-  any request; error replies sometimes omit `jsonrpc`. See
-  `lib/engine/codex/codex-protocol.ts`.
-- `~/.leuco/projects/<p>/settings.json` is chmod 600 because it stores
-  Slack tokens. `LeucoProjectStore.write` enforces the mode.
-- Each tenant's `CODEX_HOME` symlinks `auth.json` from `~/.codex/auth.json`
-  so all tenants share the user's codex login while keeping memories
-  isolated.
+`.claude/rules/*.md` が source of truth（`ts.md` / `ts.react.md` / `git.md` / `md.md` / `software-skills.md`）。要約をここに書かない。古くなって嘘になる。コードを書き始める前に必ず該当ファイルを読む。
 
-## What not to do
+## ハマりどころ
 
-- Don't introduce `interface`, `enum`, or `as` casts.
-- Don't add `useEffect` / `useCallback` to TUI components.
-- Don't add backwards-compatibility shims, dead `_unused` vars, or
-  `// removed` comments. Delete unused code.
-- Don't write feature flags or env-gated branches "just in case".
-- Don't add summaries/explanations to commits or comments — the diff
-  speaks for itself.
+`await launchTui()` の後に `process.exit(0)` を必ず呼ぶ。Hono ハンドラのレスポンスがレンダラのティアダウン中に stdout に重なるのを防ぐため。
+
+Codex `app-server` は JSON-RPC `initialize` ハンドシェイクが必須。エラー応答が `jsonrpc` フィールドを欠くケースがある（`lib/engine/codex/codex-protocol.ts`）。
+
+`~/.leuco/projects/<p>/settings.json` は Slack トークンを持つので chmod 600。`LeucoProjectStore.write` がモードを強制する。
+
+各テナントの `CODEX_HOME` は `~/.codex/auth.json` を symlink して codex ログインを共有しつつ、メモリは独立させている。
