@@ -10,6 +10,7 @@ describe("toLaunchAgentPlist", () => {
     stdoutPath: "/Users/me/.leuco/daemon/launchd.out.log",
     stderrPath: "/Users/me/.leuco/daemon/launchd.err.log",
     envVars: {},
+    keepAwake: false,
   }
 
   it("emits a plist with RunAtLoad and KeepAlive enabled", () => {
@@ -53,5 +54,20 @@ describe("toLaunchAgentPlist", () => {
   it("uses the provided label", () => {
     const plist = toLaunchAgentPlist({ ...baseProps, label: "io.example.thing" })
     expect(plist).toContain("<string>io.example.thing</string>")
+  })
+
+  it("does not wrap the program with caffeinate when keepAwake is false", () => {
+    const plist = toLaunchAgentPlist(baseProps)
+    expect(plist).not.toContain("caffeinate")
+  })
+
+  it("wraps the program with `caffeinate -is` when keepAwake is true", () => {
+    const plist = toLaunchAgentPlist({ ...baseProps, keepAwake: true })
+    expect(plist).toContain("<string>/usr/bin/caffeinate</string>")
+    expect(plist).toContain("<string>-is</string>")
+    const caffeinateIdx = plist.indexOf("/usr/bin/caffeinate")
+    const bunIdx = plist.indexOf("/usr/local/bin/bun")
+    expect(caffeinateIdx).toBeGreaterThan(0)
+    expect(bunIdx).toBeGreaterThan(caffeinateIdx)
   })
 })

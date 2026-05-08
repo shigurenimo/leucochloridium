@@ -10,8 +10,10 @@ import { z } from "zod"
 export const globalSettingsSchema = z
   .object({
     /**
-     * macOS only: when true, the daemon is launched under `caffeinate -i`
-     * so the system stays awake while leuco runs. Ignored on non-darwin.
+     * macOS only: when true, the daemon is launched under `caffeinate -is`
+     * so the system stays awake while leuco runs. `-i` blocks idle sleep and
+     * `-s` blocks system/clamshell sleep on AC power (no-op on battery).
+     * Ignored on non-darwin.
      */
     keepAwake: z.boolean().default(true),
   })

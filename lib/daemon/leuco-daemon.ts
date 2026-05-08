@@ -96,10 +96,13 @@ export class LeucoDaemon {
   }
 
   /**
-   * macOS only: spawn `caffeinate -i -w <pid>` so the system stays awake while
+   * macOS only: spawn `caffeinate -is -w <pid>` so the system stays awake while
    * the daemon runs, then exits as soon as the daemon does. The daemon's own
    * pid is unchanged — caffeinate is a sidecar, not a wrapper. Disabled when
    * `~/.leuco/settings.json#keepAwake` is false. Failure is non-fatal.
+   *
+   * `-i` blocks idle sleep and `-s` blocks system sleep (including lid-close
+   * clamshell sleep) while on AC power. On battery `-s` is ignored by macOS.
    */
   private maybeKeepAwake(daemonPid: number): void {
     if (process.platform !== "darwin") return
@@ -109,7 +112,7 @@ export class LeucoDaemon {
     if (!settings.keepAwake) return
 
     try {
-      const caf = spawn("caffeinate", ["-i", "-w", String(daemonPid)], {
+      const caf = spawn("caffeinate", ["-is", "-w", String(daemonPid)], {
         stdio: "ignore",
         detached: true,
       })

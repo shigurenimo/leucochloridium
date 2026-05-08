@@ -7,8 +7,10 @@ usage:
 
 Recognised keys:
   keepAwake (boolean)    macOS: keep the system awake while leuco runs
-                         (wraps the daemon launch with \`caffeinate -i\`).
+                         (wraps the daemon launch with \`caffeinate -is\`,
+                         blocking idle sleep + system/clamshell sleep on AC).
                          Defaults to true. Restart the daemon to pick up
-                         changes (\`leuco restart\`).
+                         changes (\`leuco restart\`); for the LaunchAgent
+                         path, re-run \`leuco boot install\`.
 
 Run \`leuco config <subcommand> -h\` for details on a specific subcommand.`

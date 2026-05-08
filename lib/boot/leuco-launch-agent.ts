@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { LaunchctlBin } from "@/boot/launchctl-bin"
 import type { LaunchctlPort } from "@/boot/launchctl-port"
 import { toLaunchAgentPlist } from "@/boot/to-launch-agent-plist"
+import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 const LABEL = "io.leuco.daemon"
@@ -70,6 +71,9 @@ export class LeucoLaunchAgent {
     if (!existsSync(plistDir)) mkdirSync(plistDir, { recursive: true })
     if (!existsSync(daemonDir)) mkdirSync(daemonDir, { recursive: true })
 
+    const settings = new LeucoGlobalSettingsStore({ paths: this.paths }).load()
+    const keepAwake = settings instanceof Error ? true : settings.keepAwake
+
     const plist = toLaunchAgentPlist({
       label: LABEL,
       bunPath: installProps.bunPath,
@@ -78,6 +82,7 @@ export class LeucoLaunchAgent {
       stdoutPath: join(daemonDir, "launchd.out.log"),
       stderrPath: join(daemonDir, "launchd.err.log"),
       envVars: installProps.envVars ?? {},
+      keepAwake,
     })
 
     if (existsSync(plistPath)) {
