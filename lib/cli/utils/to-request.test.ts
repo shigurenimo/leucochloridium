@@ -118,4 +118,24 @@ describe("toRequest", () => {
     const r = toRequest(["status"])
     expect(r.url).toBe("http://localhost/status")
   })
+
+  it("expands schedules under a named channel", () => {
+    expect(
+      toRequest(["projects", "p", "agents", "a", "channels", "c", "schedules", "list"]).path,
+    ).toBe("/projects/p/agents/a/channels/c/schedules/list")
+
+    const remove = toRequest([
+      "projects",
+      "p",
+      "agents",
+      "a",
+      "channels",
+      "c",
+      "schedules",
+      "remove",
+      "morning",
+    ])
+    expect(remove.path).toBe("/projects/p/agents/a/channels/c/schedules/remove")
+    expect(remove.parsed.args).toEqual(["morning"])
+  })
 })

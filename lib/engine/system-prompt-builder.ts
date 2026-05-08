@@ -56,6 +56,7 @@ export class LeucoSystemPromptBuilder {
         this.identitySection(),
         this.responseSection(),
         this.replySection(),
+        this.scheduleSection(),
         this.loopSection(),
         this.subagentSection(),
       ]
@@ -83,14 +84,15 @@ export class LeucoSystemPromptBuilder {
   }
 
   private identitySection(): string {
+    const slackIdentities = this.props.identities.filter((i) => i.type === "slack")
     const lines = ["## Slack identity"]
-    if (this.props.identities.length === 0) {
+    if (slackIdentities.length === 0) {
       lines.push("", "No Slack channels are connected for this agent yet.")
       return lines.join("\n")
     }
 
-    lines.push("", `You are connected to ${this.props.identities.length} Slack channel(s):`)
-    for (const identity of this.props.identities) {
+    lines.push("", `You are connected to ${slackIdentities.length} Slack channel(s):`)
+    for (const identity of slackIdentities) {
       const id = identity.botUserId
       const tail =
         id === null
@@ -102,6 +104,37 @@ export class LeucoSystemPromptBuilder {
     lines.push(
       "",
       'Each Slack message arrives as `<slack-event channel-config="..." channel="..." user="..." ts="..." thread_ts="..." mentioned="..." source="..."> … </slack-event>`. The `user` attribute is the Slack user id of the speaker — always compare it to your own bot user id before acting.',
+    )
+    return lines.join("\n")
+  }
+
+  private scheduleSection(): string {
+    const scheduleIdentities = this.props.identities.filter((i) => i.type === "schedule")
+    const lines = ["## Scheduled prompts"]
+
+    if (scheduleIdentities.length === 0) {
+      lines.push(
+        "",
+        "No schedule channel is registered for this agent. Ask the operator to run `leuco projects <p> agents <a> channels add schedule` if you want to set timed reminders.",
+      )
+      return lines.join("\n")
+    }
+
+    lines.push("", "You own the following schedule channels:")
+    for (const identity of scheduleIdentities) {
+      lines.push(`- \`${identity.name}\``)
+    }
+
+    lines.push(
+      "",
+      'When an entry fires, you receive a turn whose input is wrapped as `<schedule channel="..." entry="..." run-at="..."> … </schedule>` — treat the inner text as a fresh task you scheduled for yourself.',
+      "",
+      "You may add, list, and remove entries on yourself via these MCP tools:",
+      "- `schedule_create` — register a new entry. `run_at` is either an ISO 8601 timestamp (one-shot, deleted after fire) or a 5-field cron expression (recurring).",
+      "- `schedule_list` — read all entries you own.",
+      "- `schedule_delete` — remove one entry by id or name.",
+      "",
+      "Use these for reminders, recurring checks, or deferring a task until later. Keep entry names short and descriptive (`^[a-z][a-z0-9_-]*$`).",
     )
     return lines.join("\n")
   }

@@ -18,6 +18,7 @@ const NAMED_LEAFS = new Set([
   "reset",
   "set-tokens",
 ])
+const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
 const SLACK_LEAFS = new Set(["call"])
 const CONFIG_LEAFS = new Set(["list", "get", "set"])
 const BOOT_LEAFS = new Set(["install", "uninstall", "status"])
@@ -30,6 +31,7 @@ type Stage =
   | "named-agent"
   | "channels"
   | "named-channel"
+  | "schedules"
   | "slack"
   | "config"
   | "boot"
@@ -189,6 +191,12 @@ const step = (stage: Stage, arg: string): StepDecision => {
 
   if (stage === "named-channel") {
     if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (arg === "schedules") return { kind: "segment", next: "schedules" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "schedules") {
+    if (SCHEDULE_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     return { kind: "positional" }
   }
 

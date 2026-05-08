@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import type { Project } from "@/config/config-schema"
+import type { Project, ScheduleEntry } from "@/config/config-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -141,5 +141,176 @@ describe("LeucoProjectStore", () => {
     store.save(sampleProject())
     store.remove("demo")
     expect(store.load("demo")).toBeInstanceOf(Error)
+  })
+
+  describe("schedule entries", () => {
+    const projectWithScheduleChannel = (): Project =>
+      sampleProject({
+        agents: [
+          {
+            name: "reviewer",
+            enabled: true,
+            useCommonInstructions: true,
+            prompts: ["friendly" as const],
+            channels: [
+              {
+                id: "33333333-3333-4333-8333-333333333333",
+                name: "cron",
+                type: "schedule",
+                enabled: true,
+                entries: [],
+              },
+            ],
+          },
+        ],
+      })
+
+    const sampleEntry = (overrides: Partial<ScheduleEntry> = {}): ScheduleEntry => ({
+      id: "44444444-4444-4444-8444-444444444444",
+      name: "morning-standup",
+      runAt: "0 9 * * *",
+      prompt: "summarize yesterday's work",
+      enabled: true,
+      ...overrides,
+    })
+
+    beforeEach(() => {
+      store.save(projectWithScheduleChannel())
+    })
+
+    it("addScheduleEntry appends a new entry", () => {
+      const result = store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      expect(result).not.toBeInstanceOf(Error)
+
+      const project = store.load("demo")
+      if (project instanceof Error) throw project
+      const channel = project.agents[0]!.channels[0]!
+      if (channel.type !== "schedule") throw new Error("expected schedule channel")
+      expect(channel.entries.map((e) => e.name)).toEqual(["morning-standup"])
+    })
+
+    it("addScheduleEntry rejects duplicate name", () => {
+      store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      const dup = store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
+      })
+      expect(dup).toBeInstanceOf(Error)
+    })
+
+    it("addScheduleEntry rejects when channel is not schedule", () => {
+      store.save(sampleProject())
+      const result = store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "slack",
+        entry: sampleEntry(),
+      })
+      expect(result).toBeInstanceOf(Error)
+    })
+
+    it("removeScheduleEntry by id removes the entry", () => {
+      store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      const result = store.removeScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entryIdOrName: "44444444-4444-4444-8444-444444444444",
+      })
+      expect(result).not.toBeInstanceOf(Error)
+
+      const project = store.load("demo")
+      if (project instanceof Error) throw project
+      const channel = project.agents[0]!.channels[0]!
+      if (channel.type !== "schedule") throw new Error("expected schedule channel")
+      expect(channel.entries).toEqual([])
+    })
+
+    it("removeScheduleEntry by name removes the entry", () => {
+      store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      const result = store.removeScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entryIdOrName: "morning-standup",
+      })
+      expect(result).not.toBeInstanceOf(Error)
+    })
+
+    it("removeScheduleEntry returns Error when not found", () => {
+      const result = store.removeScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entryIdOrName: "nope",
+      })
+      expect(result).toBeInstanceOf(Error)
+    })
+
+    it("updateScheduleEntry patches one entry by id", () => {
+      store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      const result = store.updateScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entryId: "44444444-4444-4444-8444-444444444444",
+        patch: { enabled: false },
+      })
+      expect(result).not.toBeInstanceOf(Error)
+
+      const project = store.load("demo")
+      if (project instanceof Error) throw project
+      const channel = project.agents[0]!.channels[0]!
+      if (channel.type !== "schedule") throw new Error("expected schedule channel")
+      expect(channel.entries[0]!.enabled).toBe(false)
+    })
+
+    it("updateScheduleEntry preserves id even if patch tries to override", () => {
+      store.addScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entry: sampleEntry(),
+      })
+      store.updateScheduleEntry({
+        projectName: "demo",
+        agentName: "reviewer",
+        channelName: "cron",
+        entryId: "44444444-4444-4444-8444-444444444444",
+        patch: { id: "evil" } as Partial<ScheduleEntry>,
+      })
+      const project = store.load("demo")
+      if (project instanceof Error) throw project
+      const channel = project.agents[0]!.channels[0]!
+      if (channel.type !== "schedule") throw new Error("expected schedule channel")
+      expect(channel.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
+    })
   })
 })

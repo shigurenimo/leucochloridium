@@ -31,6 +31,10 @@ import { agentsStartHandler } from "@/cli/routes/projects.$project.agents.$agent
 import { agentsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.stop"
 import { channelsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.rename"
 import { channelsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.restart"
+import { help as schedulesHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
+import { schedulesAddHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.add"
+import { schedulesListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.list"
+import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.remove"
 import { channelsSetTokensHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.set-tokens"
 import { channelsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.start"
 import { channelsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.stop"
@@ -118,6 +122,19 @@ export const app = base
   .post(
     "/projects/:project/agents/:agent/channels/:channel/set-tokens",
     ...channelsSetTokensHandler,
+  )
+  .post(
+    "/projects/:project/agents/:agent/channels/:channel/schedules",
+    ...groupHelpHandler(schedulesHelp),
+  )
+  .post("/projects/:project/agents/:agent/channels/:channel/schedules/add", ...schedulesAddHandler)
+  .post(
+    "/projects/:project/agents/:agent/channels/:channel/schedules/list",
+    ...schedulesListHandler,
+  )
+  .post(
+    "/projects/:project/agents/:agent/channels/:channel/schedules/remove",
+    ...schedulesRemoveHandler,
   )
 
   .post("/slack", ...groupHelpHandler(slackHelp))

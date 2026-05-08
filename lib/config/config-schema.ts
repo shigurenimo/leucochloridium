@@ -37,7 +37,29 @@ const slackChannelSchema = z.object({
   ackIcons: ackIconsSchema,
 })
 
-const channelSchema = z.discriminatedUnion("type", [slackChannelSchema])
+/**
+ * One scheduled prompt. `runAt` is either an ISO 8601 timestamp (one-shot)
+ * or a 5-field cron expression (recurring) — discriminated at parse time by
+ * whether the string contains whitespace. One-shot entries are removed from
+ * settings.json after they fire; cron entries persist and re-fire forever.
+ */
+const scheduleEntrySchema = z.object({
+  id: z.uuid(),
+  name: safeName,
+  runAt: z.string().min(1),
+  prompt: z.string().min(1),
+  enabled: z.boolean().default(true),
+})
+
+const scheduleChannelSchema = z.object({
+  id: z.uuid(),
+  name: safeName,
+  type: z.literal("schedule"),
+  enabled: z.boolean().default(true),
+  entries: z.array(scheduleEntrySchema).default([]),
+})
+
+const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, scheduleChannelSchema])
 
 const agentSchema = z.object({
   name: safeName,
@@ -73,5 +95,8 @@ export const projectSchema = z.object({
 })
 
 export type Channel = z.infer<typeof channelSchema>
+export type SlackChannel = z.infer<typeof slackChannelSchema>
+export type ScheduleChannel = z.infer<typeof scheduleChannelSchema>
+export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
 export type Agent = z.infer<typeof agentSchema>
 export type Project = z.infer<typeof projectSchema>

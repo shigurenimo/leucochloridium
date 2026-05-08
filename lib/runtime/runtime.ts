@@ -163,6 +163,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
   const plugins = LeucoChannelHost.buildForAgent({
     projectName: props.project.name,
     agent: filteredAgent,
+    projectStore: props.projectStore,
   })
   if (plugins instanceof Error) return plugins
 
@@ -242,10 +243,10 @@ const ensureCodexHome = (paths: LeucoPaths, projectName: string, agentName: stri
  * Write the tenant's CODEX_HOME `config.toml`. Three things go in here:
  *   1. project trust (so codex loads the repo's `.codex/`)
  *   2. an `mcp_servers.leuco` entry so codex can call the leuco MCP tool
- *      surface (`slack_call` etc.) scoped to this exact (project, agent)
- *   3. an `approval_mode = "approve"` override on `slack_call` so codex
- *      auto-approves Slack writes instead of stalling on a prompt no one
- *      can answer (the daemon has no terminal). Other tools and the global
+ *      surface scoped to this exact (project, agent)
+ *   3. `approval_mode = "approve"` overrides on every leuco-managed tool so
+ *      codex auto-approves them instead of stalling on a prompt no one can
+ *      answer (the daemon has no terminal). Other tools and the global
  *      approval policy are untouched.
  */
 const ensureTenantConfigToml = (
@@ -253,6 +254,7 @@ const ensureTenantConfigToml = (
   tenant: { projectPath: string; projectName: string; agentName: string },
 ): void => {
   const path = join(codexHome, "config.toml")
+  const autoApproveTools = ["slack_call", "schedule_create", "schedule_list", "schedule_delete"]
   const lines = [
     `[projects.${tomlKeyString(tenant.projectPath)}]`,
     `trust_level = "trusted"`,
@@ -261,10 +263,10 @@ const ensureTenantConfigToml = (
     `command = "leuco"`,
     `args = ["mcp", "--project", ${tomlKeyString(tenant.projectName)}, "--agent", ${tomlKeyString(tenant.agentName)}]`,
     "",
-    `[mcp_servers.leuco.tools.slack_call]`,
-    `approval_mode = "approve"`,
-    "",
   ]
+  for (const tool of autoApproveTools) {
+    lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")
+  }
   writeFileSync(path, lines.join("\n"))
 }
 

@@ -1,7 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { LeucoChannelHost } from "@/channels/channel-host"
+import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
-import type { Agent, Channel } from "@/config/config-schema"
+import type { Agent, Channel, Project } from "@/config/config-schema"
+import { LeucoPaths } from "@/paths/leuco-paths"
+import { LeucoProjectStore } from "@/projects/project-store"
 
 const slackChannel = (name: string, botToken = "xoxb-1", appToken = "xapp-1"): Channel => ({
   id: "11111111-1111-4111-8111-111111111111",
@@ -77,6 +83,65 @@ describe("LeucoChannelHost.buildForAgent", () => {
     expect(result).toBeInstanceOf(Error)
     if (result instanceof Error) {
       expect(result.message).toContain("missing")
+    }
+  })
+
+  it("builds a LeucoScheduleChannelPlugin when projectStore is provided", () => {
+    const home = mkdtempSync(join(tmpdir(), "leuco-channel-host-"))
+    try {
+      const store = new LeucoProjectStore({ paths: new LeucoPaths({ home }) })
+      const project: Project = {
+        name: "demo",
+        path: "/tmp/demo",
+        agents: [
+          {
+            name: "default",
+            enabled: true,
+            useCommonInstructions: true,
+            prompts: ["friendly"],
+            channels: [
+              {
+                id: "33333333-3333-4333-8333-333333333333",
+                name: "cron",
+                type: "schedule",
+                enabled: true,
+                entries: [],
+              },
+            ],
+          },
+        ],
+      }
+      store.save(project)
+
+      const plugins = LeucoChannelHost.buildForAgent({
+        projectName: "demo",
+        agent: project.agents[0]!,
+        projectStore: store,
+      })
+      expect(plugins).not.toBeInstanceOf(Error)
+      if (plugins instanceof Error) return
+      expect(plugins).toHaveLength(1)
+      expect(plugins[0]).toBeInstanceOf(LeucoScheduleChannelPlugin)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it("returns Error when a schedule channel is built without a projectStore", () => {
+    const scheduleChannel: Channel = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "cron",
+      type: "schedule",
+      enabled: true,
+      entries: [],
+    }
+    const result = LeucoChannelHost.buildForAgent({
+      projectName: "demo",
+      agent: agent([scheduleChannel]),
+    })
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain("projectStore")
     }
   })
 })

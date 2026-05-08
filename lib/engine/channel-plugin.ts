@@ -14,12 +14,12 @@ export type ChannelPluginContext = {
 
 /**
  * Plugin self-description used by the system prompt builder. `botUserId` is
- * null until the plugin's underlying transport is connected (e.g. before the
- * Slack listener finishes `auth.test`).
+ * null until the plugin's underlying transport is connected (Slack), or
+ * always null for transports that have no remote identity (schedule).
  */
 export type ChannelIdentity = {
   name: string
-  type: "slack"
+  type: "slack" | "schedule"
   botUserId: string | null
 }
 

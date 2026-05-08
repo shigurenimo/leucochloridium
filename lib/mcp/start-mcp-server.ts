@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { findAgent } from "@/cli/utils/lookup-config"
+import { validateLeucoName } from "@/cli/utils/validate-name"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
+import type { Project, ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
@@ -10,9 +14,12 @@ type Props = {
   agentName: string
 }
 
-const TOOL_NAME = "slack_call"
+const TOOL_SLACK_CALL = "slack_call"
+const TOOL_SCHEDULE_CREATE = "schedule_create"
+const TOOL_SCHEDULE_LIST = "schedule_list"
+const TOOL_SCHEDULE_DELETE = "schedule_delete"
 
-const TOOL_DESCRIPTION = [
+const SLACK_CALL_DESCRIPTION = [
   "Forward a Slack Web API call (e.g. chat.postMessage, conversations.replies,",
   "reactions.add, files.upload). The body is the API method's JSON body — see",
   "https://api.slack.com/methods for parameters. Tokens are scoped to this",
@@ -20,7 +27,7 @@ const TOOL_DESCRIPTION = [
   "multiple channels owned by the same agent.",
 ].join(" ")
 
-const TOOL_INPUT_SCHEMA = {
+const SLACK_CALL_INPUT_SCHEMA = {
   type: "object",
   required: ["method"],
   properties: {
@@ -37,6 +44,71 @@ const TOOL_INPUT_SCHEMA = {
       type: "string",
       description:
         "Optional leuco-side channel identifier when the agent has multiple slack channels. Defaults to the first enabled one.",
+    },
+  },
+}
+
+const SCHEDULE_CREATE_DESCRIPTION = [
+  "Register a scheduled prompt that the daemon will deliver back to this agent",
+  "at the specified time. `run_at` is either an ISO 8601 timestamp (one-shot,",
+  "deleted after fire) or a 5-field cron expression (recurring). The daemon",
+  "picks up new entries on the next minute tick — no restart needed. If the",
+  "agent owns multiple schedule channels, pass `channel_name` to disambiguate.",
+].join(" ")
+
+const SCHEDULE_CREATE_INPUT_SCHEMA = {
+  type: "object",
+  required: ["name", "run_at", "prompt"],
+  properties: {
+    name: {
+      type: "string",
+      description:
+        "Unique identifier within the channel (^[a-z][a-z0-9_-]*$). Used by `schedule_delete`.",
+    },
+    run_at: {
+      type: "string",
+      description:
+        'ISO 8601 timestamp ("2026-05-08T09:00:00Z") for one-shot, or a 5-field cron expression ("0 9 * * *") for recurring.',
+    },
+    prompt: {
+      type: "string",
+      description: "Text the daemon will hand to this agent at fire time.",
+    },
+    channel_name: {
+      type: "string",
+      description:
+        "Optional leuco-side schedule channel name. Defaults to the only enabled schedule channel; required if the agent owns multiple.",
+    },
+  },
+}
+
+const SCHEDULE_LIST_DESCRIPTION =
+  "List schedule entries owned by this agent. With `channel_name`, restrict to one channel; otherwise return entries across every schedule channel."
+
+const SCHEDULE_LIST_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    channel_name: {
+      type: "string",
+      description: "Optional schedule channel name to filter by.",
+    },
+  },
+}
+
+const SCHEDULE_DELETE_DESCRIPTION =
+  "Delete a schedule entry by id or by name. If the agent owns multiple schedule channels, pass `channel_name` to disambiguate."
+
+const SCHEDULE_DELETE_INPUT_SCHEMA = {
+  type: "object",
+  required: ["id_or_name"],
+  properties: {
+    id_or_name: {
+      type: "string",
+      description: "Entry UUID returned by `schedule_create` / `schedule_list`, or its name.",
+    },
+    channel_name: {
+      type: "string",
+      description: "Optional schedule channel name when the agent owns more than one.",
     },
   },
 }
@@ -60,59 +132,225 @@ export const startMcpServer = async (props: Props): Promise<void> => {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: TOOL_NAME,
-        description: TOOL_DESCRIPTION,
-        inputSchema: TOOL_INPUT_SCHEMA,
-        annotations: {
-          readOnlyHint: false,
-          destructiveHint: false,
-          openWorldHint: true,
-        },
+        name: TOOL_SLACK_CALL,
+        description: SLACK_CALL_DESCRIPTION,
+        inputSchema: SLACK_CALL_INPUT_SCHEMA,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      {
+        name: TOOL_SCHEDULE_CREATE,
+        description: SCHEDULE_CREATE_DESCRIPTION,
+        inputSchema: SCHEDULE_CREATE_INPUT_SCHEMA,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      {
+        name: TOOL_SCHEDULE_LIST,
+        description: SCHEDULE_LIST_DESCRIPTION,
+        inputSchema: SCHEDULE_LIST_INPUT_SCHEMA,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      {
+        name: TOOL_SCHEDULE_DELETE,
+        description: SCHEDULE_DELETE_DESCRIPTION,
+        inputSchema: SCHEDULE_DELETE_INPUT_SCHEMA,
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
       },
     ],
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name !== TOOL_NAME) {
-      return {
-        content: [{ type: "text", text: `unknown tool: ${request.params.name}` }],
-        isError: true,
-      }
-    }
+    const name = request.params.name
+    const args = (request.params.arguments ?? {}) as Record<string, unknown>
 
-    const args = (request.params.arguments ?? {}) as {
-      method?: unknown
-      body?: unknown
-      channel_name?: unknown
-    }
+    if (name === TOOL_SLACK_CALL) return handleSlackCall(props, args)
+    if (name === TOOL_SCHEDULE_CREATE) return handleScheduleCreate(props, args)
+    if (name === TOOL_SCHEDULE_LIST) return handleScheduleList(props, args)
+    if (name === TOOL_SCHEDULE_DELETE) return handleScheduleDelete(props, args)
 
-    if (typeof args.method !== "string" || args.method.length === 0) {
-      return errorResponse("`method` is required and must be a non-empty string")
-    }
-
-    const channelName = typeof args.channel_name === "string" ? args.channel_name : undefined
-    const body =
-      args.body !== null && typeof args.body === "object" && !Array.isArray(args.body)
-        ? (args.body as Record<string, unknown>)
-        : {}
-
-    const tokens = resolveTenantTokens({
-      projectName: props.projectName,
-      agentName: props.agentName,
-      channelName,
-    })
-    if (tokens instanceof Error) return errorResponse(tokens.message)
-
-    const result = await slackCall({ botToken: tokens.botToken, method: args.method, body })
-    if (result instanceof Error) return errorResponse(result.message)
-
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    }
+    return errorResponse(`unknown tool: ${name}`)
   })
 
   const transport = new StdioServerTransport()
   await server.connect(transport)
+}
+
+const handleSlackCall = async (props: Props, args: Record<string, unknown>) => {
+  if (typeof args.method !== "string" || args.method.length === 0) {
+    return errorResponse("`method` is required and must be a non-empty string")
+  }
+
+  const channelName = typeof args.channel_name === "string" ? args.channel_name : undefined
+  const body =
+    args.body !== null && typeof args.body === "object" && !Array.isArray(args.body)
+      ? (args.body as Record<string, unknown>)
+      : {}
+
+  const tokens = resolveTenantTokens({
+    projectName: props.projectName,
+    agentName: props.agentName,
+    channelName,
+  })
+  if (tokens instanceof Error) return errorResponse(tokens.message)
+
+  const result = await slackCall({ botToken: tokens.botToken, method: args.method, body })
+  if (result instanceof Error) return errorResponse(result.message)
+
+  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
+}
+
+const handleScheduleCreate = async (props: Props, args: Record<string, unknown>) => {
+  if (typeof args.name !== "string") return errorResponse("`name` is required")
+  if (typeof args.run_at !== "string") return errorResponse("`run_at` is required")
+  if (typeof args.prompt !== "string") return errorResponse("`prompt` is required")
+
+  const validatedName = validateLeucoName(args.name, "schedule entry name")
+  if (validatedName instanceof Error) return errorResponse(validatedName.message)
+
+  const validatedRunAt = validateRunAt(args.run_at)
+  if (validatedRunAt instanceof Error) return errorResponse(validatedRunAt.message)
+
+  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
+
+  const channel = resolveScheduleChannel({
+    projectName: props.projectName,
+    agentName: props.agentName,
+    channelName: channelNameArg,
+  })
+  if (channel instanceof Error) return errorResponse(channel.message)
+
+  const entry: ScheduleEntry = {
+    id: randomUUID(),
+    name: validatedName,
+    runAt: validatedRunAt,
+    prompt: args.prompt,
+    enabled: true,
+  }
+
+  const store = new LeucoProjectStore()
+  const result = store.addScheduleEntry({
+    projectName: props.projectName,
+    agentName: props.agentName,
+    channelName: channel.name,
+    entry,
+  })
+  if (result instanceof Error) return errorResponse(result.message)
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ id: entry.id, name: entry.name, channel: channel.name }, null, 2),
+      },
+    ],
+  }
+}
+
+const handleScheduleList = async (props: Props, args: Record<string, unknown>) => {
+  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
+
+  const project = loadProject(props.projectName)
+  if (project instanceof Error) return errorResponse(project.message)
+
+  const agent = findAgent(project, props.agentName)
+  if (agent instanceof Error) return errorResponse(agent.message)
+
+  const channels = agent.channels.filter(
+    (c): c is ScheduleChannel =>
+      c.type === "schedule" && (!channelNameArg || c.name === channelNameArg),
+  )
+
+  if (channels.length === 0) {
+    return errorResponse(
+      channelNameArg
+        ? `schedule channel '${channelNameArg}' not found in ${props.projectName}/${props.agentName}`
+        : `${props.projectName}/${props.agentName} has no schedule channel`,
+    )
+  }
+
+  const items = channels.flatMap((channel) =>
+    channel.entries.map((entry) => ({
+      channel: channel.name,
+      id: entry.id,
+      name: entry.name,
+      runAt: entry.runAt,
+      enabled: entry.enabled,
+      prompt: entry.prompt,
+    })),
+  )
+
+  return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] }
+}
+
+const handleScheduleDelete = async (props: Props, args: Record<string, unknown>) => {
+  if (typeof args.id_or_name !== "string") {
+    return errorResponse("`id_or_name` is required")
+  }
+  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
+
+  const channel = resolveScheduleChannel({
+    projectName: props.projectName,
+    agentName: props.agentName,
+    channelName: channelNameArg,
+  })
+  if (channel instanceof Error) return errorResponse(channel.message)
+
+  const store = new LeucoProjectStore()
+  const result = store.removeScheduleEntry({
+    projectName: props.projectName,
+    agentName: props.agentName,
+    channelName: channel.name,
+    entryIdOrName: args.id_or_name,
+  })
+  if (result instanceof Error) return errorResponse(result.message)
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ removed: args.id_or_name, channel: channel.name }, null, 2),
+      },
+    ],
+  }
+}
+
+const loadProject = (projectName: string): Project | Error => {
+  const store = new LeucoProjectStore()
+  return store.load(projectName)
+}
+
+const resolveScheduleChannel = (input: {
+  projectName: string
+  agentName: string
+  channelName?: string
+}): ScheduleChannel | Error => {
+  const project = loadProject(input.projectName)
+  if (project instanceof Error) return project
+
+  const agent = findAgent(project, input.agentName)
+  if (agent instanceof Error) return agent
+
+  const channels = agent.channels.filter((c): c is ScheduleChannel => c.type === "schedule")
+
+  if (input.channelName !== undefined) {
+    const match = channels.find((c) => c.name === input.channelName)
+    if (!match) {
+      return new Error(
+        `schedule channel '${input.channelName}' not found in ${input.projectName}/${input.agentName}`,
+      )
+    }
+    return match
+  }
+
+  if (channels.length === 0) {
+    return new Error(`${input.projectName}/${input.agentName} has no schedule channel`)
+  }
+  if (channels.length > 1) {
+    const names = channels.map((c) => c.name).join(", ")
+    return new Error(
+      `multiple schedule channels exist (${names}); pass \`channel_name\` to disambiguate`,
+    )
+  }
+  return channels[0]!
 }
 
 const resolveTenantTokens = (input: {

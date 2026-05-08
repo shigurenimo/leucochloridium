@@ -1,6 +1,7 @@
 import { factory } from "@/cli/cli-factory"
 import { findAgent } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import type { Channel } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> agents <a> channels list — list channels under an agent
@@ -28,9 +29,21 @@ export const channelsListHandler = factory.createHandlers(async (c) => {
 
   const lines = agent.channels.map((ch) => {
     const state = ch.enabled ? "enabled" : "disabled"
-    const status = ch.botToken.length > 0 && ch.appToken.length > 0 ? "" : "\t(tokens empty)"
+    const status = describeChannelStatus(ch)
     return `${ch.name}\t${ch.type}\t${state}${status}`
   })
 
   return c.text(lines.join("\n"))
 })
+
+const describeChannelStatus = (ch: Channel): string => {
+  if (ch.type === "slack") {
+    return ch.botToken.length > 0 && ch.appToken.length > 0 ? "" : "\t(tokens empty)"
+  }
+
+  if (ch.type === "schedule") {
+    return `\t(${ch.entries.length} entries)`
+  }
+
+  return ""
+}

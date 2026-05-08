@@ -8,7 +8,12 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, resolve as resolvePath } from "node:path"
-import { type Project, projectSchema } from "@/config/config-schema"
+import {
+  type Channel,
+  type Project,
+  type ScheduleEntry,
+  projectSchema,
+} from "@/config/config-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 type Props = {
@@ -131,4 +136,114 @@ export class LeucoProjectStore {
 
     return this.save({ ...project, agents: nextAgents })
   }
+
+  /**
+   * Append a `ScheduleEntry` to the named schedule channel. The entry id and
+   * name must both be unique within the channel — duplicate ids are a bug
+   * (caller generates UUIDs); duplicate names would make CLI/MCP delete-by-name
+   * ambiguous.
+   */
+  addScheduleEntry(input: {
+    projectName: string
+    agentName: string
+    channelName: string
+    entry: ScheduleEntry
+  }): string | Error {
+    return this.mutateScheduleChannel(input, (channel) => {
+      if (channel.entries.some((e) => e.id === input.entry.id)) {
+        return new Error(`schedule entry id already exists: ${input.entry.id}`)
+      }
+      if (channel.entries.some((e) => e.name === input.entry.name)) {
+        return new Error(`schedule entry name already exists: ${input.entry.name}`)
+      }
+      return { ...channel, entries: [...channel.entries, input.entry] }
+    })
+  }
+
+  /**
+   * Remove a single schedule entry from the named channel. The entry is
+   * matched by id first, then by name — codex always knows the id but the
+   * CLI usually only has the name.
+   */
+  removeScheduleEntry(input: {
+    projectName: string
+    agentName: string
+    channelName: string
+    entryIdOrName: string
+  }): string | Error {
+    return this.mutateScheduleChannel(input, (channel) => {
+      const before = channel.entries.length
+      const next = channel.entries.filter(
+        (e) => e.id !== input.entryIdOrName && e.name !== input.entryIdOrName,
+      )
+      if (next.length === before) {
+        return new Error(`schedule entry not found: ${input.entryIdOrName}`)
+      }
+      return { ...channel, entries: next }
+    })
+  }
+
+  /**
+   * Update one entry in place (matched by id). Used by the schedule plugin
+   * to flip `enabled = false` on a one-shot after firing — kept as a generic
+   * mutator so future per-entry state (lastFiredAt, fail count) can land
+   * here without another helper.
+   */
+  updateScheduleEntry(input: {
+    projectName: string
+    agentName: string
+    channelName: string
+    entryId: string
+    patch: Partial<ScheduleEntry>
+  }): string | Error {
+    return this.mutateScheduleChannel(input, (channel) => {
+      let touched = false
+      const next = channel.entries.map((e) => {
+        if (e.id !== input.entryId) return e
+        touched = true
+        return { ...e, ...input.patch, id: e.id }
+      })
+      if (!touched) return new Error(`schedule entry not found: ${input.entryId}`)
+      return { ...channel, entries: next }
+    })
+  }
+
+  private mutateScheduleChannel(
+    input: { projectName: string; agentName: string; channelName: string },
+    transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable | Error,
+  ): string | Error {
+    const project = this.load(input.projectName)
+    if (project instanceof Error) return project
+
+    const agentIndex = project.agents.findIndex((a) => a.name === input.agentName)
+    if (agentIndex < 0) {
+      return new Error(`agent '${input.agentName}' not found in project '${input.projectName}'`)
+    }
+
+    const agent = project.agents[agentIndex]!
+    const channelIndex = agent.channels.findIndex((c) => c.name === input.channelName)
+    if (channelIndex < 0) {
+      return new Error(
+        `channel '${input.channelName}' not found in ${input.projectName}/${input.agentName}`,
+      )
+    }
+
+    const channel = agent.channels[channelIndex]!
+    if (channel.type !== "schedule") {
+      return new Error(`channel '${input.channelName}' is not a schedule channel`)
+    }
+
+    const updated = transform(channel)
+    if (updated instanceof Error) return updated
+
+    const nextChannels: Channel[] = agent.channels.slice()
+    nextChannels[channelIndex] = updated
+
+    const nextAgents = project.agents.slice()
+    nextAgents[agentIndex] = { ...agent, channels: nextChannels }
+
+    return this.save({ ...project, agents: nextAgents })
+  }
 }
+
+type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>

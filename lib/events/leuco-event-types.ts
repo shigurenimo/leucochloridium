@@ -53,5 +53,16 @@ export type LeucoEvent =
       method: string
       params: unknown
     }
+  | {
+      ts: number
+      type: "schedule.fired"
+      project: string
+      agent: string
+      channel: string
+      entryId: string
+      entryName: string
+      runAt: string
+      kind: "cron" | "one-shot"
+    }
 
 export type LeucoEventListener = (event: LeucoEvent) => void

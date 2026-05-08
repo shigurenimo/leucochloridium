@@ -1,5 +1,5 @@
 import { WebClient } from "@slack/web-api"
-import type { Agent, Project } from "@/config/config-schema"
+import type { Agent, Project, SlackChannel } from "@/config/config-schema"
 
 type Props = {
   botToken: string
@@ -39,7 +39,9 @@ type ResolveProps = {
 export const resolveSlackTokens = (
   props: ResolveProps,
 ): { botToken: string; appToken: string; channelName: string } | Error => {
-  const candidates = props.agent.channels.filter((ch) => ch.type === "slack" && ch.enabled)
+  const candidates = props.agent.channels.filter(
+    (ch): ch is SlackChannel => ch.type === "slack" && ch.enabled,
+  )
 
   if (props.channelName !== undefined) {
     const match = candidates.find((ch) => ch.name === props.channelName)

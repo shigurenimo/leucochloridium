@@ -8,5 +8,6 @@ usage:
   leuco projects <p> agents <a> channels <c> restart                           rebuild the parent tenant
   leuco projects <p> agents <a> channels <c> set-tokens [--bot-token <t>] [--app-token <t>]
                                                                                update Slack tokens (use \`-\` to read one from stdin)
+  leuco projects <p> agents <a> channels <c> schedules <subcommand>            manage entries on a schedule channel (add | list | remove)
 
 Run \`leuco projects <p> agents <a> channels <c> <subcommand> -h\` for details on a specific subcommand.`

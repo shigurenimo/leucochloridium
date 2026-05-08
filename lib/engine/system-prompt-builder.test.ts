@@ -132,6 +132,34 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out.split("\n---\n").length).toBe(2)
   })
 
+  it("notes that no schedule channel is registered when none exists", () => {
+    const out = new LeucoSystemPromptBuilder(baseProps).build()
+    expect(out).toContain("## Scheduled prompts")
+    expect(out).toContain("No schedule channel is registered")
+  })
+
+  it("lists schedule channels and the schedule_* MCP tools when present", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      identities: [
+        { name: "general", type: "slack", botUserId: "U01ABC" },
+        { name: "cron", type: "schedule", botUserId: null },
+      ],
+    }).build()
+
+    expect(out).toContain("## Scheduled prompts")
+    expect(out).toContain("`cron`")
+    expect(out).toContain("`schedule_create`")
+    expect(out).toContain("`schedule_list`")
+    expect(out).toContain("`schedule_delete`")
+    expect(out).toContain("<schedule channel=")
+    // schedule channels do not appear under the Slack identity heading
+    const slackIdx = out.indexOf("## Slack identity")
+    const scheduleIdx = out.indexOf("## Scheduled prompts")
+    const cronInSlackBlock = out.slice(slackIdx, scheduleIdx).includes("`cron`")
+    expect(cronInSlackBlock).toBe(false)
+  })
+
   it("omits the dynamic preamble when usePreamble is false", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
