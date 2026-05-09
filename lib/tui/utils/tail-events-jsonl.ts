@@ -1,4 +1,5 @@
-import { existsSync, openSync, readSync, statSync, watch, closeSync } from "node:fs"
+import { existsSync, openSync, readSync, statSync, watch, closeSync, type FSWatcher } from "node:fs"
+import { dirname } from "node:path"
 import { leucoEventSchema } from "@/events/leuco-event-schema"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
@@ -69,11 +70,34 @@ export const tailEventsJsonl = (props: {
     drain()
   }
 
-  const watcher = watch(props.path, { persistent: true }, () => {
-    drain()
-  })
+  let fileWatcher: FSWatcher | null = null
+  let parentWatcher: FSWatcher | null = null
+
+  const startFileWatcher = (): void => {
+    fileWatcher = watch(props.path, { persistent: true }, () => {
+      drain()
+    })
+  }
+
+  if (existsSync(props.path)) {
+    startFileWatcher()
+  } else {
+    // Wait for events.jsonl to appear by watching its parent directory. The
+    // daemon may not have written it yet on first launch, so swap to a direct
+    // file watch as soon as it shows up.
+    const parent = dirname(props.path)
+    if (existsSync(parent)) {
+      parentWatcher = watch(parent, { persistent: true }, () => {
+        if (fileWatcher !== null) return
+        if (!existsSync(props.path)) return
+        startFileWatcher()
+        drain()
+      })
+    }
+  }
 
   return () => {
-    watcher.close()
+    if (fileWatcher !== null) fileWatcher.close()
+    if (parentWatcher !== null) parentWatcher.close()
   }
 }
