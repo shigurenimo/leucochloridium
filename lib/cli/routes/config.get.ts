@@ -20,10 +20,8 @@ export const configGetHandler = factory.createHandlers(async (c) => {
   const settings = store.load()
   if (settings instanceof Error) return c.text(`leuco: ${settings.message}`, 500)
 
-  if (!Object.hasOwn(settings, key)) {
-    return c.text(`leuco: unknown config key: ${key}`, 404)
-  }
+  const found = Object.entries(settings).find((entry) => entry[0] === key)
+  if (!found) return c.text(`leuco: unknown config key: ${key}`, 404)
 
-  const value = (settings as Record<string, unknown>)[key]
-  return c.text(JSON.stringify(value))
+  return c.text(JSON.stringify(found[1]))
 })
