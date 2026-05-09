@@ -7,6 +7,13 @@ import { findAgent } from "@/cli/utils/lookup-config"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import type { ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
+import {
+  formatZodIssue,
+  scheduleCreateArgsSchema,
+  scheduleDeleteArgsSchema,
+  scheduleListArgsSchema,
+  slackCallArgsSchema,
+} from "@/mcp/mcp-tool-schemas"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
@@ -167,7 +174,7 @@ export const startMcpServer = async (props: Props): Promise<void> => {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name
-    const args = (request.params.arguments ?? {}) as Record<string, unknown>
+    const args: unknown = request.params.arguments ?? {}
 
     if (name === TOOL_SLACK_CALL) return handleSlackCall(handlerProps, args)
     if (name === TOOL_SCHEDULE_CREATE) return handleScheduleCreate(handlerProps, args)
@@ -187,49 +194,43 @@ type HandlerProps = {
   store: LeucoProjectStore
 }
 
-const handleSlackCall = async (props: HandlerProps, args: Record<string, unknown>) => {
-  if (typeof args.method !== "string" || args.method.length === 0) {
-    return errorResponse("`method` is required and must be a non-empty string")
-  }
-
-  const channelName = typeof args.channel_name === "string" ? args.channel_name : undefined
-  const body =
-    args.body !== null && typeof args.body === "object" && !Array.isArray(args.body)
-      ? (args.body as Record<string, unknown>)
-      : {}
+const handleSlackCall = async (props: HandlerProps, args: unknown) => {
+  const parsed = slackCallArgsSchema.safeParse(args)
+  if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
 
   const tokens = resolveTenantTokens({
     store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
-    channelName,
+    channelName: parsed.data.channel_name,
   })
   if (tokens instanceof Error) return errorResponse(tokens.message)
 
-  const result = await slackCall({ botToken: tokens.botToken, method: args.method, body })
+  const result = await slackCall({
+    botToken: tokens.botToken,
+    method: parsed.data.method,
+    body: parsed.data.body ?? {},
+  })
   if (result instanceof Error) return errorResponse(result.message)
 
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
 }
 
-const handleScheduleCreate = async (props: HandlerProps, args: Record<string, unknown>) => {
-  if (typeof args.name !== "string") return errorResponse("`name` is required")
-  if (typeof args.run_at !== "string") return errorResponse("`run_at` is required")
-  if (typeof args.prompt !== "string") return errorResponse("`prompt` is required")
+const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
+  const parsed = scheduleCreateArgsSchema.safeParse(args)
+  if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
 
-  const validatedName = validateLeucoName(args.name, "schedule entry name")
+  const validatedName = validateLeucoName(parsed.data.name, "schedule entry name")
   if (validatedName instanceof Error) return errorResponse(validatedName.message)
 
-  const validatedRunAt = validateRunAt(args.run_at)
+  const validatedRunAt = validateRunAt(parsed.data.run_at)
   if (validatedRunAt instanceof Error) return errorResponse(validatedRunAt.message)
-
-  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
 
   const channel = resolveScheduleChannel({
     store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
-    channelName: channelNameArg,
+    channelName: parsed.data.channel_name,
   })
   if (channel instanceof Error) return errorResponse(channel.message)
 
@@ -237,7 +238,7 @@ const handleScheduleCreate = async (props: HandlerProps, args: Record<string, un
     id: randomUUID(),
     name: validatedName,
     runAt: validatedRunAt,
-    prompt: args.prompt,
+    prompt: parsed.data.prompt,
     enabled: true,
   }
 
@@ -259,8 +260,10 @@ const handleScheduleCreate = async (props: HandlerProps, args: Record<string, un
   }
 }
 
-const handleScheduleList = async (props: HandlerProps, args: Record<string, unknown>) => {
-  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
+const handleScheduleList = async (props: HandlerProps, args: unknown) => {
+  const parsed = scheduleListArgsSchema.safeParse(args)
+  if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
+  const channelNameArg = parsed.data.channel_name
 
   const project = props.store.load(props.projectName)
   if (project instanceof Error) return errorResponse(project.message)
@@ -295,17 +298,15 @@ const handleScheduleList = async (props: HandlerProps, args: Record<string, unkn
   return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] }
 }
 
-const handleScheduleDelete = async (props: HandlerProps, args: Record<string, unknown>) => {
-  if (typeof args.id_or_name !== "string") {
-    return errorResponse("`id_or_name` is required")
-  }
-  const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
+const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
+  const parsed = scheduleDeleteArgsSchema.safeParse(args)
+  if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
 
   const channel = resolveScheduleChannel({
     store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
-    channelName: channelNameArg,
+    channelName: parsed.data.channel_name,
   })
   if (channel instanceof Error) return errorResponse(channel.message)
 
@@ -313,7 +314,7 @@ const handleScheduleDelete = async (props: HandlerProps, args: Record<string, un
     projectName: props.projectName,
     agentName: props.agentName,
     channelName: channel.name,
-    entryIdOrName: args.id_or_name,
+    entryIdOrName: parsed.data.id_or_name,
   })
   if (result instanceof Error) return errorResponse(result.message)
 
@@ -321,7 +322,7 @@ const handleScheduleDelete = async (props: HandlerProps, args: Record<string, un
     content: [
       {
         type: "text",
-        text: JSON.stringify({ removed: args.id_or_name, channel: channel.name }, null, 2),
+        text: JSON.stringify({ removed: parsed.data.id_or_name, channel: channel.name }, null, 2),
       },
     ],
   }
