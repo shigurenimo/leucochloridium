@@ -53,6 +53,13 @@ export class LeucoCodexClient {
   private protocol: LeucoCodexProtocol | null = null
   private notificationHandler: NotificationHandler | null = null
   private exitPromise: Promise<void> | null = null
+  /**
+   * In-flight `collectTurnInternal` rejecters. The protocol layer rejects
+   * pending JSON-RPC requests on transport failure, but turn collection
+   * waits on streamed notifications instead — without this registry a
+   * codex crash mid-turn would hang the awaiting Promise forever.
+   */
+  private readonly turnAborters = new Set<(err: Error) => void>()
 
   constructor(props: Props = {}) {
     this.bin = props.bin ?? "codex"
@@ -109,7 +116,9 @@ export class LeucoCodexClient {
     this.exitPromise = new Promise((resolve) => {
       child.once("exit", (code, signal) => {
         const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`
-        protocol.fail(new Error(`codex app-server exited (${reason})`))
+        const exitError = new Error(`codex app-server exited (${reason})`)
+        protocol.fail(exitError)
+        this.abortInFlightTurns(exitError)
         this.child = null
         this.protocol = null
         resolve()
@@ -118,6 +127,7 @@ export class LeucoCodexClient {
 
     child.once("error", (err) => {
       protocol.fail(err)
+      this.abortInFlightTurns(err)
     })
 
     this.child = child
@@ -214,9 +224,15 @@ export class LeucoCodexClient {
       const completedTexts: string[] = []
       const previous = this.notificationHandler
 
-      const restore = (): void => {
+      const aborter = (err: Error): void => {
+        teardown()
+        reject(err)
+      }
+
+      const teardown = (): void => {
         this.notificationHandler = previous
         if (previous) protocol.onNotification(previous)
+        this.turnAborters.delete(aborter)
       }
 
       const handler: NotificationHandler = (method, raw) => {
@@ -243,7 +259,7 @@ export class LeucoCodexClient {
         if (method === "turn/completed") {
           const parsed = turnCompletedSchema.safeParse(raw)
           if (!parsed.success) return
-          restore()
+          teardown()
           const turn = parsed.data.turn
           if (turn.status === "failed") {
             const message = turn.error?.message ?? "turn failed"
@@ -258,13 +274,20 @@ export class LeucoCodexClient {
 
       this.notificationHandler = handler
       protocol.onNotification(handler)
+      this.turnAborters.add(aborter)
 
       this.startTurn(params).then((result) => {
         if (result instanceof Error) {
-          restore()
+          teardown()
           reject(result)
         }
       })
     })
+  }
+
+  private abortInFlightTurns(err: Error): void {
+    const aborters = Array.from(this.turnAborters)
+    this.turnAborters.clear()
+    for (const aborter of aborters) aborter(err)
   }
 }
