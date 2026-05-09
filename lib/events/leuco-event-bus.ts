@@ -33,10 +33,10 @@ export class LeucoEventBus {
   }
 
   /**
-   * Convenience: emit a `log` event AND mirror the line through `process.stdout`
-   * so the daemon's text log stays human-tailable. Components that already
-   * have an `onLog` callback should call it themselves; this helper exists
-   * for places that only have a bus reference.
+   * Convenience: emit a structured `log` event onto the bus. Subscribers (the
+   * gateway SSE feed, the TUI tail, the events.jsonl writer) handle their own
+   * mirroring; this helper exists for components that only have a bus
+   * reference and no `onLog` callback.
    */
   log(level: "info" | "warn" | "error", line: string): void {
     this.emit({ ts: Date.now(), type: "log", level, line })

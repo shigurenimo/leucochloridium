@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import pkg from "../../package.json" with { type: "json" }
 import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { findAgent } from "@/cli/utils/lookup-config"
 import { validateLeucoName } from "@/cli/utils/validate-name"
@@ -139,7 +140,7 @@ export const startMcpServer = async (props: Props): Promise<void> => {
   }
 
   const server = new Server(
-    { name: `leuco/${props.projectName}/${props.agentName}`, version: "0.1.0" },
+    { name: `leuco/${props.projectName}/${props.agentName}`, version: pkg.version },
     { capabilities: { tools: {} } },
   )
 
