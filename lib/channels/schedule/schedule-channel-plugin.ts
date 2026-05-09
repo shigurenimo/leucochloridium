@@ -6,7 +6,6 @@ import {
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
-import { errorMessage } from "@/error-message"
 
 type Props = {
   /** Channel name as configured in settings.json. */
@@ -147,10 +146,9 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     const text = formatPrompt(this.name, entry)
     ctx.onLog(`[${this.name}] firing ${entry.name} (${kind})`)
 
-    try {
-      await ctx.runTextTurn(threadKey, text)
-    } catch (err) {
-      ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${errorMessage(err)}`)
+    const reply = await ctx.runTextTurn(threadKey, text)
+    if (reply instanceof Error) {
+      ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
     }
 
     if (kind === "one-shot") {

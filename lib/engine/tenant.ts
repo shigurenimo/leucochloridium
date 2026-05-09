@@ -77,7 +77,7 @@ export class LeucoTenant {
   /** True once the agent thread is loaded into the running codex app-server. */
   private agentThreadLive = false
   /** Single chain — all turns serialize through one codex thread. */
-  private turnChain: Promise<string> = Promise.resolve("")
+  private turnChain: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
     this.projectName = props.projectName
@@ -170,11 +170,24 @@ export class LeucoTenant {
    * still see which Slack thread / channel triggered the turn, but every turn
    * runs through the agent's single codex thread (serialized).
    */
-  runTextTurn(threadKey: string, text: string): Promise<string> {
+  runTextTurn(threadKey: string, text: string): Promise<string | Error> {
     const next = this.turnChain
-      .catch(() => "")
-      .then(async () => {
-        const threadId = await this.ensureAgentThread()
+      .catch(() => undefined)
+      .then(async (): Promise<string | Error> => {
+        const threadIdOrError = await this.ensureAgentThread()
+        if (threadIdOrError instanceof Error) {
+          this.bus.emit({
+            ts: Date.now(),
+            type: "turn.error",
+            project: this.projectName,
+            agent: this.agentName,
+            threadKey,
+            error: threadIdOrError.message,
+          })
+          return threadIdOrError
+        }
+        const threadId = threadIdOrError
+
         this.log(`[leuco] turn → ${threadId} (${truncate(text, 60)})`)
         this.bus.emit({
           ts: Date.now(),
@@ -184,35 +197,39 @@ export class LeucoTenant {
           threadKey,
           input: text,
         })
-        try {
-          const reply = await this.codex.runTextTurn(threadId, text, this.projectPath)
-          this.bus.emit({
-            ts: Date.now(),
-            type: "turn.complete",
-            project: this.projectName,
-            agent: this.agentName,
-            threadKey,
-            reply,
-          })
-          return reply
-        } catch (err) {
+
+        const reply = await this.codex.runTextTurn(threadId, text, this.projectPath)
+        if (reply instanceof Error) {
           this.bus.emit({
             ts: Date.now(),
             type: "turn.error",
             project: this.projectName,
             agent: this.agentName,
             threadKey,
-            error: errorText(err),
+            error: reply.message,
           })
-          throw err
+          return reply
         }
+
+        this.bus.emit({
+          ts: Date.now(),
+          type: "turn.complete",
+          project: this.projectName,
+          agent: this.agentName,
+          threadKey,
+          reply,
+        })
+        return reply
       })
 
-    this.turnChain = next
+    this.turnChain = next.then(
+      () => undefined,
+      () => undefined,
+    )
     return next
   }
 
-  private async ensureAgentThread(): Promise<string> {
+  private async ensureAgentThread(): Promise<string | Error> {
     if (this.agentThreadId !== null && this.agentThreadLive) return this.agentThreadId
 
     const developerInstructions = this.composeDeveloperInstructions()
@@ -224,6 +241,7 @@ export class LeucoTenant {
         developerInstructions,
         excludeTurns: true,
       })
+      if (resumed instanceof Error) return resumed
       if (resumed !== null) {
         this.log(`[leuco] resumed codex thread ${this.agentThreadId} for ${this.key}`)
         this.agentThreadLive = true
@@ -240,6 +258,7 @@ export class LeucoTenant {
       developerInstructions,
       model: this.agentSpec.model,
     })
+    if (result instanceof Error) return result
     this.agentThreadId = result.thread.id
     this.agentThreadLive = true
     this.persistAgentThread()

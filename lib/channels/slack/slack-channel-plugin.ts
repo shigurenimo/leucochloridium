@@ -2,7 +2,6 @@ import { LeucoSlackAdapter } from "@/channels/slack/slack-adapter"
 import { LeucoSlackListener } from "@/channels/slack/slack-listener"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
-import { errorMessage } from "@/error-message"
 
 export type SlackAckMode = "off" | "mention" | "always"
 
@@ -121,17 +120,17 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
 
-    try {
-      const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
+    const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
+    if (monologue instanceof Error) {
+      ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
+      if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
+    } else {
       logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
-    } catch (err) {
-      ctx.onLog(`[${this.name}] turn failed: ${errorMessage(err)}`)
-      if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
-    } finally {
-      if (wantsAck) {
-        await adapter.removeReaction(msg.channel, reactionTs, icons.progress)
-      }
+    }
+
+    if (wantsAck) {
+      await adapter.removeReaction(msg.channel, reactionTs, icons.progress)
     }
   }
 

@@ -3,8 +3,10 @@ import type { LeucoEventBus } from "@/events/leuco-event-bus"
 export type ChannelPluginContext = {
   cwd: string
   onLog: (line: string) => void
-  /** Submit a text turn to the underlying agent and resolve to its reply. */
-  runTextTurn: (threadKey: string, text: string) => Promise<string>
+  /** Submit a text turn to the underlying agent and resolve to its reply, or
+   * to an `Error` instance when the turn fails. The plugin must branch on
+   * `instanceof Error` instead of relying on rejection. */
+  runTextTurn: (threadKey: string, text: string) => Promise<string | Error>
   /** Structured event emitter (events.jsonl + live subscribers). */
   bus: LeucoEventBus
   /** Identity of the tenant the plugin is wired for, attached to events. */

@@ -10,9 +10,10 @@ export type CodexClientPort = {
   start(): Promise<void>
   stop(): Promise<void>
   isRunning(): boolean
-  startThread(params: ThreadStartParams): Promise<ThreadStartResult>
-  /** Resolves to `null` when the thread is not present in codex's sqlite —
-   * caller should fall back to `startThread`. */
-  resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null>
-  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string>
+  startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error>
+  /** Resolves to `null` when the thread is not present in codex's sqlite
+   * (caller should fall back to `startThread`), or to `Error` for any other
+   * failure (rule: backend functions return `T | Error` instead of throwing). */
+  resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null | Error>
+  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string | Error>
 }

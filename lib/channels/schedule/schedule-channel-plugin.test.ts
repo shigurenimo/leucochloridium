@@ -187,7 +187,7 @@ describe("LeucoScheduleChannelPlugin", () => {
       ...baseCtx,
       runTextTurn: async (threadKey, text) => {
         calls++
-        if (calls === 1) throw new Error("boom")
+        if (calls === 1) return new Error("boom")
         captured.turns.push({ threadKey, text })
         return ""
       },

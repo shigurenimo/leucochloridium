@@ -145,14 +145,16 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(order).toEqual(["enter:1", "exit:1", "enter:2", "exit:2"])
   })
 
-  it("propagates underlying codex errors to the caller", async () => {
+  it("returns underlying codex errors as Error instead of rejecting", async () => {
     const tenant = buildTenant({
       codex: fakeCodex({
-        runTextTurn: async () => Promise.reject(new Error("turn failed")),
+        runTextTurn: async () => new Error("turn failed"),
       }),
     })
 
-    await expect(tenant.runTextTurn("k", "x")).rejects.toThrow("turn failed")
+    const result = await tenant.runTextTurn("k", "x")
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) expect(result.message).toBe("turn failed")
   })
 
   it("recovers a failed turn so the next turn in the same thread still runs", async () => {
@@ -161,13 +163,15 @@ describe("LeucoTenant.runTextTurn", () => {
       codex: fakeCodex({
         runTextTurn: async (_id, text) => {
           attempt += 1
-          if (attempt === 1) return Promise.reject(new Error("first fails"))
+          if (attempt === 1) return new Error("first fails")
           return text
         },
       }),
     })
 
-    await expect(tenant.runTextTurn("k", "1")).rejects.toThrow("first fails")
+    const first = await tenant.runTextTurn("k", "1")
+    expect(first).toBeInstanceOf(Error)
+    if (first instanceof Error) expect(first.message).toBe("first fails")
     await expect(tenant.runTextTurn("k", "2")).resolves.toBe("2")
   })
 })
