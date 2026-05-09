@@ -106,6 +106,11 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
       return
     }
 
+    const liveEntryIds = new Set(entries.map((entry) => entry.id))
+    for (const trackedId of this.lastFiredMinute.keys()) {
+      if (!liveEntryIds.has(trackedId)) this.lastFiredMinute.delete(trackedId)
+    }
+
     const now = this.now()
     const minuteEpoch = Math.floor(now.getTime() / DEFAULT_INTERVAL_MS)
 

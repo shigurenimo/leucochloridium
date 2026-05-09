@@ -155,6 +155,25 @@ describe("LeucoScheduleChannelPlugin", () => {
     expect(captured.logs.some((l) => l.includes("bad cron"))).toBe(true)
   })
 
+  it("forgets lastFiredMinute keys for entries removed from the store", async () => {
+    const oneShot = isoEntry({
+      id: "33333333-3333-4333-8333-333333333333",
+      runAt: "2026-05-07T08:59:00Z",
+    })
+    const store = makeStore([oneShot])
+    const plugin = buildPlugin(store, new Date("2026-05-07T09:00:00Z"))
+
+    const { ctx } = makeCtx()
+    await plugin.start(ctx)
+
+    expect(store.entries).toEqual([])
+    const tracked = (plugin as unknown as { lastFiredMinute: Map<string, number> }).lastFiredMinute
+    expect(tracked.has(oneShot.id)).toBe(true)
+
+    await plugin.tickOnce()
+    expect(tracked.has(oneShot.id)).toBe(false)
+  })
+
   it("continues processing other entries after one fails", async () => {
     const store = makeStore([
       cronEntry({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "fails", runAt: "* * * * *" }),
