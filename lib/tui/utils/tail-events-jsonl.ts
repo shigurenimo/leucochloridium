@@ -92,6 +92,10 @@ export const tailEventsJsonl = (props: {
         if (!existsSync(props.path)) return
         startFileWatcher()
         drain()
+        if (parentWatcher !== null) {
+          parentWatcher.close()
+          parentWatcher = null
+        }
       })
     }
   }
