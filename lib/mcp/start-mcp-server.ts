@@ -6,7 +6,7 @@ import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { findAgent } from "@/cli/utils/lookup-config"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
-import type { Project, ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
+import type { ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
@@ -124,6 +124,13 @@ const SCHEDULE_DELETE_INPUT_SCHEMA = {
  * about, so a leaked tool call cannot reach another tenant's tokens.
  */
 export const startMcpServer = async (props: Props): Promise<void> => {
+  const store = new LeucoProjectStore()
+  const handlerProps: HandlerProps = {
+    projectName: props.projectName,
+    agentName: props.agentName,
+    store,
+  }
+
   const server = new Server(
     { name: `leuco/${props.projectName}/${props.agentName}`, version: "0.1.0" },
     { capabilities: { tools: {} } },
@@ -162,10 +169,10 @@ export const startMcpServer = async (props: Props): Promise<void> => {
     const name = request.params.name
     const args = (request.params.arguments ?? {}) as Record<string, unknown>
 
-    if (name === TOOL_SLACK_CALL) return handleSlackCall(props, args)
-    if (name === TOOL_SCHEDULE_CREATE) return handleScheduleCreate(props, args)
-    if (name === TOOL_SCHEDULE_LIST) return handleScheduleList(props, args)
-    if (name === TOOL_SCHEDULE_DELETE) return handleScheduleDelete(props, args)
+    if (name === TOOL_SLACK_CALL) return handleSlackCall(handlerProps, args)
+    if (name === TOOL_SCHEDULE_CREATE) return handleScheduleCreate(handlerProps, args)
+    if (name === TOOL_SCHEDULE_LIST) return handleScheduleList(handlerProps, args)
+    if (name === TOOL_SCHEDULE_DELETE) return handleScheduleDelete(handlerProps, args)
 
     return errorResponse(`unknown tool: ${name}`)
   })
@@ -174,7 +181,13 @@ export const startMcpServer = async (props: Props): Promise<void> => {
   await server.connect(transport)
 }
 
-const handleSlackCall = async (props: Props, args: Record<string, unknown>) => {
+type HandlerProps = {
+  projectName: string
+  agentName: string
+  store: LeucoProjectStore
+}
+
+const handleSlackCall = async (props: HandlerProps, args: Record<string, unknown>) => {
   if (typeof args.method !== "string" || args.method.length === 0) {
     return errorResponse("`method` is required and must be a non-empty string")
   }
@@ -186,6 +199,7 @@ const handleSlackCall = async (props: Props, args: Record<string, unknown>) => {
       : {}
 
   const tokens = resolveTenantTokens({
+    store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
     channelName,
@@ -198,7 +212,7 @@ const handleSlackCall = async (props: Props, args: Record<string, unknown>) => {
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
 }
 
-const handleScheduleCreate = async (props: Props, args: Record<string, unknown>) => {
+const handleScheduleCreate = async (props: HandlerProps, args: Record<string, unknown>) => {
   if (typeof args.name !== "string") return errorResponse("`name` is required")
   if (typeof args.run_at !== "string") return errorResponse("`run_at` is required")
   if (typeof args.prompt !== "string") return errorResponse("`prompt` is required")
@@ -212,6 +226,7 @@ const handleScheduleCreate = async (props: Props, args: Record<string, unknown>)
   const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
 
   const channel = resolveScheduleChannel({
+    store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
     channelName: channelNameArg,
@@ -226,8 +241,7 @@ const handleScheduleCreate = async (props: Props, args: Record<string, unknown>)
     enabled: true,
   }
 
-  const store = new LeucoProjectStore()
-  const result = store.addScheduleEntry({
+  const result = props.store.addScheduleEntry({
     projectName: props.projectName,
     agentName: props.agentName,
     channelName: channel.name,
@@ -245,10 +259,10 @@ const handleScheduleCreate = async (props: Props, args: Record<string, unknown>)
   }
 }
 
-const handleScheduleList = async (props: Props, args: Record<string, unknown>) => {
+const handleScheduleList = async (props: HandlerProps, args: Record<string, unknown>) => {
   const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
 
-  const project = loadProject(props.projectName)
+  const project = props.store.load(props.projectName)
   if (project instanceof Error) return errorResponse(project.message)
 
   const agent = findAgent(project, props.agentName)
@@ -281,21 +295,21 @@ const handleScheduleList = async (props: Props, args: Record<string, unknown>) =
   return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] }
 }
 
-const handleScheduleDelete = async (props: Props, args: Record<string, unknown>) => {
+const handleScheduleDelete = async (props: HandlerProps, args: Record<string, unknown>) => {
   if (typeof args.id_or_name !== "string") {
     return errorResponse("`id_or_name` is required")
   }
   const channelNameArg = typeof args.channel_name === "string" ? args.channel_name : undefined
 
   const channel = resolveScheduleChannel({
+    store: props.store,
     projectName: props.projectName,
     agentName: props.agentName,
     channelName: channelNameArg,
   })
   if (channel instanceof Error) return errorResponse(channel.message)
 
-  const store = new LeucoProjectStore()
-  const result = store.removeScheduleEntry({
+  const result = props.store.removeScheduleEntry({
     projectName: props.projectName,
     agentName: props.agentName,
     channelName: channel.name,
@@ -313,17 +327,13 @@ const handleScheduleDelete = async (props: Props, args: Record<string, unknown>)
   }
 }
 
-const loadProject = (projectName: string): Project | Error => {
-  const store = new LeucoProjectStore()
-  return store.load(projectName)
-}
-
 const resolveScheduleChannel = (input: {
+  store: LeucoProjectStore
   projectName: string
   agentName: string
   channelName?: string
 }): ScheduleChannel | Error => {
-  const project = loadProject(input.projectName)
+  const project = input.store.load(input.projectName)
   if (project instanceof Error) return project
 
   const agent = findAgent(project, input.agentName)
@@ -354,12 +364,12 @@ const resolveScheduleChannel = (input: {
 }
 
 const resolveTenantTokens = (input: {
+  store: LeucoProjectStore
   projectName: string
   agentName: string
   channelName?: string
 }): { botToken: string; channelName: string } | Error => {
-  const store = new LeucoProjectStore()
-  const project = store.load(input.projectName)
+  const project = input.store.load(input.projectName)
   if (project instanceof Error) return project
 
   const agent = findAgent(project, input.agentName)
