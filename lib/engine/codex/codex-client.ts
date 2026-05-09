@@ -14,7 +14,6 @@ import type {
   TurnInputItem,
   TurnStartParams,
 } from "@/engine/codex/codex-types"
-import { errorMessage } from "@/error-message"
 
 type NotificationHandler = (method: string, params: unknown) => void
 
@@ -154,9 +153,9 @@ export class LeucoCodexClient {
     if (this.exitPromise) await this.exitPromise
   }
 
-  async startThread(params: ThreadStartParams): Promise<ThreadStartResult> {
+  async startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error> {
     const protocol = this.protocol
-    if (!protocol) return Promise.reject(new Error("codex client not started"))
+    if (!protocol) return new Error("codex client not started")
     const result = await protocol.request("thread/start", params)
     return threadStartResultSchema.parse(result)
   }
@@ -167,22 +166,22 @@ export class LeucoCodexClient {
    * the thread cannot be found, so callers can transparently fall back to
    * `startThread` for stale ids.
    */
-  async resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null> {
+  async resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null | Error> {
     const protocol = this.protocol
-    if (!protocol) return Promise.reject(new Error("codex client not started"))
+    if (!protocol) return new Error("codex client not started")
     try {
       const result = await protocol.request("thread/resume", params)
       return threadStartResultSchema.parse(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (/not found|no such thread|no thread/i.test(message)) return null
-      throw err
+      return err instanceof Error ? err : new Error(message)
     }
   }
 
-  startTurn(params: TurnStartParams): Promise<unknown> {
+  startTurn(params: TurnStartParams): Promise<unknown | Error> {
     const protocol = this.protocol
-    if (!protocol) return Promise.reject(new Error("codex client not started"))
+    if (!protocol) return Promise.resolve(new Error("codex client not started"))
     return protocol.request("turn/start", params)
   }
 
@@ -191,15 +190,25 @@ export class LeucoCodexClient {
    * concatenated assistant text — preferring `item/completed` agentMessage
    * text, falling back to streamed `item/agentMessage/delta`.
    */
-  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string> {
+  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string | Error> {
     const input: TurnInputItem[] = [{ type: "text", text }]
     return this.collectTurn({ threadId, input, cwd })
   }
 
-  private collectTurn(params: TurnStartParams): Promise<string> {
+  private async collectTurn(params: TurnStartParams): Promise<string | Error> {
     const protocol = this.protocol
-    if (!protocol) return Promise.reject(new Error("codex client not started"))
+    if (!protocol) return new Error("codex client not started")
+    try {
+      return await this.collectTurnInternal(protocol, params)
+    } catch (err) {
+      return err instanceof Error ? err : new Error(String(err))
+    }
+  }
 
+  private collectTurnInternal(
+    protocol: LeucoCodexProtocol,
+    params: TurnStartParams,
+  ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const deltas: string[] = []
       const completedTexts: string[] = []
@@ -250,9 +259,11 @@ export class LeucoCodexClient {
       this.notificationHandler = handler
       protocol.onNotification(handler)
 
-      this.startTurn(params).catch((err: unknown) => {
-        restore()
-        reject(new Error(errorMessage(err)))
+      this.startTurn(params).then((result) => {
+        if (result instanceof Error) {
+          restore()
+          reject(result)
+        }
       })
     })
   }
