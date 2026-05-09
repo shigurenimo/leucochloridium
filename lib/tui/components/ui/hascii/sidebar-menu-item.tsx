@@ -19,14 +19,15 @@ const pickBg = (
 ): string | undefined => {
   if (isDisabled) return undefined
   if (isPressed) return theme.color.secondaryActive
-  if (isHovered) {
-    return isActive ? theme.color.secondaryActive : theme.color.secondaryHover
-  }
-  if (isActive) return theme.color.secondaryHover
+  if (isHovered && isActive) return theme.color.hoverActive
+  if (isHovered) return theme.color.secondaryHover
+  if (isActive) return theme.color.secondaryActive
   return undefined
 }
 
-/** Single pressable row inside HasciiSidebarContent. Background mirrors the button rest/hover/active progression. */
+const ROW_HEIGHT = 3
+
+/** Single pressable row inside HasciiSidebarContent. Active items show a thin left rule using ▏ glyphs. */
 export function HasciiSidebarMenuItem(props: Props) {
   const isActive = props.isActive ?? false
   const isDisabled = props.isDisabled ?? false
@@ -51,6 +52,15 @@ export function HasciiSidebarMenuItem(props: Props) {
       backgroundColor={bg}
       {...press.bind}
     >
+      {isActive ? (
+        <box position="absolute" left={0} top={0} bottom={0} flexDirection="column">
+          {Array.from({ length: ROW_HEIGHT }, (_, index) => (
+            <text key={index} fg={theme.color.primary}>
+              ▏
+            </text>
+          ))}
+        </box>
+      ) : null}
       <text fg={fg}>{props.children}</text>
     </box>
   )

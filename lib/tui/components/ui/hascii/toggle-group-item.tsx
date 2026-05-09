@@ -29,7 +29,7 @@ export function HasciiToggleGroupItem(props: Props) {
       ? theme.color.secondaryActive
       : press.isHovered
         ? theme.color.secondaryHover
-        : theme.color.muted
+        : theme.color.popover
 
   const fg = isSelected
     ? theme.color.primaryForeground

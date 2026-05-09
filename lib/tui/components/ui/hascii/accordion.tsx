@@ -1,8 +1,7 @@
 import { createContext, useContext, useState } from "react"
 import type { ReactNode } from "react"
-import { useHasciiTheme } from "@/tui/utils/hascii/theme-context"
 
-type SelectionMode = "single" | "multiple"
+type Mode = "single" | "multiple"
 
 type SingleProps = {
   type?: "single"
@@ -23,24 +22,23 @@ export type Props = (SingleProps | MultipleProps) & {
 }
 
 type ContextValue = {
-  mode: SelectionMode
-  isPressed: (value: string) => boolean
+  mode: Mode
+  isOpen: (value: string) => boolean
   toggle: (value: string) => void
 }
 
-const ToggleGroupContext = createContext<ContextValue | null>(null)
+const AccordionContext = createContext<ContextValue | null>(null)
 
-/** Read the current ToggleGroup context. Returns null when called outside a HasciiToggleGroup. */
-export function useHasciiToggleGroup(): ContextValue | null {
-  return useContext(ToggleGroupContext)
+/** Read the current Accordion context. Returns null when called outside HasciiAccordion. */
+export function useHasciiAccordion(): ContextValue | null {
+  return useContext(AccordionContext)
 }
 
 const isSingle = (props: Props): props is SingleProps & { children?: ReactNode } =>
   props.type !== "multiple"
 
-/** Segmented row of HasciiToggleGroupItem. type="single" is mutually exclusive; type="multiple" allows any subset. */
-export function HasciiToggleGroup(props: Props) {
-  const theme = useHasciiTheme()
+/** Vertical stack of collapsible HasciiAccordionItem children. type="single" only opens one section at a time. */
+export function HasciiAccordion(props: Props) {
   const internalSingleState = useState<string>(isSingle(props) ? (props.defaultValue ?? "") : "")
   const internalMultipleState = useState<string[]>(
     !isSingle(props) ? (props.defaultValue ?? []) : [],
@@ -52,22 +50,22 @@ export function HasciiToggleGroup(props: Props) {
     const current = props.value ?? internal
 
     const toggle = (value: string) => {
-      if (props.value === undefined) setInternal(value)
-      props.onChange?.(value)
+      const next = current === value ? "" : value
+
+      if (props.value === undefined) setInternal(next)
+      props.onChange?.(next)
     }
 
     const ctx: ContextValue = {
       mode: "single",
-      isPressed: (value) => value === current,
+      isOpen: (value) => value === current,
       toggle,
     }
 
     return (
-      <ToggleGroupContext.Provider value={ctx}>
-        <box flexDirection="row" gap={0} height={1} backgroundColor={theme.color.popover}>
-          {props.children}
-        </box>
-      </ToggleGroupContext.Provider>
+      <AccordionContext.Provider value={ctx}>
+        <box flexDirection="column">{props.children}</box>
+      </AccordionContext.Provider>
     )
   }
 
@@ -79,21 +77,20 @@ export function HasciiToggleGroup(props: Props) {
     const next = current.includes(value)
       ? current.filter((entry) => entry !== value)
       : [...current, value]
+
     if (props.value === undefined) setInternal(next)
     props.onChange?.(next)
   }
 
   const ctx: ContextValue = {
     mode: "multiple",
-    isPressed: (value) => current.includes(value),
+    isOpen: (value) => current.includes(value),
     toggle,
   }
 
   return (
-    <ToggleGroupContext.Provider value={ctx}>
-      <box flexDirection="row" gap={0} height={1}>
-        {props.children}
-      </box>
-    </ToggleGroupContext.Provider>
+    <AccordionContext.Provider value={ctx}>
+      <box flexDirection="column">{props.children}</box>
+    </AccordionContext.Provider>
   )
 }

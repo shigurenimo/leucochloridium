@@ -18,12 +18,15 @@ export type Props = {
   children?: ReactNode
 }
 
-const sizeDims: Record<Size, { paddingX: number; height: number }> = {
-  default: { paddingX: 2, height: 1 },
+type ResolvedSize = "sm" | "md" | "lg"
+
+const sizeDims: Record<ResolvedSize, { paddingX: number; height: number }> = {
   sm: { paddingX: 1, height: 1 },
   md: { paddingX: 2, height: 1 },
-  lg: { paddingX: 3, height: 3 },
+  lg: { paddingX: 2, height: 3 },
 }
+
+const resolveSize = (size: Size): ResolvedSize => (size === "default" ? "md" : size)
 
 const pickBg = (
   rest: string | undefined,
@@ -46,7 +49,8 @@ export function HasciiButton(props: Props) {
   const isDisabled = props.isDisabled ?? false
 
   const theme = useHasciiTheme()
-  const dims = sizeDims[size]
+  const resolvedSize = resolveSize(size)
+  const dims = sizeDims[resolvedSize]
 
   const press = usePressable({ isDisabled, onPress: props.onPress })
 
@@ -76,9 +80,8 @@ export function HasciiButton(props: Props) {
           ? theme.color.primaryHover
           : theme.color.primary
 
-    const isMedium = size === "md" || size === "default"
-    const outlinePaddingX = size === "sm" ? 0 : isMedium ? 1 : size === "lg" ? 2 : dims.paddingX
-    const outlineHeight = size === "sm" || isMedium ? 3 : dims.height
+    const outlinePaddingX = resolvedSize === "sm" ? 0 : resolvedSize === "md" ? 1 : 2
+    const outlineHeight = 3
 
     return (
       <box

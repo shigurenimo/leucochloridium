@@ -12,7 +12,7 @@ export function HasciiCard(props: Props) {
 
   return (
     <box
-      backgroundColor={theme.color.muted}
+      backgroundColor={theme.color.card}
       flexDirection="column"
       paddingTop={1}
       paddingBottom={1}

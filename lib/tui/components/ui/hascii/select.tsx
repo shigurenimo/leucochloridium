@@ -23,10 +23,9 @@ const pickItemBg = (
   theme: HasciiTheme,
 ): string | undefined => {
   if (pressed) return theme.color.secondaryActive
-  if (hovered) {
-    return isActive ? theme.color.secondaryActive : theme.color.secondaryHover
-  }
-  if (isActive) return theme.color.secondaryHover
+  if (hovered && isActive) return theme.color.hoverActive
+  if (hovered) return theme.color.secondaryHover
+  if (isActive) return theme.color.secondaryActive
   return undefined
 }
 
@@ -47,8 +46,19 @@ function HasciiSelectItem(props: ItemProps) {
     props.isActive || press.isHovered ? theme.color.foreground : theme.color.mutedForeground
   const descColor = theme.color.mutedForeground
 
+  const rowHeight = props.option.description ? 4 : 3
+
   return (
     <box flexDirection="row" backgroundColor={bg} {...press.bind}>
+      {props.isActive ? (
+        <box position="absolute" left={0} top={0} bottom={0} flexDirection="column">
+          {Array.from({ length: rowHeight }, (_, index) => (
+            <text key={index} fg={theme.color.primary}>
+              ▏
+            </text>
+          ))}
+        </box>
+      ) : null}
       <box
         flexGrow={1}
         flexDirection="column"

@@ -31,22 +31,26 @@ export function HasciiTabs(props: Props) {
   }
 
   return (
-    <box flexDirection="row" gap={0} height={1}>
+    <box flexDirection="row" gap={0} height={2}>
       {props.items.map((item) => {
         const isActive = item.value === current
-        const bg = isActive ? theme.color.primary : theme.color.muted
-        const fg = isActive ? theme.color.primaryForeground : theme.color.mutedForeground
+        const fg = isActive ? theme.color.foreground : theme.color.mutedForeground
+        const itemWidth = item.label.length + 4
 
         return (
           <box
             key={item.value}
-            height={1}
+            height={2}
             paddingLeft={2}
             paddingRight={2}
-            backgroundColor={bg}
             onMouseUp={() => onSelect(item.value)}
           >
             <text fg={fg}>{item.label}</text>
+            {isActive ? (
+              <box position="absolute" bottom={0} left={0} right={0}>
+                <text fg={theme.color.primary}>{"▁".repeat(itemWidth)}</text>
+              </box>
+            ) : null}
           </box>
         )
       })}

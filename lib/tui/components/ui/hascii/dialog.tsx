@@ -1,50 +1,27 @@
 import type { ReactNode } from "react"
-import { useHasciiTheme } from "@/tui/utils/hascii/theme-context"
-
-type Variant = "default" | "outline"
+import { HasciiButton } from "@/tui/components/ui/hascii/button"
+import { HasciiCard } from "@/tui/components/ui/hascii/card"
 
 export type Props = {
-  variant?: Variant
   width?: number
+  onClose?: () => void
   children?: ReactNode
 }
 
-/** Floating dialog container. variant="default" uses a filled background; "outline" uses a bordered transparent surface. */
+/** Floating dialog. Wraps a HasciiCard for layout and renders a default-variant x button just above the card's top-right corner when onClose is provided. */
 export function HasciiDialog(props: Props) {
-  const variant = props.variant ?? "default"
-  const theme = useHasciiTheme()
-
-  if (variant === "outline") {
-    return (
-      <box
-        flexDirection="column"
-        width={props.width ?? 48}
-        border
-        borderStyle="rounded"
-        borderColor={theme.color.border}
-        paddingTop={1}
-        paddingBottom={1}
-        paddingLeft={2}
-        paddingRight={2}
-        gap={1}
-      >
-        {props.children}
-      </box>
-    )
-  }
+  const width = props.width ?? 48
 
   return (
-    <box
-      flexDirection="column"
-      width={props.width ?? 48}
-      backgroundColor={theme.color.muted}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
-      paddingRight={2}
-      gap={1}
-    >
-      {props.children}
+    <box width={width} paddingTop={1}>
+      <HasciiCard width={width}>{props.children}</HasciiCard>
+      {props.onClose ? (
+        <box position="absolute" top={0} right={0}>
+          <HasciiButton variant="secondary" size="default" onPress={props.onClose}>
+            x
+          </HasciiButton>
+        </box>
+      ) : null}
     </box>
   )
 }
