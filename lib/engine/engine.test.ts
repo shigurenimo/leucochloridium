@@ -161,6 +161,52 @@ describe("LeucoEngine.reconcile", () => {
     expect(engine.listProjects()[0]?.agents[0]?.tenantRunning).toBe(true)
   })
 
+  it("serializes concurrent reconcile() calls so a tenant is not double-started", async () => {
+    const starts: string[] = []
+    let releaseFirstStart: () => void = () => {}
+    const firstStartGate = new Promise<void>((resolve) => {
+      releaseFirstStart = resolve
+    })
+
+    let buildCalls = 0
+    const built = buildTenant(
+      "demo",
+      "b",
+      fakeCodex({
+        start: async () => {
+          starts.push("b")
+          if (starts.length === 1) await firstStartGate
+        },
+      }),
+    )
+
+    const projects = [project("demo", [agent("b", true)])]
+    const engine = new LeucoEngine({
+      tenants: [],
+      projectStore: fakeStore(projects),
+      buildTenant: () => {
+        buildCalls++
+        return built
+      },
+      onLog: () => {},
+    })
+
+    const first = engine.reconcile()
+    const second = engine.reconcile()
+
+    // Give the second call a chance to enter; if it's not queued behind
+    // the first, it would already be calling start() against the same tenant.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(starts).toEqual(["b"])
+
+    releaseFirstStart()
+    await first
+    await second
+
+    expect(starts).toEqual(["b"])
+    expect(buildCalls).toBe(1)
+  })
+
   it("keeps tenants that are still enabled and present", async () => {
     const stops: string[] = []
     const a = buildTenant(

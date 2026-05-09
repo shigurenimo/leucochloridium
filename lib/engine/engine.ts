@@ -41,6 +41,10 @@ export class LeucoEngine {
   private readonly log: Logger
   private readonly bus: LeucoEventBus
   private gateway: LeucoGatewayServer | null = null
+  // Serialization tail for reconcile(): every incoming call chains onto this
+  // promise so two SIGHUPs in quick succession can't interleave start/stop on
+  // `this.tenants` and accidentally double-start the same tenant.
+  private reconcileQueue: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
     this.tenants = props.tenants
@@ -89,8 +93,21 @@ export class LeucoEngine {
    *  - start any tenant whose (project, agent) is newly enabled
    * Channel-level changes inside a still-running tenant currently require a
    * full restart; reconcile() does not yet propagate them.
+   *
+   * Calls are serialized: a second invocation while a reconcile is in flight
+   * waits for it to finish before its own pass starts, so each pass observes
+   * a fully-settled `this.tenants`.
    */
   async reconcile(): Promise<void | Error> {
+    const result = this.reconcileQueue.then(() => this.runReconcile())
+    this.reconcileQueue = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private async runReconcile(): Promise<void | Error> {
     const projects = this.projectStore.list()
     if (projects instanceof Error) return projects
 
