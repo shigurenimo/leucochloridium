@@ -1,0 +1,42 @@
+name: Improvement
+description: Code-quality / architecture / bug / convention issue surfaced by review.
+title: "<area>: <one-line summary>"
+labels: ["improvement"]
+body:
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: file_path:line_number references.
+      placeholder: lib/engine/tenant.ts:207
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's wrong, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Proposed fix
+      description: How to address it, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Constraints, related rules, dependencies on other issues.
