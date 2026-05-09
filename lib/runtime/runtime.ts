@@ -9,6 +9,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import pkg from "../../package.json" with { type: "json" }
 import { LeucoChannelHost } from "@/channels/channel-host"
 import type { Agent, Project } from "@/config/config-schema"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
@@ -190,6 +191,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     cwd: props.project.path,
     env: childEnv,
     onLog: props.onLog,
+    clientVersion: pkg.version,
     onAnyNotification: (method, params) => {
       props.bus.emit({
         ts: Date.now(),
