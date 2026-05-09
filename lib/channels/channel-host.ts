@@ -52,22 +52,23 @@ export class LeucoChannelHost {
     channel: Channel
     projectStore?: LeucoProjectStore
   }): ChannelPlugin | Error {
-    const { channel } = props
-    const label = `${props.projectName}/${props.agentName}/${channel.name}`
+    const label = `${props.projectName}/${props.agentName}/${props.channel.name}`
 
-    if (channel.type === "slack") {
-      if (channel.botToken.length === 0) return new Error(`channel ${label}: botToken is empty`)
-      if (channel.appToken.length === 0) return new Error(`channel ${label}: appToken is empty`)
+    if (props.channel.type === "slack") {
+      if (props.channel.botToken.length === 0)
+        return new Error(`channel ${label}: botToken is empty`)
+      if (props.channel.appToken.length === 0)
+        return new Error(`channel ${label}: appToken is empty`)
       return new LeucoSlackChannelPlugin({
-        name: channel.name,
-        botToken: channel.botToken,
-        appToken: channel.appToken,
-        ackMode: channel.ackMode,
-        ackIcons: channel.ackIcons,
+        name: props.channel.name,
+        botToken: props.channel.botToken,
+        appToken: props.channel.appToken,
+        ackMode: props.channel.ackMode,
+        ackIcons: props.channel.ackIcons,
       })
     }
 
-    if (channel.type === "schedule") {
+    if (props.channel.type === "schedule") {
       if (!props.projectStore) {
         return new Error(`channel ${label}: schedule channels require a projectStore`)
       }
@@ -75,9 +76,9 @@ export class LeucoChannelHost {
         projectStore: props.projectStore,
         projectName: props.projectName,
         agentName: props.agentName,
-        channelName: channel.name,
+        channelName: props.channel.name,
       })
-      return new LeucoScheduleChannelPlugin({ name: channel.name, store })
+      return new LeucoScheduleChannelPlugin({ name: props.channel.name, store })
     }
 
     return new Error("unsupported channel type")

@@ -127,8 +127,13 @@ export class LeucoProjectStore {
       if (agent.name !== agentName) return agent
       touched = true
       if (codexThreadId === null) {
-        const { codexThreadId: _drop, ...rest } = agent
-        return rest
+        return {
+          name: agent.name,
+          enabled: agent.enabled,
+          useCommonInstructions: agent.useCommonInstructions,
+          prompts: agent.prompts,
+          channels: agent.channels,
+        }
       }
       return { ...agent, codexThreadId }
     })

@@ -139,7 +139,9 @@ export class LeucoEngine {
     this.tenants = keep
 
     const runningKeys = new Set(this.tenants.map((t) => t.key))
-    for (const [key, target] of targetByKey) {
+    for (const entry of targetByKey) {
+      const key = entry[0]
+      const target = entry[1]
       if (runningKeys.has(key)) continue
 
       const tenant = this.buildTenant(target.project, target.agent)
