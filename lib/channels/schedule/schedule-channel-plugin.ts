@@ -111,7 +111,9 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     }
 
     const now = this.now()
-    const minuteEpoch = Math.floor(now.getTime() / DEFAULT_INTERVAL_MS)
+    // Dedup window is always one wall-clock minute (cron resolution). Don't
+    // tie this to `intervalMs` even if the tick rate is overridden in tests.
+    const minuteEpoch = Math.floor(now.getTime() / 60_000)
 
     for (const entry of entries) {
       if (!entry.enabled) continue

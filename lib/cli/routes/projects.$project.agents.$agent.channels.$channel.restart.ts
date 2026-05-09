@@ -1,10 +1,9 @@
 import { factory } from "@/cli/cli-factory"
 import { findAgent, findChannel } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
 import type { Project } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
-
-const RECONCILE_GAP_MS = 400
 
 const help = `leuco projects <p> agents <a> channels <c> restart — reload a channel
 
@@ -54,7 +53,7 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
   if (offSave instanceof Error) return c.text(`leuco: ${offSave.message}`, 500)
   c.var.daemon.reload()
 
-  await new Promise((resolve) => setTimeout(resolve, RECONCILE_GAP_MS))
+  await sleepReconcileGap()
 
   const onSave = store.save(setChannelEnabled(true))
   if (onSave instanceof Error) return c.text(`leuco: ${onSave.message}`, 500)
