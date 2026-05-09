@@ -1,4 +1,5 @@
 import { existsSync, openSync, readSync, statSync, watch, closeSync } from "node:fs"
+import { leucoEventSchema } from "@/events/leuco-event-schema"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 type Listener = (event: LeucoEvent) => void
@@ -48,12 +49,14 @@ export const tailEventsJsonl = (props: {
     for (const line of lines) {
       const trimmed = line.trim()
       if (trimmed.length === 0) continue
+      let raw: unknown
       try {
-        const parsed = JSON.parse(trimmed) as LeucoEvent
-        props.onEvent(parsed)
+        raw = JSON.parse(trimmed)
       } catch {
-        // ignore malformed lines (partial writes etc.)
+        continue
       }
+      const parsed = leucoEventSchema.safeParse(raw)
+      if (parsed.success) props.onEvent(parsed.data)
     }
   }
 

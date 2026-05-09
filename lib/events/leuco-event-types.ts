@@ -1,4 +1,5 @@
-import type { SlackEvent } from "@/channels/slack/slack-types"
+import type { z } from "zod"
+import type { leucoEventSchema } from "@/events/leuco-event-schema"
 
 /**
  * Structured events emitted by the daemon. Persisted as one JSON object per
@@ -8,61 +9,6 @@ import type { SlackEvent } from "@/channels/slack/slack-types"
  * Every variant carries a `ts` (epoch milliseconds) and a discriminator
  * `type` so consumers can filter without reaching deeper into the payload.
  */
-export type LeucoEvent =
-  | { ts: number; type: "log"; level: "info" | "warn" | "error"; line: string }
-  | { ts: number; type: "tenant.started"; project: string; agent: string }
-  | { ts: number; type: "tenant.stopped"; project: string; agent: string }
-  | { ts: number; type: "engine.reconcile"; added: string[]; removed: string[] }
-  | {
-      ts: number
-      type: "slack.event"
-      project: string
-      agent: string
-      channel: string
-      event: SlackEvent
-    }
-  | {
-      ts: number
-      type: "turn.start"
-      project: string
-      agent: string
-      threadKey: string
-      input: string
-    }
-  | {
-      ts: number
-      type: "turn.complete"
-      project: string
-      agent: string
-      threadKey: string
-      reply: string
-    }
-  | {
-      ts: number
-      type: "turn.error"
-      project: string
-      agent: string
-      threadKey: string
-      error: string
-    }
-  | {
-      ts: number
-      type: "codex.notification"
-      project: string
-      agent: string
-      method: string
-      params: unknown
-    }
-  | {
-      ts: number
-      type: "schedule.fired"
-      project: string
-      agent: string
-      channel: string
-      entryId: string
-      entryName: string
-      runAt: string
-      kind: "cron" | "one-shot"
-    }
+export type LeucoEvent = z.infer<typeof leucoEventSchema>
 
 export type LeucoEventListener = (event: LeucoEvent) => void
