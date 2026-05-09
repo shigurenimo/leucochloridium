@@ -125,14 +125,24 @@ export class LeucoCodexClient {
     this.protocol = protocol
 
     // Mandatory handshake. codex app-server rejects every other request with
-    // `Not initialized` until `initialize` completes.
-    await protocol.request("initialize", {
-      clientInfo: {
-        name: this.clientName,
-        title: this.clientTitle,
-        version: this.clientVersion,
-      },
-    })
+    // `Not initialized` until `initialize` completes. If the request fails
+    // (bad CODEX_HOME, codex binary missing capabilities, etc.) we must kill
+    // the spawned child here — otherwise the caller's `start()` rejects with
+    // no live `LeucoCodexClient` reference to call `stop()` on, leaving a
+    // zombie codex process.
+    try {
+      await protocol.request("initialize", {
+        clientInfo: {
+          name: this.clientName,
+          title: this.clientTitle,
+          version: this.clientVersion,
+        },
+      })
+    } catch (err) {
+      child.kill("SIGTERM")
+      if (this.exitPromise) await this.exitPromise
+      throw err
+    }
     protocol.notify("initialized")
   }
 
