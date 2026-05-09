@@ -176,41 +176,51 @@ const tomlMultiline = (value: string): string => {
  * the agent files leuco itself writes.
  */
 const parseAgentToml = (text: string): Record<string, string> => {
-  const result: Record<string, string> = {}
-  const lines = text.split("\n")
+  const accumulator = new TomlAccumulator()
+  for (const line of text.split("\n")) {
+    accumulator.feed(line)
+  }
+  return accumulator.build()
+}
 
-  let key: string | null = null
-  let buf: string[] = []
+/**
+ * Inner state machine for `parseAgentToml`. Mutation is hidden behind `feed`
+ * so callers do not need `let` to track the current multiline-string key.
+ */
+class TomlAccumulator {
+  private readonly result: Record<string, string> = {}
+  private currentKey: string | null = null
+  private buffer: string[] = []
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
-
-    if (key !== null) {
+  feed(line: string): void {
+    if (this.currentKey !== null) {
       if (line.trim() === '"""') {
-        result[key] = buf.join("\n").replace(/\\"\\"\\"/g, '"""')
-        key = null
-        buf = []
-        continue
+        this.result[this.currentKey] = this.buffer.join("\n").replace(/\\"\\"\\"/g, '"""')
+        this.currentKey = null
+        this.buffer = []
+        return
       }
-      buf.push(line)
-      continue
+      this.buffer.push(line)
+      return
     }
 
     const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
-    if (!match) continue
+    if (!match) return
     const fieldKey = match[1]!
     const valuePart = match[2]!
 
     if (valuePart.startsWith('"""')) {
-      key = fieldKey
-      buf = []
-      continue
+      this.currentKey = fieldKey
+      this.buffer = []
+      return
     }
 
     const stringMatch = valuePart.match(/^"((?:\\.|[^\\"])*)"\s*(?:#.*)?$/)
-    if (!stringMatch) continue
-    result[fieldKey] = stringMatch[1]!.replace(/\\\\/g, "\\").replace(/\\"/g, '"')
+    if (!stringMatch) return
+    this.result[fieldKey] = stringMatch[1]!.replace(/\\\\/g, "\\").replace(/\\"/g, '"')
   }
 
-  return result
+  build(): Record<string, string> {
+    return this.result
+  }
 }
