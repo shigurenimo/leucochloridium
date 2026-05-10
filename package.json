@@ -29,6 +29,7 @@
     "lib/non-bun-stub.js",
     "!lib/**/*.test.ts",
     "!lib/**/*.test.tsx",
+    "!lib/**/*.bun-test.ts",
     "tsconfig.json",
     "README.md"
   ],

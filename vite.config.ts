@@ -11,6 +11,11 @@ export default defineConfig({
     semi: false,
   },
   lint: {
-    ignorePatterns: ["node_modules/**", "lib/**/*.test.ts", "lib/**/*.test.tsx"],
+    ignorePatterns: [
+      "node_modules/**",
+      "lib/**/*.test.ts",
+      "lib/**/*.test.tsx",
+      "lib/**/*.bun-test.ts",
+    ],
   },
 })
