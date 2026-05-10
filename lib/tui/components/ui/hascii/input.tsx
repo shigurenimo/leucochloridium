@@ -1,5 +1,6 @@
 import { useKeyboard } from "@opentui/react"
 import { useId, useState } from "react"
+import { useHasciiFormItem } from "@/tui/utils/hascii/form-item-context"
 import { useHasciiInputFocus } from "@/tui/utils/hascii/input-focus-context"
 import { useHasciiTheme } from "@/tui/utils/hascii/theme-context"
 import { usePressable } from "@/tui/components/hooks/hascii/use-pressable"
@@ -22,7 +23,9 @@ export function HasciiInput(props: Props) {
   const width = props.width ?? 32
   const placeholder = props.placeholder ?? ""
 
-  const id = useId()
+  const fallbackId = useId()
+  const formItem = useHasciiFormItem()
+  const id = formItem?.focusId ?? fallbackId
   const focusCtx = useHasciiInputFocus()
   const fallbackState = useState(props.defaultFocused ?? false)
   const isFocused = focusCtx ? focusCtx.focusedId === id : fallbackState[0]
