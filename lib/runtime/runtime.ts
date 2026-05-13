@@ -266,10 +266,14 @@ const ensureCodexHome = (paths: LeucoPaths, projectName: string, agentName: stri
 
 /**
  * Write the tenant's CODEX_HOME `config.toml`. Four things go in here:
- *   1. `approval_policy = "never"` + `sandbox_mode = "workspace-write"` so the
- *      daemon (which has no terminal to answer prompts) never stalls waiting
- *      for human approval; codex returns execution failures straight to the
- *      model instead.
+ *   1. `approval_policy = "never"` + `sandbox_mode = "danger-full-access"` so
+ *      the daemon never stalls on a prompt it can't answer AND never trips
+ *      EPERM in the seatbelt/landlock sandbox. `workspace-write` would be
+ *      safer but it blocks outbound network by default on macOS, and the
+ *      `sandbox_workspace_write.network_access = true` escape hatch is
+ *      silently ignored by seatbelt (codex issue #10390); for a daemon that
+ *      needs to push commits, hit external APIs, install deps, etc., full
+ *      access is the only configuration that actually unblocks everything.
  *   2. project trust (so codex loads the repo's `.codex/`)
  *   3. an `mcp_servers.leuco` entry pointing at the daemon's streamable HTTP
  *      route at `/mcp/<project>/<agent>` (with bearer auth via env var). When
@@ -292,7 +296,7 @@ const ensureTenantConfigToml = (
   const autoApproveTools = ["slack_call", "schedule_create", "schedule_list", "schedule_delete"]
   const lines = [
     `approval_policy = "never"`,
-    `sandbox_mode = "workspace-write"`,
+    `sandbox_mode = "danger-full-access"`,
     "",
     `[projects.${tomlKeyString(tenant.projectPath)}]`,
     `trust_level = "trusted"`,
