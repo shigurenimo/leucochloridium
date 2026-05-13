@@ -4,6 +4,17 @@ import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-pr
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
+/**
+ * Maximum wall-clock for a single codex turn. Approval-prompt deadlocks and
+ * runaway tool loops are the two failure modes this guards against — the
+ * daemon has no terminal so it can never answer a prompt, and without a cap
+ * a stuck turn would block every subsequent message on the same agent.
+ *
+ * On timeout the codex child is restarted (in-flight turn dies with it) and
+ * the agent thread is re-resumed on the next call.
+ */
+const TURN_TIMEOUT_MS = 10 * 60 * 1000
+
 type Logger = (line: string) => void
 
 export type TenantAgentSpec = {
@@ -198,7 +209,7 @@ export class LeucoTenant {
           input: text,
         })
 
-        const reply = await this.codex.runTextTurn(threadId, text, this.projectPath)
+        const reply = await this.runTextTurnWithTimeout(threadId, text)
         if (reply instanceof Error) {
           this.bus.emit({
             ts: Date.now(),
@@ -229,6 +240,38 @@ export class LeucoTenant {
     return next
   }
 
+  /**
+   * Race the codex turn against a wall-clock deadline. On timeout, restart
+   * the codex child so the abandoned turn (still running on the app-server)
+   * can't collide with the next request — abortInFlightTurns inside the
+   * client rejects the racing Promise once the child exits, and the agent
+   * thread is marked stale so the next call re-resumes from sqlite.
+   */
+  private async runTextTurnWithTimeout(threadId: string, text: string): Promise<string | Error> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<Error>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(new Error(`codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s`))
+      }, TURN_TIMEOUT_MS)
+    })
+
+    const replyPromise = this.codex.runTextTurn(threadId, text, this.projectPath)
+    const reply = await Promise.race([replyPromise, timeoutPromise])
+    if (timer) clearTimeout(timer)
+
+    const timedOut = reply instanceof Error && reply.message.startsWith("codex turn timed out")
+    if (timedOut) {
+      this.log(`[leuco] ${this.key}: ${(reply as Error).message}; restarting codex child`)
+      this.agentThreadLive = false
+      await this.codex.stop().catch(() => undefined)
+      await this.codex.start().catch((err: unknown) => {
+        this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorText(err)}`)
+      })
+    }
+
+    return reply
+  }
+
   private async ensureAgentThread(): Promise<string | Error> {
     if (this.agentThreadId !== null && this.agentThreadLive) return this.agentThreadId
 
@@ -239,7 +282,6 @@ export class LeucoTenant {
         threadId: this.agentThreadId,
         cwd: this.projectPath,
         developerInstructions,
-        excludeTurns: true,
       })
       if (resumed instanceof Error) return resumed
       if (resumed !== null) {

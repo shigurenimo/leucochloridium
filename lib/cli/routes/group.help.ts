@@ -57,7 +57,7 @@ Layout:
 
 env (optional):
   LEUCO_CODEX_BIN                  codex binary path (default: "codex")
-  LEUCO_PORT                       HTTP gateway port (default: off; e.g. 9743)
+  LEUCO_PORT                       HTTP gateway port (default: 7331)
 
 env files (read from cwd at CLI invocation, not overriding existing env):
   .env.local                       developer-local LEUCO_* overrides

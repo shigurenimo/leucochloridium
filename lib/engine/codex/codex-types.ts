@@ -17,8 +17,6 @@ export type ThreadResumeParams = {
   cwd?: string
   developerInstructions?: string
   baseInstructions?: string
-  /** When true, skip populating `thread.turns` to keep the response small. */
-  excludeTurns?: boolean
 }
 
 export type TurnInputItem =

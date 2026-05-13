@@ -14,7 +14,7 @@ Tokens for each channel are read from
 ~/.leuco/projects/<p>/agents/<a>/channels/<c>/{bot,app}.token at startup.
 
 optional env:
-  LEUCO_PORT            HTTP gateway port (default: off; e.g. 9743)`
+  LEUCO_PORT            HTTP gateway port (default: 7331)`
 
 export const runHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

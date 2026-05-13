@@ -11,6 +11,7 @@ type Props = {
   port?: number
   onLog?: (line: string) => void
   bus?: LeucoEventBus
+  mcpToken?: string | null
 }
 
 type Logger = (line: string) => void
@@ -40,6 +41,7 @@ export class LeucoEngine {
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
+  private readonly mcpToken: string | null
   private gateway: LeucoGatewayServer | null = null
   // Serialization tail for reconcile(): every incoming call chains onto this
   // promise so two SIGHUPs in quick succession can't interleave start/stop on
@@ -53,6 +55,7 @@ export class LeucoEngine {
     this.port = props.port
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
+    this.mcpToken = props.mcpToken ?? null
   }
 
   async start(): Promise<void> {
@@ -65,6 +68,7 @@ export class LeucoEngine {
         engine: this,
         port: this.port,
         onLog: this.log,
+        mcpToken: this.mcpToken,
       })
       this.gateway.start()
     }

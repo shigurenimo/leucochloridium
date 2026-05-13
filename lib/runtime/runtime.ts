@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import {
   existsSync,
   lstatSync,
@@ -30,6 +31,8 @@ type Props = {
   codexBin?: string
   onLog?: Logger
 }
+
+const LEUCO_MCP_TOKEN_ENV = "LEUCO_MCP_TOKEN"
 
 /**
  * Composition root: scans every registered project under
@@ -69,6 +72,12 @@ export class LeucoRuntime {
     const projects = projectStore.list()
     if (projects instanceof Error) return projects
 
+    // One MCP bearer token per daemon process. Codex children inherit it via
+    // the LEUCO_MCP_TOKEN env var (referenced from each tenant's CODEX_HOME
+    // config.toml as `bearer_token_env_var`).
+    const mcpToken = buildProps.port !== undefined ? randomBytes(32).toString("hex") : null
+    const mcpPort = buildProps.port
+
     const tenants: LeucoTenant[] = []
     for (const project of projects) {
       for (const agent of project.agents) {
@@ -82,6 +91,8 @@ export class LeucoRuntime {
           onLog,
           bus,
           projectStore,
+          mcpToken,
+          mcpPort,
         })
         if (tenant instanceof Error) return tenant
         tenants.push(tenant)
@@ -98,6 +109,8 @@ export class LeucoRuntime {
         onLog,
         bus,
         projectStore,
+        mcpToken,
+        mcpPort,
       })
 
     const engine = new LeucoEngine({
@@ -107,6 +120,7 @@ export class LeucoRuntime {
       projectStore,
       buildTenant: buildTenantFn,
       bus,
+      mcpToken,
     })
 
     return new LeucoRuntime({
@@ -155,6 +169,8 @@ type BuildTenantProps = {
   onLog: Logger
   bus: LeucoEventBus
   projectStore: LeucoProjectStore
+  mcpToken: string | null
+  mcpPort: number | undefined
 }
 
 const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
@@ -181,10 +197,17 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     projectPath: props.project.path,
     projectName: props.project.name,
     agentName: props.agent.name,
+    mcpEndpoint:
+      props.mcpToken !== null && props.mcpPort !== undefined
+        ? { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.name}/${props.agent.name}` }
+        : null,
   })
   ensureAuthSymlink(codexHome)
 
   const childEnv: NodeJS.ProcessEnv = { ...props.env, CODEX_HOME: codexHome }
+  if (props.mcpToken !== null) {
+    childEnv[LEUCO_MCP_TOKEN_ENV] = props.mcpToken
+  }
 
   const codex = new LeucoCodexClient({
     bin: props.codexBin,
@@ -242,30 +265,55 @@ const ensureCodexHome = (paths: LeucoPaths, projectName: string, agentName: stri
 }
 
 /**
- * Write the tenant's CODEX_HOME `config.toml`. Three things go in here:
- *   1. project trust (so codex loads the repo's `.codex/`)
- *   2. an `mcp_servers.leuco` entry so codex can call the leuco MCP tool
- *      surface scoped to this exact (project, agent)
- *   3. `approval_mode = "approve"` overrides on every leuco-managed tool so
- *      codex auto-approves them instead of stalling on a prompt no one can
- *      answer (the daemon has no terminal). Other tools and the global
- *      approval policy are untouched.
+ * Write the tenant's CODEX_HOME `config.toml`. Four things go in here:
+ *   1. `approval_policy = "never"` + `sandbox_mode = "workspace-write"` so the
+ *      daemon (which has no terminal to answer prompts) never stalls waiting
+ *      for human approval; codex returns execution failures straight to the
+ *      model instead.
+ *   2. project trust (so codex loads the repo's `.codex/`)
+ *   3. an `mcp_servers.leuco` entry pointing at the daemon's streamable HTTP
+ *      route at `/mcp/<project>/<agent>` (with bearer auth via env var). When
+ *      the gateway port isn't available, falls back to the legacy stdio spawn
+ *      so single-process callers still work.
+ *   4. `approval_mode = "approve"` overrides on every leuco-managed tool — kept
+ *      even with the global `never` policy as belt-and-suspenders in case the
+ *      global default changes in a future codex release.
  */
 const ensureTenantConfigToml = (
   codexHome: string,
-  tenant: { projectPath: string; projectName: string; agentName: string },
+  tenant: {
+    projectPath: string
+    projectName: string
+    agentName: string
+    mcpEndpoint: { url: string } | null
+  },
 ): void => {
   const path = join(codexHome, "config.toml")
   const autoApproveTools = ["slack_call", "schedule_create", "schedule_list", "schedule_delete"]
   const lines = [
+    `approval_policy = "never"`,
+    `sandbox_mode = "workspace-write"`,
+    "",
     `[projects.${tomlKeyString(tenant.projectPath)}]`,
     `trust_level = "trusted"`,
     "",
     `[mcp_servers.leuco]`,
-    `command = "leuco"`,
-    `args = ["mcp", "--project", ${tomlKeyString(tenant.projectName)}, "--agent", ${tomlKeyString(tenant.agentName)}]`,
-    "",
   ]
+
+  if (tenant.mcpEndpoint !== null) {
+    lines.push(
+      `url = ${tomlKeyString(tenant.mcpEndpoint.url)}`,
+      `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
+      "",
+    )
+  } else {
+    lines.push(
+      `command = "leuco"`,
+      `args = ["mcp", "--project", ${tomlKeyString(tenant.projectName)}, "--agent", ${tomlKeyString(tenant.agentName)}]`,
+      "",
+    )
+  }
+
   for (const tool of autoApproveTools) {
     lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")
   }

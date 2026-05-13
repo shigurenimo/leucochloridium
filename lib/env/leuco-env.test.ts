@@ -69,7 +69,7 @@ describe("LeucoEnv.loadFile", () => {
 })
 
 describe("LeucoEnv.parseCli", () => {
-  it("returns parsed CliEnv with optional LEUCO_PORT coerced", () => {
+  it("returns parsed CliEnv with LEUCO_PORT coerced when set", () => {
     const env: NodeJS.ProcessEnv = { LEUCO_PORT: "9743" }
     const result = new LeucoEnv({ env }).parseCli()
     expect(result).not.toBeInstanceOf(Error)
@@ -77,9 +77,11 @@ describe("LeucoEnv.parseCli", () => {
     expect(result.LEUCO_PORT).toBe(9743)
   })
 
-  it("returns parsed CliEnv with no env vars set (all are optional now)", () => {
+  it("defaults LEUCO_PORT to 7331 when unset (gateway is required for MCP)", () => {
     const result = new LeucoEnv({ env: {} }).parseCli()
     expect(result).not.toBeInstanceOf(Error)
+    if (result instanceof Error) return
+    expect(result.LEUCO_PORT).toBe(7331)
   })
 
   it("returns Error when LEUCO_PORT is not a positive integer", () => {

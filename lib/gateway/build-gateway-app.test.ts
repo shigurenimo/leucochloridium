@@ -17,7 +17,7 @@ const fakeEngine = (overrides: Partial<LeucoEngine> = {}): LeucoEngine => {
 
 describe("buildGatewayApp / GET /health", () => {
   it("returns liveness + plugin list", async () => {
-    const app = buildGatewayApp({ selfPid: 999, engine: fakeEngine() })
+    const app = buildGatewayApp({ selfPid: 999, engine: fakeEngine(), mcpToken: null })
     const res = await app.request("/health")
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
@@ -31,7 +31,7 @@ describe("buildGatewayApp / GET /health", () => {
 
 describe("buildGatewayApp / GET /status", () => {
   it("returns the full snapshot", async () => {
-    const app = buildGatewayApp({ selfPid: 999, engine: fakeEngine() })
+    const app = buildGatewayApp({ selfPid: 999, engine: fakeEngine(), mcpToken: null })
     const res = await app.request("/status")
     expect(await res.json()).toEqual({
       ok: true,
@@ -46,7 +46,7 @@ describe("buildGatewayApp / GET /status", () => {
 
 describe("buildGatewayApp / GET /threads", () => {
   it("returns the active thread map", async () => {
-    const app = buildGatewayApp({ selfPid: 1, engine: fakeEngine() })
+    const app = buildGatewayApp({ selfPid: 1, engine: fakeEngine(), mcpToken: null })
     const res = await app.request("/threads")
     expect(await res.json()).toEqual({
       threads: [{ tenantKey: "demo:default", threadKey: "k1", threadId: "t1" }],
@@ -63,7 +63,7 @@ describe("buildGatewayApp / POST /threads/clear", () => {
         return true
       }) as LeucoEngine["clearThread"],
     })
-    const app = buildGatewayApp({ selfPid: 1, engine })
+    const app = buildGatewayApp({ selfPid: 1, engine, mcpToken: null })
     const res = await app.request("/threads/clear", {
       method: "POST",
       body: JSON.stringify({ threadKey: "k1" }),
@@ -76,7 +76,7 @@ describe("buildGatewayApp / POST /threads/clear", () => {
 
   it("returns 404 when the thread is unknown", async () => {
     const engine = fakeEngine({ clearThread: (() => false) as LeucoEngine["clearThread"] })
-    const app = buildGatewayApp({ selfPid: 1, engine })
+    const app = buildGatewayApp({ selfPid: 1, engine, mcpToken: null })
     const res = await app.request("/threads/clear", {
       method: "POST",
       body: JSON.stringify({ threadKey: "missing" }),
@@ -87,7 +87,7 @@ describe("buildGatewayApp / POST /threads/clear", () => {
   })
 
   it("returns 400 when threadKey is missing from the body", async () => {
-    const app = buildGatewayApp({ selfPid: 1, engine: fakeEngine() })
+    const app = buildGatewayApp({ selfPid: 1, engine: fakeEngine(), mcpToken: null })
     const res = await app.request("/threads/clear", {
       method: "POST",
       body: "{}",
