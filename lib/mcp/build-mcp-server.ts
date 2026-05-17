@@ -175,12 +175,18 @@ export const buildMcpServer = (props: Props): Server => {
     const name = request.params.name
     const args: unknown = request.params.arguments ?? {}
 
-    if (name === TOOL_SLACK_CALL) return handleSlackCall(handlerProps, args)
-    if (name === TOOL_SCHEDULE_CREATE) return handleScheduleCreate(handlerProps, args)
-    if (name === TOOL_SCHEDULE_LIST) return handleScheduleList(handlerProps, args)
-    if (name === TOOL_SCHEDULE_DELETE) return handleScheduleDelete(handlerProps, args)
-
-    return errorResponse(`unknown tool: ${name}`)
+    // Each tool handler throws on user-facing failure (store errors, validation,
+    // Slack API errors). MCP transport wants those as `isError: true` body
+    // responses rather than rejections, so we catch once at the dispatch layer.
+    try {
+      if (name === TOOL_SLACK_CALL) return await handleSlackCall(handlerProps, args)
+      if (name === TOOL_SCHEDULE_CREATE) return await handleScheduleCreate(handlerProps, args)
+      if (name === TOOL_SCHEDULE_LIST) return await handleScheduleList(handlerProps, args)
+      if (name === TOOL_SCHEDULE_DELETE) return await handleScheduleDelete(handlerProps, args)
+      return errorResponse(`unknown tool: ${name}`)
+    } catch (err) {
+      return errorResponse(err instanceof Error ? err.message : String(err))
+    }
   })
 
   return server
@@ -202,14 +208,12 @@ const handleSlackCall = async (props: HandlerProps, args: unknown) => {
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
-  if (tokens instanceof Error) return errorResponse(tokens.message)
 
   const result = await slackCall({
     botToken: tokens.botToken,
     method: parsed.data.method,
     body: parsed.data.body ?? {},
   })
-  if (result instanceof Error) return errorResponse(result.message)
 
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
 }
@@ -219,18 +223,13 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
   if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
 
   const validatedName = validateLeucoName(parsed.data.name, "schedule entry name")
-  if (validatedName instanceof Error) return errorResponse(validatedName.message)
-
   const validatedRunAt = validateRunAt(parsed.data.run_at)
-  if (validatedRunAt instanceof Error) return errorResponse(validatedRunAt.message)
-
   const channel = resolveScheduleChannel({
     store: props.store,
     projectId: props.projectId,
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
-  if (channel instanceof Error) return errorResponse(channel.message)
 
   const entry: ScheduleEntry = {
     id: randomUUID(),
@@ -240,13 +239,12 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
     enabled: true,
   }
 
-  const result = props.store.addScheduleEntry({
+  props.store.addScheduleEntry({
     projectId: props.projectId,
     agentName: props.agentName,
     channelName: channel.name,
     entry,
   })
-  if (result instanceof Error) return errorResponse(result.message)
 
   return {
     content: [
@@ -264,10 +262,7 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   const channelNameArg = parsed.data.channel_name
 
   const project = props.store.load(props.projectId)
-  if (project instanceof Error) return errorResponse(project.message)
-
   const agent = findAgent(project, props.agentName)
-  if (agent instanceof Error) return errorResponse(agent.message)
 
   const channels = agent.channels.filter(
     (c): c is ScheduleChannel =>
@@ -275,10 +270,10 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   )
 
   if (channels.length === 0) {
-    return errorResponse(
+    throw new Error(
       channelNameArg
-        ? `schedule channel '${channelNameArg}' not found in ${props.projectId}/${props.agentName}`
-        : `${props.projectId}/${props.agentName} has no schedule channel`,
+        ? `schedule channel '${channelNameArg}' not found in ${project.name}/${props.agentName}`
+        : `${project.name}/${props.agentName} has no schedule channel`,
     )
   }
 
@@ -306,15 +301,13 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
-  if (channel instanceof Error) return errorResponse(channel.message)
 
-  const result = props.store.removeScheduleEntry({
+  props.store.removeScheduleEntry({
     projectId: props.projectId,
     agentName: props.agentName,
     channelName: channel.name,
     entryIdOrName: parsed.data.id_or_name,
   })
-  if (result instanceof Error) return errorResponse(result.message)
 
   return {
     content: [
@@ -331,31 +324,27 @@ const resolveScheduleChannel = (input: {
   projectId: string
   agentName: string
   channelName?: string
-}): ScheduleChannel | Error => {
+}): ScheduleChannel => {
   const project = input.store.load(input.projectId)
-  if (project instanceof Error) return project
-
   const agent = findAgent(project, input.agentName)
-  if (agent instanceof Error) return agent
-
   const channels = agent.channels.filter((c): c is ScheduleChannel => c.type === "schedule")
 
   if (input.channelName !== undefined) {
     const match = channels.find((c) => c.name === input.channelName)
     if (!match) {
-      return new Error(
-        `schedule channel '${input.channelName}' not found in ${input.projectId}/${input.agentName}`,
+      throw new Error(
+        `schedule channel '${input.channelName}' not found in ${project.name}/${input.agentName}`,
       )
     }
     return match
   }
 
   if (channels.length === 0) {
-    return new Error(`${input.projectId}/${input.agentName} has no schedule channel`)
+    throw new Error(`${project.name}/${input.agentName} has no schedule channel`)
   }
   if (channels.length > 1) {
     const names = channels.map((c) => c.name).join(", ")
-    return new Error(
+    throw new Error(
       `multiple schedule channels exist (${names}); pass \`channel_name\` to disambiguate`,
     )
   }
@@ -367,15 +356,10 @@ const resolveTenantTokens = (input: {
   projectId: string
   agentName: string
   channelName?: string
-}): { botToken: string; channelName: string } | Error => {
+}): { botToken: string; channelName: string } => {
   const project = input.store.load(input.projectId)
-  if (project instanceof Error) return project
-
   const agent = findAgent(project, input.agentName)
-  if (agent instanceof Error) return agent
-
   const tokens = resolveSlackTokens({ project, agent, channelName: input.channelName })
-  if (tokens instanceof Error) return tokens
   return { botToken: tokens.botToken, channelName: tokens.channelName }
 }
 

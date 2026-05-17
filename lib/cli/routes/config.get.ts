@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
@@ -18,10 +19,9 @@ export const configGetHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()
-  if (settings instanceof Error) return c.text(`leuco: ${settings.message}`, 500)
 
   const found = Object.entries(settings).find((entry) => entry[0] === key)
-  if (!found) return c.text(`leuco: unknown config key: ${key}`, 404)
+  if (!found) throw new HTTPException(404, { message: `unknown config key: ${key}` })
 
   return c.text(JSON.stringify(found[1]))
 })

@@ -6,11 +6,7 @@ import {
   parseCronExpression,
 } from "@/channels/schedule/cron-expression"
 
-const ok = (text: string): CronExpression => {
-  const expr = parseCronExpression(text)
-  if (expr instanceof Error) throw expr
-  return expr
-}
+const ok = (text: string): CronExpression => parseCronExpression(text)
 
 describe("parseCronExpression", () => {
   it("parses all wildcards", () => {
@@ -60,25 +56,25 @@ describe("parseCronExpression", () => {
   })
 
   it("rejects wrong field count", () => {
-    expect(parseCronExpression("* * * *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("* * * * * *")).toBeInstanceOf(Error)
+    expect(() => parseCronExpression("* * * *")).toThrow()
+    expect(() => parseCronExpression("* * * * * *")).toThrow()
   })
 
   it("rejects out of range", () => {
-    expect(parseCronExpression("60 * * * *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("* 24 * * *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("* * 0 * *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("* * * 13 *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("* * * * 7")).toBeInstanceOf(Error)
+    expect(() => parseCronExpression("60 * * * *")).toThrow()
+    expect(() => parseCronExpression("* 24 * * *")).toThrow()
+    expect(() => parseCronExpression("* * 0 * *")).toThrow()
+    expect(() => parseCronExpression("* * * 13 *")).toThrow()
+    expect(() => parseCronExpression("* * * * 7")).toThrow()
   })
 
   it("rejects malformed range", () => {
-    expect(parseCronExpression("9-1 * * * *")).toBeInstanceOf(Error)
-    expect(parseCronExpression("a-b * * * *")).toBeInstanceOf(Error)
+    expect(() => parseCronExpression("9-1 * * * *")).toThrow()
+    expect(() => parseCronExpression("a-b * * * *")).toThrow()
   })
 
   it("rejects step 0", () => {
-    expect(parseCronExpression("*/0 * * * *")).toBeInstanceOf(Error)
+    expect(() => parseCronExpression("*/0 * * * *")).toThrow()
   })
 })
 

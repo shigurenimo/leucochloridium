@@ -31,9 +31,7 @@ export const statusHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const projects = store.list()
-  if (projects instanceof Error) {
-    lines.push("", `projects: error — ${projects.message}`)
-  } else if (projects.length === 0) {
+  if (projects.length === 0) {
     lines.push("", "projects: (none registered)")
   } else {
     lines.push("", "projects:")

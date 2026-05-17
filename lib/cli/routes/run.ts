@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoEnv } from "@/env/leuco-env"
@@ -23,7 +24,7 @@ export const runHandler = factory.createHandlers(async (c) => {
   const leucoEnv = new LeucoEnv({ env: process.env })
   const cli = leucoEnv.parseCli()
   if (cli instanceof Error) {
-    return c.text(`leuco: ${cli.message}\nrun \`leuco --help\` for usage.`, 400)
+    throw new HTTPException(400, { message: `${cli.message}\nrun \`leuco --help\` for usage.` })
   }
 
   const envFiles = c.var.envFiles
@@ -34,14 +35,15 @@ export const runHandler = factory.createHandlers(async (c) => {
     process.stdout.write(`[leuco] env files: ${sources.join(", ")}\n`)
   }
 
-  const runtime = LeucoRuntime.build({
-    env: process.env,
-    port: cli.LEUCO_PORT,
-    codexBin: cli.LEUCO_CODEX_BIN,
-  })
-
-  if (runtime instanceof Error) {
-    process.stderr.write(`leuco: ${runtime.message}\n`)
+  let runtime: LeucoRuntime
+  try {
+    runtime = LeucoRuntime.build({
+      env: process.env,
+      port: cli.LEUCO_PORT,
+      codexBin: cli.LEUCO_CODEX_BIN,
+    })
+  } catch (err) {
+    process.stderr.write(`leuco: ${err instanceof Error ? err.message : String(err)}\n`)
     process.exit(1)
   }
 
@@ -63,16 +65,16 @@ export const runHandler = factory.createHandlers(async (c) => {
 
   process.on("SIGHUP", () => {
     process.stdout.write("[leuco] received SIGHUP — reconciling tenants\n")
-    void runtime.reload().then((result) => {
-      if (result instanceof Error) {
-        process.stderr.write(`[leuco] reload failed: ${result.message}\n`)
-      }
+    void runtime.reload().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[leuco] reload failed: ${message}\n`)
     })
   })
 
-  const started = await runtime.start()
-  if (started instanceof Error) {
-    process.stderr.write(`leuco: ${started.message}\n`)
+  try {
+    await runtime.start()
+  } catch (err) {
+    process.stderr.write(`leuco: ${err instanceof Error ? err.message : String(err)}\n`)
     await runtime.stop().catch(() => undefined)
     process.exit(1)
   }

@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { randomUUID } from "node:crypto"
 import type { Context } from "hono"
 import { factory, type Env } from "@/cli/cli-factory"
@@ -47,7 +48,9 @@ type AddContext = { projectName: string; agentName: string }
 
 const addSlackChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) => {
   if (body.flags["bot-token"] === "-" && body.flags["app-token"] === "-") {
-    return c.text("leuco: only one of --bot-token / --app-token can read from stdin", 400)
+    throw new HTTPException(400, {
+      message: "only one of --bot-token / --app-token can read from stdin",
+    })
   }
 
   const channelName = typeof body.flags.name === "string" ? body.flags.name : "slack"
@@ -56,10 +59,8 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) 
 
   const store = new LeucoProjectStore()
   const project = store.load(ctx.projectName)
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, ctx.agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   if (agent.channels.some((ch) => ch.name === channelName)) {
     return c.text(
@@ -90,7 +91,6 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) 
       a.name === ctx.agentName ? { ...a, channels: [...a.channels, next] } : a,
     ),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   const tail =
     botToken.length > 0 && appToken.length > 0
@@ -107,10 +107,8 @@ const addScheduleChannel = async (c: Context<Env>, body: CliBody, ctx: AddContex
 
   const store = new LeucoProjectStore()
   const project = store.load(ctx.projectName)
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, ctx.agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   if (agent.channels.some((ch) => ch.name === channelName)) {
     return c.text(
@@ -128,13 +126,12 @@ const addScheduleChannel = async (c: Context<Env>, body: CliBody, ctx: AddContex
     entries: [],
   }
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.map((a) =>
       a.name === ctx.agentName ? { ...a, channels: [...a.channels, next] } : a,
     ),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   return c.text(
     `added channel ${ctx.projectName}/${ctx.agentName}/${channelName} (schedule, id=${channelId})\nadd entries with \`leuco projects ${ctx.projectName} agents ${ctx.agentName} channels ${channelName} schedules add\`.`,

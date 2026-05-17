@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
@@ -41,10 +42,11 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   if (project.agents.some((a) => a.name === agentName)) {
-    return c.text(`leuco: agent already exists in ${projectName}: ${agentName}`, 400)
+    throw new HTTPException(400, {
+      message: `agent already exists in ${projectName}: ${agentName}`,
+    })
   }
 
   // Write the codex TOML inside the project's repo so codex itself can read it.
@@ -56,7 +58,6 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
     developerInstructions,
     model,
   })
-  if (tomlPath instanceof Error) return c.text(`leuco: ${tomlPath.message}`, 400)
 
   const nextAgent: Agent = {
     name: agentName,
@@ -65,8 +66,7 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
     prompts: ["friendly"],
     channels: [],
   }
-  const saved = store.save({ ...project, agents: [...project.agents, nextAgent] })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
+  store.save({ ...project, agents: [...project.agents, nextAgent] })
 
   return c.text(`added agent ${projectName}/${agentName} → ${tomlPath}`)
 })

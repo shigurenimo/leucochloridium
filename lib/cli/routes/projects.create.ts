@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path"
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectScaffolder, type ProjectScaffoldResult } from "@/projects/project-scaffolder"
@@ -25,7 +26,9 @@ export const projectsCreateHandler = factory.createHandlers(async (c) => {
 
   const rawPath = body.args[0]
   if (!rawPath) {
-    return c.text("usage: leuco projects create <path> [--name <name>]", 400)
+    throw new HTTPException(400, {
+      message: "usage: leuco projects create <path> [--name <name>]",
+    })
   }
 
   const path = resolve(c.var.cwd, rawPath)
@@ -33,7 +36,6 @@ export const projectsCreateHandler = factory.createHandlers(async (c) => {
 
   const scaffolder = new LeucoProjectScaffolder()
   const result = scaffolder.create({ path, name })
-  if (result instanceof Error) return c.text(`leuco: ${result.message}`, 500)
 
   return c.text(formatResult(result, name))
 })

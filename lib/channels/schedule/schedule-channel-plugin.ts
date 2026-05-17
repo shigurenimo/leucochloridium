@@ -99,9 +99,12 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     const ctx = this.ctx
     if (!ctx) return
 
-    const entries = this.props.store.listEntries()
-    if (entries instanceof Error) {
-      ctx.onLog(`[${this.name}] failed to read entries: ${entries.message}`)
+    let entries: ReturnType<typeof this.props.store.listEntries>
+    try {
+      entries = this.props.store.listEntries()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      ctx.onLog(`[${this.name}] failed to read entries: ${message}`)
       return
     }
 
@@ -154,11 +157,11 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     }
 
     if (kind === "one-shot") {
-      const removed = this.props.store.removeEntry(entry.id)
-      if (removed instanceof Error) {
-        ctx.onLog(
-          `[${this.name}] entry ${entry.name} fired but failed to delete: ${removed.message}`,
-        )
+      try {
+        this.props.store.removeEntry(entry.id)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        ctx.onLog(`[${this.name}] entry ${entry.name} fired but failed to delete: ${message}`)
       }
     }
   }
@@ -170,9 +173,12 @@ const decideFire = (
   ctx: ChannelPluginContext,
 ): "cron" | "one-shot" | "skip" => {
   if (looksLikeCron(entry.runAt)) {
-    const expr = parseCronExpression(entry.runAt)
-    if (expr instanceof Error) {
-      ctx.onLog(`[schedule] entry ${entry.name} has bad cron '${entry.runAt}': ${expr.message}`)
+    let expr: ReturnType<typeof parseCronExpression>
+    try {
+      expr = parseCronExpression(entry.runAt)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      ctx.onLog(`[schedule] entry ${entry.name} has bad cron '${entry.runAt}': ${message}`)
       return "skip"
     }
     return cronMatches(expr, now) ? "cron" : "skip"

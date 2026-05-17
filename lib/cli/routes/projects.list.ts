@@ -15,7 +15,6 @@ export const projectsListHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const list = store.list()
-  if (list instanceof Error) return c.text(`leuco: ${list.message}`, 500)
 
   if (list.length === 0) return c.text("(no projects)")
 

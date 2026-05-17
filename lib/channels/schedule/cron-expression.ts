@@ -14,6 +14,9 @@
  * day-of-month and day-of-week are restricted, a date matches if EITHER
  * matches — the standard Vixie cron behavior. When one is `*`, only the
  * other constrains the day.
+ *
+ * Parse failures throw — callers wrap in try/catch (e.g. schedule plugin's
+ * tickOnce) so a single malformed entry does not stall the loop.
  */
 
 type FieldRange = { min: number; max: number }
@@ -39,26 +42,17 @@ export type CronExpression = {
   dayOfWeek: CronField
 }
 
-export const parseCronExpression = (text: string): CronExpression | Error => {
+export const parseCronExpression = (text: string): CronExpression => {
   const tokens = text.trim().split(/\s+/)
   if (tokens.length !== 5) {
-    return new Error(`cron expression must have 5 fields, got ${tokens.length}: '${text}'`)
+    throw new Error(`cron expression must have 5 fields, got ${tokens.length}: '${text}'`)
   }
 
   const minute = parseField(tokens[0]!, MINUTE, "minute")
-  if (minute instanceof Error) return minute
-
   const hour = parseField(tokens[1]!, HOUR, "hour")
-  if (hour instanceof Error) return hour
-
   const dayOfMonth = parseField(tokens[2]!, DAY_OF_MONTH, "day-of-month")
-  if (dayOfMonth instanceof Error) return dayOfMonth
-
   const month = parseField(tokens[3]!, MONTH, "month")
-  if (month instanceof Error) return month
-
   const dayOfWeek = parseField(tokens[4]!, DAY_OF_WEEK, "day-of-week")
-  if (dayOfWeek instanceof Error) return dayOfWeek
 
   return { minute, hour, dayOfMonth, month, dayOfWeek }
 }
@@ -90,21 +84,19 @@ export const looksLikeCron = (text: string): boolean => {
   return /\s/.test(text.trim())
 }
 
-const parseField = (token: string, range: FieldRange, label: string): CronField | Error => {
+const parseField = (token: string, range: FieldRange, label: string): CronField => {
   const parts = token.split(",")
   const acc = new Set<number>()
   let wildcard = false
 
   for (const part of parts) {
     const expanded = expandPart(part, range, label)
-    if (expanded instanceof Error) return expanded
-
     if (expanded.wildcard) wildcard = true
     for (const value of expanded.values) acc.add(value)
   }
 
   const values = [...acc].sort((a, b) => a - b)
-  if (values.length === 0) return new Error(`cron ${label}: no values for '${token}'`)
+  if (values.length === 0) throw new Error(`cron ${label}: no values for '${token}'`)
 
   return { values, wildcard }
 }
@@ -113,23 +105,26 @@ const expandPart = (
   part: string,
   range: FieldRange,
   label: string,
-): { values: number[]; wildcard: boolean } | Error => {
+): { values: number[]; wildcard: boolean } => {
   const stepSplit = part.split("/")
-  if (stepSplit.length > 2) return new Error(`cron ${label}: malformed step '${part}'`)
+  if (stepSplit.length > 2) throw new Error(`cron ${label}: malformed step '${part}'`)
 
   const base = stepSplit[0]!
   const stepText = stepSplit[1]
 
   let step = 1
   if (stepText !== undefined) {
-    const parsed = parsePositiveInt(stepText)
-    if (parsed instanceof Error) return new Error(`cron ${label}: bad step '${stepText}'`)
-    if (parsed < 1) return new Error(`cron ${label}: step must be >= 1, got ${parsed}`)
+    let parsed: number
+    try {
+      parsed = parsePositiveInt(stepText)
+    } catch {
+      throw new Error(`cron ${label}: bad step '${stepText}'`)
+    }
+    if (parsed < 1) throw new Error(`cron ${label}: step must be >= 1, got ${parsed}`)
     step = parsed
   }
 
   const span = expandBase(base, range, label)
-  if (span instanceof Error) return span
 
   const values: number[] = []
   for (let v = span.from; v <= span.to; v += step) values.push(v)
@@ -142,31 +137,43 @@ const expandBase = (
   base: string,
   range: FieldRange,
   label: string,
-): { from: number; to: number } | Error => {
+): { from: number; to: number } => {
   if (base === "*") return { from: range.min, to: range.max }
 
   if (base.includes("-")) {
     const dashSplit = base.split("-")
-    if (dashSplit.length !== 2) return new Error(`cron ${label}: malformed range '${base}'`)
-    const from = parsePositiveInt(dashSplit[0]!)
-    const to = parsePositiveInt(dashSplit[1]!)
-    if (from instanceof Error) return new Error(`cron ${label}: bad range start '${base}'`)
-    if (to instanceof Error) return new Error(`cron ${label}: bad range end '${base}'`)
+    if (dashSplit.length !== 2) throw new Error(`cron ${label}: malformed range '${base}'`)
+    let from: number
+    let to: number
+    try {
+      from = parsePositiveInt(dashSplit[0]!)
+    } catch {
+      throw new Error(`cron ${label}: bad range start '${base}'`)
+    }
+    try {
+      to = parsePositiveInt(dashSplit[1]!)
+    } catch {
+      throw new Error(`cron ${label}: bad range end '${base}'`)
+    }
     if (from < range.min || to > range.max || from > to) {
-      return new Error(`cron ${label}: range '${base}' outside ${range.min}-${range.max}`)
+      throw new Error(`cron ${label}: range '${base}' outside ${range.min}-${range.max}`)
     }
     return { from, to }
   }
 
-  const single = parsePositiveInt(base)
-  if (single instanceof Error) return new Error(`cron ${label}: bad value '${base}'`)
+  let single: number
+  try {
+    single = parsePositiveInt(base)
+  } catch {
+    throw new Error(`cron ${label}: bad value '${base}'`)
+  }
   if (single < range.min || single > range.max) {
-    return new Error(`cron ${label}: '${base}' outside ${range.min}-${range.max}`)
+    throw new Error(`cron ${label}: '${base}' outside ${range.min}-${range.max}`)
   }
   return { from: single, to: single }
 }
 
-const parsePositiveInt = (text: string): number | Error => {
-  if (!/^\d+$/.test(text)) return new Error(`not an integer: '${text}'`)
+const parsePositiveInt = (text: string): number => {
+  if (!/^\d+$/.test(text)) throw new Error(`not an integer: '${text}'`)
   return Number.parseInt(text, 10)
 }

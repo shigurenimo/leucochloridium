@@ -32,7 +32,7 @@ describe("LeucoCodexAgentStore", () => {
 
   it("add creates a TOML file with required fields", () => {
     const store = new LeucoCodexAgentStore({ cwd })
-    const result = store.add({
+    const path = store.add({
       scope: "project",
       name: "reviewer",
       description: "Code review agent",
@@ -40,10 +40,9 @@ describe("LeucoCodexAgentStore", () => {
       model: null,
     })
 
-    expect(result).toBe(join(cwd, ".codex", "agents", "reviewer.toml"))
-    if (result instanceof Error) throw result
+    expect(path).toBe(join(cwd, ".codex", "agents", "reviewer.toml"))
 
-    const text = readFileSync(result, "utf8")
+    const text = readFileSync(path, "utf8")
     expect(text).toContain('name = "reviewer"')
     expect(text).toContain('description = "Code review agent"')
     expect(text).toContain('developer_instructions = """\nReview code carefully.\n"""')
@@ -52,7 +51,7 @@ describe("LeucoCodexAgentStore", () => {
 
   it("add includes model line when provided", () => {
     const store = new LeucoCodexAgentStore({ cwd })
-    const result = store.add({
+    const path = store.add({
       scope: "project",
       name: "fast",
       description: "Fast agent",
@@ -60,14 +59,13 @@ describe("LeucoCodexAgentStore", () => {
       model: "gpt-5",
     })
 
-    if (result instanceof Error) throw result
-    const text = readFileSync(result, "utf8")
+    const text = readFileSync(path, "utf8")
     expect(text).toContain('model = "gpt-5"')
   })
 
   it("add escapes double quotes and backslashes", () => {
     const store = new LeucoCodexAgentStore({ cwd })
-    const result = store.add({
+    const path = store.add({
       scope: "project",
       name: "quoter",
       description: 'has "quotes" and \\ backslash',
@@ -75,21 +73,21 @@ describe("LeucoCodexAgentStore", () => {
       model: null,
     })
 
-    if (result instanceof Error) throw result
-    const text = readFileSync(result, "utf8")
+    const text = readFileSync(path, "utf8")
     expect(text).toContain('description = "has \\"quotes\\" and \\\\ backslash"')
   })
 
   it("add rejects invalid names", () => {
     const store = new LeucoCodexAgentStore({ cwd })
-    const result = store.add({
-      scope: "project",
-      name: "Bad-Name",
-      description: "x",
-      developerInstructions: "x",
-      model: null,
-    })
-    expect(result).toBeInstanceOf(Error)
+    expect(() =>
+      store.add({
+        scope: "project",
+        name: "Bad-Name",
+        description: "x",
+        developerInstructions: "x",
+        model: null,
+      }),
+    ).toThrow()
   })
 
   it("add rejects duplicate names", () => {
@@ -101,14 +99,15 @@ describe("LeucoCodexAgentStore", () => {
       developerInstructions: "x",
       model: null,
     })
-    const second = store.add({
-      scope: "project",
-      name: "dup",
-      description: "x",
-      developerInstructions: "x",
-      model: null,
-    })
-    expect(second).toBeInstanceOf(Error)
+    expect(() =>
+      store.add({
+        scope: "project",
+        name: "dup",
+        description: "x",
+        developerInstructions: "x",
+        model: null,
+      }),
+    ).toThrow()
   })
 
   it("list reflects added agents with their scope", () => {
@@ -142,16 +141,14 @@ describe("LeucoCodexAgentStore", () => {
       developerInstructions: "x",
       model: null,
     })
-    if (created instanceof Error) throw created
 
     const result = store.remove("project", "tmp")
     expect(result).toBe(created)
     expect(existsSync(created)).toBe(false)
   })
 
-  it("remove returns Error when target is missing", () => {
+  it("remove throws when target is missing", () => {
     const store = new LeucoCodexAgentStore({ cwd })
-    const result = store.remove("project", "ghost")
-    expect(result).toBeInstanceOf(Error)
+    expect(() => store.remove("project", "ghost")).toThrow()
   })
 })

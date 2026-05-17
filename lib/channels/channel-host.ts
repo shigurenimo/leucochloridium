@@ -24,27 +24,25 @@ type BuildProps = {
  * `<projectDir>/settings.json`), so building plugins is a pure transform with
  * no extra IO.
  *
- * Returns `Error` on the first channel with empty tokens or unsupported type.
+ * Throws on the first channel with empty tokens or unsupported type.
  */
 export class LeucoChannelHost {
   private constructor() {
     Object.freeze(this)
   }
 
-  static buildForAgent(props: BuildProps): ChannelPlugin[] | Error {
+  static buildForAgent(props: BuildProps): ChannelPlugin[] {
     const plugins: ChannelPlugin[] = []
-
     for (const channel of props.agent.channels) {
-      const plugin = LeucoChannelHost.toPlugin({
-        project: props.project,
-        agentName: props.agent.name,
-        channel,
-        projectStore: props.projectStore,
-      })
-      if (plugin instanceof Error) return plugin
-      plugins.push(plugin)
+      plugins.push(
+        LeucoChannelHost.toPlugin({
+          project: props.project,
+          agentName: props.agent.name,
+          channel,
+          projectStore: props.projectStore,
+        }),
+      )
     }
-
     return plugins
   }
 
@@ -53,14 +51,16 @@ export class LeucoChannelHost {
     agentName: string
     channel: Channel
     projectStore?: LeucoProjectStore
-  }): ChannelPlugin | Error {
+  }): ChannelPlugin {
     const label = `${props.project.name}/${props.agentName}/${props.channel.name}`
 
     if (props.channel.type === "slack") {
-      if (props.channel.botToken.length === 0)
-        return new Error(`channel ${label}: botToken is empty`)
-      if (props.channel.appToken.length === 0)
-        return new Error(`channel ${label}: appToken is empty`)
+      if (props.channel.botToken.length === 0) {
+        throw new Error(`channel ${label}: botToken is empty`)
+      }
+      if (props.channel.appToken.length === 0) {
+        throw new Error(`channel ${label}: appToken is empty`)
+      }
       return new LeucoSlackChannelPlugin({
         name: props.channel.name,
         botToken: props.channel.botToken,
@@ -72,7 +72,7 @@ export class LeucoChannelHost {
 
     if (props.channel.type === "schedule") {
       if (!props.projectStore) {
-        return new Error(`channel ${label}: schedule channels require a projectStore`)
+        throw new Error(`channel ${label}: schedule channels require a projectStore`)
       }
       const store = buildScheduleStore({
         projectStore: props.projectStore,
@@ -83,7 +83,7 @@ export class LeucoChannelHost {
       return new LeucoScheduleChannelPlugin({ name: props.channel.name, store })
     }
 
-    return new Error("unsupported channel type")
+    throw new Error("unsupported channel type")
   }
 }
 
@@ -94,26 +94,24 @@ const buildScheduleStore = (input: {
   channelName: string
 }): ScheduleStorePort => {
   return {
-    listEntries(): ScheduleEntry[] | Error {
+    listEntries(): ScheduleEntry[] {
       const project = input.projectStore.load(input.projectId)
-      if (project instanceof Error) return project
       const agent = project.agents.find((a) => a.name === input.agentName)
-      if (!agent) return new Error(`agent '${input.agentName}' not found`)
+      if (!agent) throw new Error(`agent '${input.agentName}' not found`)
       const channel = agent.channels.find((c) => c.name === input.channelName)
-      if (!channel) return new Error(`channel '${input.channelName}' not found`)
+      if (!channel) throw new Error(`channel '${input.channelName}' not found`)
       if (channel.type !== "schedule") {
-        return new Error(`channel '${input.channelName}' is not a schedule channel`)
+        throw new Error(`channel '${input.channelName}' is not a schedule channel`)
       }
       return channel.entries
     },
-    removeEntry(entryId: string): void | Error {
-      const result = input.projectStore.removeScheduleEntry({
+    removeEntry(entryId: string): void {
+      input.projectStore.removeScheduleEntry({
         projectId: input.projectId,
         agentName: input.agentName,
         channelName: input.channelName,
         entryIdOrName: entryId,
       })
-      if (result instanceof Error) return result
     },
   }
 }

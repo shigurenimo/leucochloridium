@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs"
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -25,28 +26,30 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const cascade = flagBool(body.flags.cascade)
   if (agent.channels.length > 0 && !cascade) {
-    return c.text(
-      `leuco: agent '${agentName}' has ${agent.channels.length} channel(s). use --cascade to remove with its channels.`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `agent '${agentName}' has ${agent.channels.length} channel(s). use --cascade to remove with its channels.`,
+    })
   }
 
+  // The toml may already be gone — that is treated as a soft warning so config
+  // can still be reconciled.
   const tomlStore = new LeucoCodexAgentStore({ cwd: project.path })
-  const tomlResult = tomlStore.remove("project", agentName)
-  const tomlMessage = tomlResult instanceof Error ? `(${tomlResult.message})` : tomlResult
+  let tomlMessage: string
+  try {
+    tomlMessage = tomlStore.remove("project", agentName)
+  } catch (err) {
+    tomlMessage = `(${err instanceof Error ? err.message : String(err)})`
+  }
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.filter((a) => a.name !== agentName),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   if (cascade) {
     const paths = new LeucoPaths()

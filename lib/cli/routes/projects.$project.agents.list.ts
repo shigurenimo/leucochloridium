@@ -20,7 +20,6 @@ export const agentsListHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   if (project.agents.length === 0) return c.text("(no agents)")
 

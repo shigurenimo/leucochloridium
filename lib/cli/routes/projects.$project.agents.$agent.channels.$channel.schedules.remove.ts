@@ -22,15 +22,13 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
-  const result = store.removeScheduleEntry({
+  store.removeScheduleEntry({
     projectId: project.id,
     agentName,
     channelName,
     entryIdOrName: target,
   })
-  if (result instanceof Error) return c.text(`leuco: ${result.message}`, 400)
 
   return c.text(`removed schedule entry ${projectName}/${agentName}/${channelName}/${target}`)
 })

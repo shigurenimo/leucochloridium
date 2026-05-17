@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { randomUUID } from "node:crypto"
 import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { factory } from "@/cli/cli-factory"
@@ -29,23 +30,18 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
   }
 
   const validatedName = validateLeucoName(name, "schedule entry name")
-  if (validatedName instanceof Error) return c.text(`leuco: ${validatedName.message}`, 400)
 
   const validatedRunAt = validateRunAt(runAt)
-  if (validatedRunAt instanceof Error) return c.text(`leuco: ${validatedRunAt.message}`, 400)
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const channel = findChannel(agent, projectName, channelName)
-  if (channel instanceof Error) return c.text(`leuco: ${channel.message}`, 404)
 
   if (channel.type !== "schedule") {
-    return c.text(`leuco: channel ${channelName} is not a schedule channel`, 400)
+    throw new HTTPException(400, { message: `channel ${channelName} is not a schedule channel` })
   }
 
   const entry: ScheduleEntry = {
@@ -56,13 +52,12 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
     enabled: true,
   }
 
-  const result = store.addScheduleEntry({
+  store.addScheduleEntry({
     projectId: project.id,
     agentName,
     channelName,
     entry,
   })
-  if (result instanceof Error) return c.text(`leuco: ${result.message}`, 400)
 
   return c.text(
     `added schedule entry ${projectName}/${agentName}/${channelName}/${entry.name} (id=${entry.id})`,

@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -28,25 +29,26 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
   const appFlag = body.flags["app-token"]
 
   if (typeof botFlag !== "string" && typeof appFlag !== "string") {
-    return c.text("leuco: at least one of --bot-token / --app-token is required", 400)
+    throw new HTTPException(400, {
+      message: "at least one of --bot-token / --app-token is required",
+    })
   }
 
   if (botFlag === "-" && appFlag === "-") {
-    return c.text("leuco: only one of --bot-token / --app-token can read from stdin", 400)
+    throw new HTTPException(400, {
+      message: "only one of --bot-token / --app-token can read from stdin",
+    })
   }
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const channel = findChannel(agent, projectName, channelName)
-  if (channel instanceof Error) return c.text(`leuco: ${channel.message}`, 404)
 
   if (channel.type !== "slack") {
-    return c.text(`leuco: channel ${channelName} is not a slack channel`, 400)
+    throw new HTTPException(400, { message: `channel ${channelName} is not a slack channel` })
   }
 
   const nextBotToken = (await resolveTokenFlag(botFlag)) ?? channel.botToken
@@ -54,7 +56,7 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
 
   const next: Channel = { ...channel, botToken: nextBotToken, appToken: nextAppToken }
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.map((a) =>
       a.name !== agentName
@@ -65,7 +67,6 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
           },
     ),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   const updated: string[] = []
   if (typeof botFlag === "string") updated.push("botToken")

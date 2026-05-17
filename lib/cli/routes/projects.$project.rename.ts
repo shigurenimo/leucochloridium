@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -28,18 +29,15 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
     return c.text(`usage: leuco projects ${oldName} rename <new-name>`, 400)
   }
   if (newName === oldName) {
-    return c.text(`leuco: new name is identical to current name (${oldName})`, 400)
+    throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })
   }
 
-  const validated = validateLeucoName(newName, "project name")
-  if (validated instanceof Error) return c.text(`leuco: ${validated.message}`, 400)
+  validateLeucoName(newName, "project name")
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
-  const saved = store.save({ ...project, name: newName })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
+  store.save({ ...project, name: newName })
 
   return c.text(`renamed project ${oldName} → ${newName}`)
 })

@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
 import { factory } from "@/cli/cli-factory"
 import { help } from "@/cli/routes/update.help"
@@ -14,7 +15,7 @@ export const updateHandler = factory.createHandlers(async (c) => {
   const current = c.var.version
   const latest = await fetchLatestVersion()
   if (latest instanceof Error) {
-    return c.text(`leuco: ${latest.message}`, 500)
+    throw new HTTPException(500, { message: `${latest.message}` })
   }
 
   if (latest === current) {
@@ -34,7 +35,7 @@ export const updateHandler = factory.createHandlers(async (c) => {
   })
   const code = await proc.exited
   if (code !== 0) {
-    return c.text(`leuco: bun add -g leuco@${latest} exited with ${code}`, 500)
+    throw new HTTPException(500, { message: `bun add -g leuco@${latest} exited with ${code}` })
   }
 
   // bun add only swaps files in node_modules — the running daemon is still on

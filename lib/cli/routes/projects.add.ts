@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path"
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import type { Project } from "@/config/config-schema"
@@ -25,15 +26,15 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const list = store.list()
-  if (list instanceof Error) return c.text(`leuco: ${list.message}`, 500)
 
   if (list.some((p) => p.path === path)) {
-    return c.text(`leuco: another project is already registered at ${path}`, 400)
+    throw new HTTPException(400, {
+      message: `another project is already registered at ${path}`,
+    })
   }
 
   const project: Project = { id: crypto.randomUUID(), name, path, agents: [] }
-  const saved = store.save(project)
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
+  store.save(project)
 
   return c.text(`added project ${name} → ${path}`)
 })

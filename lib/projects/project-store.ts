@@ -32,6 +32,10 @@ type Props = {
  * migrated transparently on `list()`: a UUID is generated, written into
  * `settings.json`, and the directory is renamed to match. After migration the
  * id is stable and rename / move become metadata edits.
+ *
+ * Errors are thrown, never returned. Handlers catch nothing — the Hono
+ * `onError` in `lib/cli/routes/index.ts` formats `HTTPException`s and any
+ * other throws as `error: <message>`.
  */
 export class LeucoProjectStore {
   private readonly paths: LeucoPaths
@@ -45,40 +49,28 @@ export class LeucoProjectStore {
     return this.paths
   }
 
-  list(): Project[] | Error {
+  list(): Project[] {
     const root = this.paths.projectsRoot()
     if (!existsSync(root)) return []
 
-    try {
-      const entries = readdirSync(root, { withFileTypes: true })
-      const projects: Project[] = []
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const settingsPath = this.paths.projectSettingsPath(entry.name)
-        if (!existsSync(settingsPath)) continue
-        const migrated = this.loadOrMigrate(entry.name)
-        if (migrated instanceof Error) return migrated
-        projects.push(migrated)
-      }
-      return projects
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
+    const entries = readdirSync(root, { withFileTypes: true })
+    const projects: Project[] = []
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const settingsPath = this.paths.projectSettingsPath(entry.name)
+      if (!existsSync(settingsPath)) continue
+      projects.push(this.loadOrMigrate(entry.name))
     }
+    return projects
   }
 
-  load(projectId: string): Project | Error {
+  load(projectId: string): Project {
     const path = this.paths.projectSettingsPath(projectId)
-    if (!existsSync(path)) return new Error(`project not found: ${projectId}`)
+    if (!existsSync(path)) throw new Error(`project not found: ${projectId}`)
 
-    try {
-      const text = readFileSync(path, "utf8")
-      const json = JSON.parse(text)
-      return projectSchema.parse(json)
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+    const text = readFileSync(path, "utf8")
+    const json = JSON.parse(text)
+    return projectSchema.parse(json)
   }
 
   /**
@@ -88,12 +80,10 @@ export class LeucoProjectStore {
    * differs; the caller can disambiguate via `cwd` by passing the optional
    * `preferCwd` so the project whose `path` matches `cwd` wins.
    */
-  resolveByName(name: string, opts: { preferCwd?: string } = {}): Project | Error {
+  resolveByName(name: string, opts: { preferCwd?: string } = {}): Project {
     const list = this.list()
-    if (list instanceof Error) return list
-
     const matches = list.filter((p) => p.name === name)
-    if (matches.length === 0) return new Error(`project not found: ${name}`)
+    if (matches.length === 0) throw new Error(`project not found: ${name}`)
     if (matches.length === 1) return matches[0]!
 
     if (opts.preferCwd) {
@@ -103,38 +93,30 @@ export class LeucoProjectStore {
     }
 
     const paths = matches.map((p) => p.path).join(", ")
-    return new Error(
+    throw new Error(
       `multiple projects named '${name}' (${paths}). disambiguate by running from one of those directories, or rename one of them with a different --name.`,
     )
   }
 
-  save(project: Project): string | Error {
+  save(project: Project): string {
     const path = this.paths.projectSettingsPath(project.id)
-
-    try {
-      const dir = dirname(path)
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-      writeFileSync(path, `${JSON.stringify(project, null, 2)}\n`)
-      chmodSync(path, 0o600)
-      return path
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+    const dir = dirname(path)
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(path, `${JSON.stringify(project, null, 2)}\n`)
+    chmodSync(path, 0o600)
+    return path
   }
 
   remove(projectId: string): void {
     rmSync(this.paths.projectDir(projectId), { recursive: true, force: true })
   }
 
-  resolveByCwd(cwd: string): Project | Error {
+  resolveByCwd(cwd: string): Project {
     const cwdAbs = resolvePath(cwd)
     const list = this.list()
-    if (list instanceof Error) return list
-
     const match = list.find((p) => resolvePath(p.path) === cwdAbs)
     if (!match) {
-      return new Error(
+      throw new Error(
         `no project registered at ${cwdAbs}. run \`leuco projects create ${cwdAbs}\` or \`leuco projects add ${cwdAbs}\`.`,
       )
     }
@@ -147,13 +129,8 @@ export class LeucoProjectStore {
    * thread id is what `LeucoTenant.ensureAgentThread()` resumes from on the
    * next daemon start.
    */
-  setAgentThreadId(
-    projectId: string,
-    agentName: string,
-    codexThreadId: string | null,
-  ): string | Error {
+  setAgentThreadId(projectId: string, agentName: string, codexThreadId: string | null): string {
     const project = this.load(projectId)
-    if (project instanceof Error) return project
 
     let touched = false
     const nextAgents = project.agents.map((agent) => {
@@ -170,7 +147,7 @@ export class LeucoProjectStore {
       }
       return { ...agent, codexThreadId }
     })
-    if (!touched) return new Error(`agent '${agentName}' not found in project '${project.name}'`)
+    if (!touched) throw new Error(`agent '${agentName}' not found in project '${project.name}'`)
 
     return this.save({ ...project, agents: nextAgents })
   }
@@ -186,13 +163,13 @@ export class LeucoProjectStore {
     agentName: string
     channelName: string
     entry: ScheduleEntry
-  }): string | Error {
+  }): string {
     return this.mutateScheduleChannel(input, (channel) => {
       if (channel.entries.some((e) => e.id === input.entry.id)) {
-        return new Error(`schedule entry id already exists: ${input.entry.id}`)
+        throw new Error(`schedule entry id already exists: ${input.entry.id}`)
       }
       if (channel.entries.some((e) => e.name === input.entry.name)) {
-        return new Error(`schedule entry name already exists: ${input.entry.name}`)
+        throw new Error(`schedule entry name already exists: ${input.entry.name}`)
       }
       return { ...channel, entries: [...channel.entries, input.entry] }
     })
@@ -208,14 +185,14 @@ export class LeucoProjectStore {
     agentName: string
     channelName: string
     entryIdOrName: string
-  }): string | Error {
+  }): string {
     return this.mutateScheduleChannel(input, (channel) => {
       const before = channel.entries.length
       const next = channel.entries.filter(
         (e) => e.id !== input.entryIdOrName && e.name !== input.entryIdOrName,
       )
       if (next.length === before) {
-        return new Error(`schedule entry not found: ${input.entryIdOrName}`)
+        throw new Error(`schedule entry not found: ${input.entryIdOrName}`)
       }
       return { ...channel, entries: next }
     })
@@ -233,7 +210,7 @@ export class LeucoProjectStore {
     channelName: string
     entryId: string
     patch: Partial<ScheduleEntry>
-  }): string | Error {
+  }): string {
     return this.mutateScheduleChannel(input, (channel) => {
       let touched = false
       const next = channel.entries.map((e) => {
@@ -241,38 +218,36 @@ export class LeucoProjectStore {
         touched = true
         return { ...e, ...input.patch, id: e.id }
       })
-      if (!touched) return new Error(`schedule entry not found: ${input.entryId}`)
+      if (!touched) throw new Error(`schedule entry not found: ${input.entryId}`)
       return { ...channel, entries: next }
     })
   }
 
   private mutateScheduleChannel(
     input: { projectId: string; agentName: string; channelName: string },
-    transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable | Error,
-  ): string | Error {
+    transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable,
+  ): string {
     const project = this.load(input.projectId)
-    if (project instanceof Error) return project
 
     const agentIndex = project.agents.findIndex((a) => a.name === input.agentName)
     if (agentIndex < 0) {
-      return new Error(`agent '${input.agentName}' not found in project '${project.name}'`)
+      throw new Error(`agent '${input.agentName}' not found in project '${project.name}'`)
     }
 
     const agent = project.agents[agentIndex]!
     const channelIndex = agent.channels.findIndex((c) => c.name === input.channelName)
     if (channelIndex < 0) {
-      return new Error(
+      throw new Error(
         `channel '${input.channelName}' not found in ${project.name}/${input.agentName}`,
       )
     }
 
     const channel = agent.channels[channelIndex]!
     if (channel.type !== "schedule") {
-      return new Error(`channel '${input.channelName}' is not a schedule channel`)
+      throw new Error(`channel '${input.channelName}' is not a schedule channel`)
     }
 
     const updated = transform(channel)
-    if (updated instanceof Error) return updated
 
     const nextChannels: Channel[] = agent.channels.slice()
     nextChannels[channelIndex] = updated
@@ -289,47 +264,32 @@ export class LeucoProjectStore {
    * `settings.json`, and rename the on-disk directory so the id becomes the
    * key going forward. After migration the directory name equals `id`.
    */
-  private loadOrMigrate(dirName: string): Project | Error {
+  private loadOrMigrate(dirName: string): Project {
     const path = this.paths.projectSettingsPath(dirName)
-    let json: unknown
-    try {
-      json = JSON.parse(readFileSync(path, "utf8"))
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+    const json: unknown = JSON.parse(readFileSync(path, "utf8"))
 
     const hasId = typeof (json as { id?: unknown }).id === "string"
     if (hasId) {
-      const parsed = projectSchema.safeParse(json)
-      if (!parsed.success) return new Error(parsed.error.message)
-      if (parsed.data.id !== dirName) {
-        return new Error(
-          `project directory name '${dirName}' does not match id '${parsed.data.id}'`,
-        )
+      const parsed = projectSchema.parse(json)
+      if (parsed.id !== dirName) {
+        throw new Error(`project directory name '${dirName}' does not match id '${parsed.id}'`)
       }
-      return parsed.data
+      return parsed
     }
 
     const id = crypto.randomUUID()
     const withId = { ...(json as Record<string, unknown>), id }
-    const parsed = projectSchema.safeParse(withId)
-    if (!parsed.success) return new Error(parsed.error.message)
+    const parsed = projectSchema.parse(withId)
 
     if (existsSync(this.paths.projectDir(id))) {
-      return new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
+      throw new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
     }
 
-    try {
-      writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`)
-      chmodSync(path, 0o600)
-      renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+    writeFileSync(path, `${JSON.stringify(parsed, null, 2)}\n`)
+    chmodSync(path, 0o600)
+    renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
 
-    return parsed.data
+    return parsed
   }
 }
 

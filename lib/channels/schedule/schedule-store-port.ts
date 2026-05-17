@@ -7,8 +7,8 @@ import type { ScheduleEntry } from "@/config/config-schema"
  * without touching the filesystem.
  */
 export type ScheduleStorePort = {
-  /** Re-read the channel's entries every tick so MCP/CLI mutations are picked up. */
-  listEntries(): ScheduleEntry[] | Error
-  /** Remove one entry from settings.json after a one-shot fires. */
-  removeEntry(entryId: string): void | Error
+  /** Re-read the channel's entries every tick so MCP/CLI mutations are picked up. Throws on store error. */
+  listEntries(): ScheduleEntry[]
+  /** Remove one entry from settings.json after a one-shot fires. Throws on store error. */
+  removeEntry(entryId: string): void
 }

@@ -335,9 +335,10 @@ export class LeucoTenant {
   private persistAgentThread(): void {
     const store = this.projectStore
     if (!store) return
-    const result = store.setAgentThreadId(this.projectId, this.agentName, this.agentThreadId)
-    if (result instanceof Error) {
-      this.log(`[leuco] failed to persist agent thread: ${result.message}`)
+    try {
+      store.setAgentThreadId(this.projectId, this.agentName, this.agentThreadId)
+    } catch (err) {
+      this.log(`[leuco] failed to persist agent thread: ${errorText(err)}`)
     }
   }
 }

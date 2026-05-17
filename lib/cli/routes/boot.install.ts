@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -19,12 +20,11 @@ export const bootInstallHandler = factory.createHandlers(async (c) => {
   if (flagBool(body.flags.help)) return c.text(help)
 
   if (process.platform !== "darwin") {
-    return c.text("leuco boot is only supported on macOS", 400)
+    throw new HTTPException(400, { message: "leuco boot is only supported on macOS" })
   }
 
   const paths = new LeucoPaths()
   const agent = new LeucoLaunchAgent({ paths })
-
   const envVars = pickEnvVars(process.env)
 
   const result = await agent.install({
@@ -35,7 +35,7 @@ export const bootInstallHandler = factory.createHandlers(async (c) => {
   })
 
   if (result instanceof Error) {
-    return c.text(`leuco: ${result.message}`, 500)
+    throw new HTTPException(500, { message: result.message })
   }
 
   return c.text(

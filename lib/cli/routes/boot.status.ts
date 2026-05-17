@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -21,7 +22,7 @@ export const bootStatusHandler = factory.createHandlers(async (c) => {
   const status = await agent.status()
 
   if (status instanceof Error) {
-    return c.text(`leuco: ${status.message}`, 500)
+    throw new HTTPException(500, { message: `${status.message}` })
   }
 
   return c.text(

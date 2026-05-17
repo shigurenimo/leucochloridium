@@ -29,7 +29,6 @@ export const configSetHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoGlobalSettingsStore()
   const updated = store.set(key, value)
-  if (updated instanceof Error) return c.text(`leuco: ${updated.message}`, 400)
 
   const found = Object.entries(updated).find((entry) => entry[0] === key)
   return c.text(`set ${key}=${JSON.stringify(found?.[1])}`)

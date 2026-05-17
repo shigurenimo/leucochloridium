@@ -26,14 +26,11 @@ export const agentsResetHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const previousThreadId = agent.codexThreadId ?? null
-  const cleared = store.setAgentThreadId(project.id, agentName, null)
-  if (cleared instanceof Error) return c.text(`leuco: ${cleared.message}`, 500)
+  store.setAgentThreadId(project.id, agentName, null)
 
   if (!agent.enabled) {
     const tail = previousThreadId === null ? " (was already empty)" : ` (was ${previousThreadId})`
@@ -43,21 +40,18 @@ export const agentsResetHandler = factory.createHandlers(async (c) => {
   }
 
   const reloaded = store.load(project.id)
-  if (reloaded instanceof Error) return c.text(`leuco: ${reloaded.message}`, 500)
 
   const setEnabled = (enabled: boolean): Project => ({
     ...reloaded,
     agents: reloaded.agents.map((a) => (a.name === agentName ? { ...a, enabled } : a)),
   })
 
-  const offSave = store.save(setEnabled(false))
-  if (offSave instanceof Error) return c.text(`leuco: ${offSave.message}`, 500)
+  store.save(setEnabled(false))
   c.var.daemon.reload()
 
   await sleepReconcileGap()
 
-  const onSave = store.save(setEnabled(true))
-  if (onSave instanceof Error) return c.text(`leuco: ${onSave.message}`, 500)
+  store.save(setEnabled(true))
   const reload = c.var.daemon.reload()
 
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"

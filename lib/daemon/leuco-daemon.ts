@@ -65,10 +65,10 @@ export class LeucoDaemon {
     }
   }
 
-  start(props: StartProps): DaemonStartResult | Error {
+  start(props: StartProps): DaemonStartResult {
     const status = this.status()
     if (status.isRunning) {
-      return new Error(`leuco already running (pid ${status.pid})`)
+      throw new Error(`leuco already running (pid ${status.pid})`)
     }
 
     const stateDir = this.paths.daemonDir()
@@ -84,7 +84,7 @@ export class LeucoDaemon {
     })
 
     if (typeof child.pid !== "number") {
-      return new Error("failed to spawn daemon (no pid)")
+      throw new Error("failed to spawn daemon (no pid)")
     }
 
     writeFileSync(status.pidPath, `${child.pid}\n`)

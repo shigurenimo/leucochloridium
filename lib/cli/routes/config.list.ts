@@ -14,7 +14,6 @@ export const configListHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()
-  if (settings instanceof Error) return c.text(`leuco: ${settings.message}`, 500)
 
   return c.text(JSON.stringify(settings, null, 2))
 })

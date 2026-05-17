@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -28,27 +29,25 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
     )
   }
   if (newName === oldName) {
-    return c.text(`leuco: new name is identical to current name (${oldName})`, 400)
+    throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })
   }
 
-  const validated = validateLeucoName(newName, "channel name")
-  if (validated instanceof Error) return c.text(`leuco: ${validated.message}`, 400)
+  validateLeucoName(newName, "channel name")
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
-  const channel = findChannel(agent, projectName, oldName)
-  if (channel instanceof Error) return c.text(`leuco: ${channel.message}`, 404)
+  findChannel(agent, projectName, oldName)
 
   if (agent.channels.some((ch) => ch.name === newName)) {
-    return c.text(`leuco: channel already exists in ${projectName}/${agentName}: ${newName}`, 400)
+    throw new HTTPException(400, {
+      message: `channel already exists in ${projectName}/${agentName}: ${newName}`,
+    })
   }
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.map((a) =>
       a.name === agentName
@@ -59,7 +58,6 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
         : a,
     ),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   return c.text(`renamed channel ${projectName}/${agentName}/${oldName} → ${newName}`)
 })

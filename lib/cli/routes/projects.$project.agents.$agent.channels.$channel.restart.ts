@@ -27,13 +27,10 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const channel = findChannel(agent, projectName, channelName)
-  if (channel instanceof Error) return c.text(`leuco: ${channel.message}`, 404)
 
   const wasEnabled = channel.enabled
 
@@ -49,14 +46,12 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
     ),
   })
 
-  const offSave = store.save(setChannelEnabled(false))
-  if (offSave instanceof Error) return c.text(`leuco: ${offSave.message}`, 500)
+  store.save(setChannelEnabled(false))
   c.var.daemon.reload()
 
   await sleepReconcileGap()
 
-  const onSave = store.save(setChannelEnabled(true))
-  if (onSave instanceof Error) return c.text(`leuco: ${onSave.message}`, 500)
+  store.save(setChannelEnabled(true))
   const reload = c.var.daemon.reload()
 
   const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"

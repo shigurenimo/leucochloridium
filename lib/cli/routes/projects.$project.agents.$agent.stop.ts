@@ -22,20 +22,17 @@ export const agentsStopHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   if (!agent.enabled) {
     return c.text(`agent ${projectName}/${agentName} is already disabled`)
   }
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.map((a) => (a.name === agentName ? { ...a, enabled: false } : a)),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   const reload = c.var.daemon.reload()
   const reloadMsg = reload.signalled

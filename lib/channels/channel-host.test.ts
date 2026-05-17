@@ -46,44 +46,36 @@ describe("LeucoChannelHost.buildForAgent", () => {
       project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([slackChannel("main")]),
     })
-    expect(plugins).not.toBeInstanceOf(Error)
-    if (plugins instanceof Error) return
     expect(plugins).toHaveLength(1)
     expect(plugins[0]).toBeInstanceOf(LeucoSlackChannelPlugin)
     expect(plugins[0]?.name).toBe("main")
   })
 
-  it("returns Error when bot token is empty", () => {
-    const result = LeucoChannelHost.buildForAgent({
-      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([slackChannel("main", "", "xapp-1")]),
-    })
-    expect(result).toBeInstanceOf(Error)
-    if (result instanceof Error) {
-      expect(result.message).toContain("botToken")
-    }
+  it("throws when bot token is empty", () => {
+    expect(() =>
+      LeucoChannelHost.buildForAgent({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        agent: agent([slackChannel("main", "", "xapp-1")]),
+      }),
+    ).toThrow(/botToken/)
   })
 
-  it("returns Error when app token is empty", () => {
-    const result = LeucoChannelHost.buildForAgent({
-      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([slackChannel("main", "xoxb-1", "")]),
-    })
-    expect(result).toBeInstanceOf(Error)
-    if (result instanceof Error) {
-      expect(result.message).toContain("appToken")
-    }
+  it("throws when app token is empty", () => {
+    expect(() =>
+      LeucoChannelHost.buildForAgent({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        agent: agent([slackChannel("main", "xoxb-1", "")]),
+      }),
+    ).toThrow(/appToken/)
   })
 
   it("stops at the first failing channel", () => {
-    const result = LeucoChannelHost.buildForAgent({
-      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([slackChannel("ok"), slackChannel("missing", "", "")]),
-    })
-    expect(result).toBeInstanceOf(Error)
-    if (result instanceof Error) {
-      expect(result.message).toContain("missing")
-    }
+    expect(() =>
+      LeucoChannelHost.buildForAgent({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        agent: agent([slackChannel("ok"), slackChannel("missing", "", "")]),
+      }),
+    ).toThrow(/missing/)
   })
 
   it("builds a LeucoScheduleChannelPlugin when projectStore is provided", () => {
@@ -119,8 +111,6 @@ describe("LeucoChannelHost.buildForAgent", () => {
         agent: project.agents[0]!,
         projectStore: store,
       })
-      expect(plugins).not.toBeInstanceOf(Error)
-      if (plugins instanceof Error) return
       expect(plugins).toHaveLength(1)
       expect(plugins[0]).toBeInstanceOf(LeucoScheduleChannelPlugin)
     } finally {
@@ -128,7 +118,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
     }
   })
 
-  it("returns Error when a schedule channel is built without a projectStore", () => {
+  it("throws when a schedule channel is built without a projectStore", () => {
     const scheduleChannel: Channel = {
       id: "33333333-3333-4333-8333-333333333333",
       name: "cron",
@@ -136,13 +126,11 @@ describe("LeucoChannelHost.buildForAgent", () => {
       enabled: true,
       entries: [],
     }
-    const result = LeucoChannelHost.buildForAgent({
-      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([scheduleChannel]),
-    })
-    expect(result).toBeInstanceOf(Error)
-    if (result instanceof Error) {
-      expect(result.message).toContain("projectStore")
-    }
+    expect(() =>
+      LeucoChannelHost.buildForAgent({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        agent: agent([scheduleChannel]),
+      }),
+    ).toThrow(/projectStore/)
   })
 })

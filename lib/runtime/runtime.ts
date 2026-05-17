@@ -55,7 +55,7 @@ export class LeucoRuntime {
     Object.freeze(this)
   }
 
-  static build(buildProps: Props): LeucoRuntime | Error {
+  static build(buildProps: Props): LeucoRuntime {
     const baseLog = buildProps.onLog ?? ((line: string) => process.stdout.write(`${line}\n`))
     const paths = new LeucoPaths({ home: buildProps.home })
     const bus = new LeucoEventBus({ eventLogPath: paths.daemonEventLogPath() })
@@ -68,9 +68,7 @@ export class LeucoRuntime {
     }
 
     const projectStore = new LeucoProjectStore({ paths })
-
     const projects = projectStore.list()
-    if (projects instanceof Error) return projects
 
     // One MCP bearer token per daemon process. Codex children inherit it via
     // the LEUCO_MCP_TOKEN env var (referenced from each tenant's CODEX_HOME
@@ -82,24 +80,24 @@ export class LeucoRuntime {
     for (const project of projects) {
       for (const agent of project.agents) {
         if (!agent.enabled) continue
-        const tenant = buildTenant({
-          project,
-          agent,
-          paths,
-          env: buildProps.env,
-          codexBin: buildProps.codexBin,
-          onLog,
-          bus,
-          projectStore,
-          mcpToken,
-          mcpPort,
-        })
-        if (tenant instanceof Error) return tenant
-        tenants.push(tenant)
+        tenants.push(
+          buildTenant({
+            project,
+            agent,
+            paths,
+            env: buildProps.env,
+            codexBin: buildProps.codexBin,
+            onLog,
+            bus,
+            projectStore,
+            mcpToken,
+            mcpPort,
+          }),
+        )
       }
     }
 
-    const buildTenantFn = (project: Project, agent: Agent): LeucoTenant | Error =>
+    const buildTenantFn = (project: Project, agent: Agent): LeucoTenant =>
       buildTenant({
         project,
         agent,
@@ -141,13 +139,8 @@ export class LeucoRuntime {
     return this.props.projectStore
   }
 
-  async start(): Promise<void | Error> {
-    try {
-      await this.props.engine.start()
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+  async start(): Promise<void> {
+    await this.props.engine.start()
   }
 
   async stop(): Promise<void> {
@@ -155,8 +148,8 @@ export class LeucoRuntime {
   }
 
   /** Re-read every settings.json and reconcile the engine's tenant set. */
-  async reload(): Promise<void | Error> {
-    return this.props.engine.reconcile()
+  async reload(): Promise<void> {
+    await this.props.engine.reconcile()
   }
 }
 
@@ -173,7 +166,7 @@ type BuildTenantProps = {
   mcpPort: number | undefined
 }
 
-const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
+const buildTenant = (props: BuildTenantProps): LeucoTenant => {
   const enabledChannels = props.agent.channels.filter((ch) => ch.enabled)
   const filteredAgent: Agent = { ...props.agent, channels: enabledChannels }
 
@@ -182,13 +175,15 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     agent: filteredAgent,
     projectStore: props.projectStore,
   })
-  if (plugins instanceof Error) return plugins
 
   const tomlStore = new LeucoCodexAgentStore({ cwd: props.project.path })
-  const spec = tomlStore.read({ scope: "project", name: props.agent.name })
-  if (spec instanceof Error) {
-    return new Error(
-      `${spec.message} — run \`leuco projects ${props.project.name} agents add ${props.agent.name}\` to recreate it.`,
+  let spec: ReturnType<typeof tomlStore.read>
+  try {
+    spec = tomlStore.read({ scope: "project", name: props.agent.name })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `${message} — run \`leuco projects ${props.project.name} agents add ${props.agent.name}\` to recreate it.`,
     )
   }
 

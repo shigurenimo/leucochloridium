@@ -36,7 +36,10 @@
 
 ## エラー
 
-- バックエンドは throw 禁止、`T | Error` を返し instanceof で判別
+- Service / store は throw する。戻り値の union `T | Error` は使わない
+- ハンドラに try/catch を書かない。失敗は `throw new HTTPException(status, { message })` に統一し、`lib/cli/routes/index.ts` の onError が `error: <message>` で返す
+- `return c.text("...", 4xx)` 禁止
+- library 層（logger / boot 等、Hono 非依存の純粋部品）だけは戻り値の Error も許容する
 
 ## 空行
 

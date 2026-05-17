@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { existsSync, mkdirSync, renameSync } from "node:fs"
 import { dirname } from "node:path"
 import { factory } from "@/cli/cli-factory"
@@ -42,19 +43,18 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore({ paths })
 
   const src = resolveProject(store, srcName, { preferCwd: c.var.cwd })
-  if (src instanceof Error) return c.text(`leuco: ${src.message}`, 404)
 
   const agent = findAgent(src, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const dst = resolveProject(store, dstName)
-  if (dst instanceof Error) return c.text(`leuco: ${dst.message}`, 404)
 
   if (src.id === dst.id) {
-    return c.text(`leuco: source and destination are the same project (${srcName})`, 400)
+    throw new HTTPException(400, {
+      message: `source and destination are the same project (${srcName})`,
+    })
   }
   if (dst.agents.some((a) => a.name === agentName)) {
-    return c.text(`leuco: agent already exists in ${dstName}: ${agentName}`, 400)
+    throw new HTTPException(400, { message: `agent already exists in ${dstName}: ${agentName}` })
   }
 
   // Stop the daemon before touching CODEX_HOME so the running codex child does
@@ -84,10 +84,8 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
         developerInstructions: spec.developerInstructions,
         model: spec.model,
       })
-      if (added instanceof Error) return c.text(`leuco: ${added.message}`, 500)
 
-      const removed = srcToml.remove("project", agentName)
-      if (removed instanceof Error) return c.text(`leuco: ${removed.message}`, 500)
+      srcToml.remove("project", agentName)
 
       tomlMessage = `(toml: ${added})`
     }
@@ -98,7 +96,7 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
   const newHome = paths.agentDir(dst.id, agentName)
   if (existsSync(oldHome)) {
     if (existsSync(newHome)) {
-      return c.text(`leuco: target codex-home already exists: ${newHome}`, 500)
+      throw new HTTPException(500, { message: `target codex-home already exists: ${newHome}` })
     }
     const parent = dirname(newHome)
     if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
@@ -106,25 +104,19 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
   }
 
   // 3. Update settings.json on both sides.
-  const removedSave = store.save({
+  store.save({
     ...src,
     agents: src.agents.filter((a) => a.name !== agentName),
   })
-  if (removedSave instanceof Error) return c.text(`leuco: ${removedSave.message}`, 500)
 
-  const addedSave = store.save({
+  store.save({
     ...dst,
     agents: [...dst.agents, agent],
   })
-  if (addedSave instanceof Error) return c.text(`leuco: ${addedSave.message}`, 500)
 
   const lines = [`moved agent ${srcName}/${agentName} → ${dstName}/${agentName} ${tomlMessage}`]
   if (wasRunning) {
     const result = daemon.start({ binPath: c.var.binPath, env: process.env })
-    if (result instanceof Error) {
-      lines.push(`leuco: daemon restart failed: ${result.message}`)
-      return c.text(lines.join("\n"), 500)
-    }
     lines.push(`daemon restarted (pid ${result.pid})`)
   }
   return c.text(lines.join("\n"))

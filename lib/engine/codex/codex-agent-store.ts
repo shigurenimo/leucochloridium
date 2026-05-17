@@ -73,15 +73,15 @@ export class LeucoCodexAgentStore {
       }))
   }
 
-  add(addProps: AddProps): string | Error {
+  add(addProps: AddProps): string {
     if (!NAME_PATTERN.test(addProps.name)) {
-      return new Error(`invalid agent name: ${addProps.name} (expected ^[a-z][a-z0-9_-]*$)`)
+      throw new Error(`invalid agent name: ${addProps.name} (expected ^[a-z][a-z0-9_-]*$)`)
     }
 
     const dir = this.getDir(addProps.scope)
     const path = join(dir, `${addProps.name}.toml`)
     if (existsSync(path)) {
-      return new Error(`agent already exists: ${path}`)
+      throw new Error(`agent already exists: ${path}`)
     }
 
     if (!existsSync(dir)) {
@@ -108,32 +108,23 @@ export class LeucoCodexAgentStore {
    * optional `model`) — richer TOML constructs are passed through to codex
    * directly via the on-disk file rather than re-serialised here.
    */
-  read(props: ReadProps): CodexAgentSpec | Error {
+  read(props: ReadProps): CodexAgentSpec {
     const path = join(this.getDir(props.scope), `${props.name}.toml`)
-    if (!existsSync(path)) return new Error(`agent not found: ${path}`)
+    if (!existsSync(path)) throw new Error(`agent not found: ${path}`)
 
-    try {
-      const text = readFileSync(path, "utf8")
-      const fields = parseAgentToml(text)
-      return {
-        name: fields.name ?? props.name,
-        description: fields.description ?? "",
-        developerInstructions: fields.developer_instructions ?? "",
-        model: fields.model ?? null,
-      }
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
+    const text = readFileSync(path, "utf8")
+    const fields = parseAgentToml(text)
+    return {
+      name: fields.name ?? props.name,
+      description: fields.description ?? "",
+      developerInstructions: fields.developer_instructions ?? "",
+      model: fields.model ?? null,
     }
   }
 
-  rename(scope: CodexAgentScope, oldName: string, newName: string): string | Error {
+  rename(scope: CodexAgentScope, oldName: string, newName: string): string {
     const spec = this.read({ scope, name: oldName })
-    if (spec instanceof Error) return spec
-
-    const removed = this.remove(scope, oldName)
-    if (removed instanceof Error) return removed
-
+    this.remove(scope, oldName)
     return this.add({
       scope,
       name: newName,
@@ -143,20 +134,11 @@ export class LeucoCodexAgentStore {
     })
   }
 
-  remove(scope: CodexAgentScope, name: string): string | Error {
+  remove(scope: CodexAgentScope, name: string): string {
     const path = join(this.getDir(scope), `${name}.toml`)
-
-    if (!existsSync(path)) {
-      return new Error(`agent not found: ${path}`)
-    }
-
-    try {
-      unlinkSync(path)
-      return path
-    } catch (err) {
-      if (err instanceof Error) return err
-      return new Error(String(err))
-    }
+    if (!existsSync(path)) throw new Error(`agent not found: ${path}`)
+    unlinkSync(path)
+    return path
   }
 }
 

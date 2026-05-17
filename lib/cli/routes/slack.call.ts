@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
@@ -23,49 +24,42 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
 
   const method = body.args[0]
   if (!method) {
-    return c.text(
-      "usage: leuco slack call <method> [--body '<json>'] --project <p> --agent <a> [--channel <c>]",
-      400,
-    )
+    throw new HTTPException(400, {
+      message:
+        "usage: leuco slack call <method> [--body '<json>'] --project <p> --agent <a> [--channel <c>]",
+    })
   }
 
   const projectName = flagString(body.flags.project)
   const agentName = flagString(body.flags.agent)
   if (!projectName || !agentName) {
-    return c.text("leuco: --project and --agent are required", 400)
+    throw new HTTPException(400, { message: "--project and --agent are required" })
   }
 
   const channelName = flagString(body.flags.channel) ?? undefined
   const rawBody = flagString(body.flags.body)
   const parsedBody = parseJsonBody(rawBody)
-  if (parsedBody instanceof Error) return c.text(`leuco: --body: ${parsedBody.message}`, 400)
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
-
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
-
   const tokens = resolveSlackTokens({ project, agent, channelName })
-  if (tokens instanceof Error) return c.text(`leuco: ${tokens.message}`, 400)
-
   const result = await slackCall({ botToken: tokens.botToken, method, body: parsedBody })
-  if (result instanceof Error) return c.text(`leuco: ${result.message}`, 500)
 
   return c.text(JSON.stringify(result, null, 2))
 })
 
-const parseJsonBody = (raw: string | null): Record<string, unknown> | Error => {
+const parseJsonBody = (raw: string | null): Record<string, unknown> => {
   if (raw === null) return {}
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return new Error("must be a JSON object")
-    }
-    return parsed as Record<string, unknown>
+    parsed = JSON.parse(raw)
   } catch (err) {
-    if (err instanceof Error) return err
-    return new Error(String(err))
+    const message = err instanceof Error ? err.message : String(err)
+    throw new HTTPException(400, { message: `--body: ${message}` })
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HTTPException(400, { message: "--body: must be a JSON object" })
+  }
+  return parsed as Record<string, unknown>
 }

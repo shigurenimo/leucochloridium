@@ -60,7 +60,6 @@ describe("LeucoProjectStore", () => {
     const project = sampleProject()
     const result = store.save(project)
     expect(result).toBe(join(home, ".leuco", "projects", DEMO_ID, "settings.json"))
-    if (result instanceof Error) throw result
 
     const text = readFileSync(result, "utf8")
     expect(text).toContain(`"id": "${DEMO_ID}"`)
@@ -111,8 +110,6 @@ describe("LeucoProjectStore", () => {
     )
 
     const result = store.list()
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
     expect(result.map((p) => p.name).sort()).toEqual(["alpha", "beta"])
   })
 
@@ -121,20 +118,17 @@ describe("LeucoProjectStore", () => {
       sampleProject({ id: "11111111-1111-4111-8111-aaaaaaaaaaaa", name: "alpha", path: "/x/a" }),
     )
     const result = store.resolveByName("alpha")
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
     expect(result.path).toBe("/x/a")
   })
 
-  it("resolveByName() returns Error when ambiguous", () => {
+  it("resolveByName() throws when ambiguous", () => {
     store.save(
       sampleProject({ id: "11111111-1111-4111-8111-aaaaaaaaaaaa", name: "web", path: "/a/web" }),
     )
     store.save(
       sampleProject({ id: "22222222-2222-4222-8222-bbbbbbbbbbbb", name: "web", path: "/b/web" }),
     )
-    const result = store.resolveByName("web")
-    expect(result).toBeInstanceOf(Error)
+    expect(() => store.resolveByName("web")).toThrow()
   })
 
   it("resolveByName() disambiguates by preferCwd", () => {
@@ -145,44 +139,38 @@ describe("LeucoProjectStore", () => {
       sampleProject({ id: "22222222-2222-4222-8222-bbbbbbbbbbbb", name: "web", path: "/b/web" }),
     )
     const result = store.resolveByName("web", { preferCwd: "/b/web" })
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
     expect(result.path).toBe("/b/web")
   })
 
   it("resolveByCwd() finds a project whose path matches cwd", () => {
     store.save(sampleProject({ name: "alpha", path: "/x/a" }))
     const result = store.resolveByCwd("/x/a")
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
     expect(result.name).toBe("alpha")
   })
 
-  it("resolveByCwd() returns Error when no project matches", () => {
+  it("resolveByCwd() throws when no project matches", () => {
     store.save(sampleProject({ name: "alpha", path: "/x/a" }))
-    const result = store.resolveByCwd("/y/b")
-    expect(result).toBeInstanceOf(Error)
+    expect(() => store.resolveByCwd("/y/b")).toThrow()
   })
 
-  it("returns Error when settings.json contains invalid JSON", () => {
+  it("throws when settings.json contains invalid JSON", () => {
     const path = store.getPaths().projectSettingsPath(DEMO_ID)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, "{ not json")
-
-    expect(store.load(DEMO_ID)).toBeInstanceOf(Error)
+    expect(() => store.load(DEMO_ID)).toThrow()
   })
 
-  it("returns Error when zod validation fails", () => {
+  it("throws when zod validation fails", () => {
     const path = store.getPaths().projectSettingsPath(DEMO_ID)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, JSON.stringify({ id: DEMO_ID, name: "", path: "p", agents: [] }))
-    expect(store.load(DEMO_ID)).toBeInstanceOf(Error)
+    expect(() => store.load(DEMO_ID)).toThrow()
   })
 
   it("remove() deletes the project directory", () => {
     store.save(sampleProject())
     store.remove(DEMO_ID)
-    expect(store.load(DEMO_ID)).toBeInstanceOf(Error)
+    expect(() => store.load(DEMO_ID)).toThrow()
   })
 
   it("list() migrates a legacy name-keyed directory to id-keyed", () => {
@@ -197,8 +185,6 @@ describe("LeucoProjectStore", () => {
     writeFileSync(join(legacyDir, "settings.json"), JSON.stringify(legacySettings, null, 2))
 
     const result = store.list()
-    expect(result).not.toBeInstanceOf(Error)
-    if (result instanceof Error) return
     expect(result).toHaveLength(1)
     const project = result[0]!
     expect(project.name).toBe("legacy-demo")
@@ -247,16 +233,14 @@ describe("LeucoProjectStore", () => {
     })
 
     it("addScheduleEntry appends a new entry", () => {
-      const result = store.addScheduleEntry({
+      store.addScheduleEntry({
         projectId: DEMO_ID,
         agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
-      expect(result).not.toBeInstanceOf(Error)
 
       const project = store.load(DEMO_ID)
-      if (project instanceof Error) throw project
       const channel = project.agents[0]!.channels[0]!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries.map((e) => e.name)).toEqual(["morning-standup"])
@@ -269,24 +253,26 @@ describe("LeucoProjectStore", () => {
         channelName: "cron",
         entry: sampleEntry(),
       })
-      const dup = store.addScheduleEntry({
-        projectId: DEMO_ID,
-        agentName: "reviewer",
-        channelName: "cron",
-        entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
-      })
-      expect(dup).toBeInstanceOf(Error)
+      expect(() =>
+        store.addScheduleEntry({
+          projectId: DEMO_ID,
+          agentName: "reviewer",
+          channelName: "cron",
+          entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
+        }),
+      ).toThrow()
     })
 
     it("addScheduleEntry rejects when channel is not schedule", () => {
       store.save(sampleProject())
-      const result = store.addScheduleEntry({
-        projectId: DEMO_ID,
-        agentName: "reviewer",
-        channelName: "slack",
-        entry: sampleEntry(),
-      })
-      expect(result).toBeInstanceOf(Error)
+      expect(() =>
+        store.addScheduleEntry({
+          projectId: DEMO_ID,
+          agentName: "reviewer",
+          channelName: "slack",
+          entry: sampleEntry(),
+        }),
+      ).toThrow()
     })
 
     it("removeScheduleEntry by id removes the entry", () => {
@@ -296,16 +282,14 @@ describe("LeucoProjectStore", () => {
         channelName: "cron",
         entry: sampleEntry(),
       })
-      const result = store.removeScheduleEntry({
+      store.removeScheduleEntry({
         projectId: DEMO_ID,
         agentName: "reviewer",
         channelName: "cron",
         entryIdOrName: "44444444-4444-4444-8444-444444444444",
       })
-      expect(result).not.toBeInstanceOf(Error)
 
       const project = store.load(DEMO_ID)
-      if (project instanceof Error) throw project
       const channel = project.agents[0]!.channels[0]!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries).toEqual([])
@@ -318,23 +302,23 @@ describe("LeucoProjectStore", () => {
         channelName: "cron",
         entry: sampleEntry(),
       })
-      const result = store.removeScheduleEntry({
+      store.removeScheduleEntry({
         projectId: DEMO_ID,
         agentName: "reviewer",
         channelName: "cron",
         entryIdOrName: "morning-standup",
       })
-      expect(result).not.toBeInstanceOf(Error)
     })
 
-    it("removeScheduleEntry returns Error when not found", () => {
-      const result = store.removeScheduleEntry({
-        projectId: DEMO_ID,
-        agentName: "reviewer",
-        channelName: "cron",
-        entryIdOrName: "nope",
-      })
-      expect(result).toBeInstanceOf(Error)
+    it("removeScheduleEntry throws when not found", () => {
+      expect(() =>
+        store.removeScheduleEntry({
+          projectId: DEMO_ID,
+          agentName: "reviewer",
+          channelName: "cron",
+          entryIdOrName: "nope",
+        }),
+      ).toThrow()
     })
 
     it("updateScheduleEntry patches one entry by id", () => {
@@ -344,17 +328,15 @@ describe("LeucoProjectStore", () => {
         channelName: "cron",
         entry: sampleEntry(),
       })
-      const result = store.updateScheduleEntry({
+      store.updateScheduleEntry({
         projectId: DEMO_ID,
         agentName: "reviewer",
         channelName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { enabled: false },
       })
-      expect(result).not.toBeInstanceOf(Error)
 
       const project = store.load(DEMO_ID)
-      if (project instanceof Error) throw project
       const channel = project.agents[0]!.channels[0]!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries[0]!.enabled).toBe(false)
@@ -375,7 +357,6 @@ describe("LeucoProjectStore", () => {
         patch: { id: "evil" } as Partial<ScheduleEntry>,
       })
       const project = store.load(DEMO_ID)
-      if (project instanceof Error) throw project
       const channel = project.agents[0]!.channels[0]!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")

@@ -20,7 +20,6 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, name, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const cascade = flagBool(body.flags.cascade)
   if (project.agents.length > 0 && !cascade) {

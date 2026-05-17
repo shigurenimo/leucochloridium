@@ -20,15 +20,12 @@ export const channelsRemoveHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
-  const channel = findChannel(agent, projectName, channelName)
-  if (channel instanceof Error) return c.text(`leuco: ${channel.message}`, 404)
+  findChannel(agent, projectName, channelName)
 
-  const saved = store.save({
+  store.save({
     ...project,
     agents: project.agents.map((a) =>
       a.name === agentName
@@ -36,7 +33,6 @@ export const channelsRemoveHandler = factory.createHandlers(async (c) => {
         : a,
     ),
   })
-  if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 
   return c.text(`removed channel ${projectName}/${agentName}/${channelName}`)
 })

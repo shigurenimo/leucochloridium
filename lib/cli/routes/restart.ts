@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { cliEnvSchema } from "@/env/cli-env-schema"
@@ -16,10 +17,10 @@ export const restartHandler = factory.createHandlers(async (c) => {
   if (!env.success) {
     const lines = env.error.issues.map((issue) => {
       const key = issue.path.join(".")
-      return `leuco: ${key}: ${issue.message}`
+      return `${key}: ${issue.message}`
     })
     lines.push("run `leuco --help` for usage.")
-    return c.text(lines.join("\n"), 400)
+    throw new HTTPException(400, { message: lines.join("\n") })
   }
 
   const daemon = c.var.daemon
@@ -31,10 +32,6 @@ export const restartHandler = factory.createHandlers(async (c) => {
   }
 
   const result = daemon.start({ binPath: c.var.binPath, env: process.env })
-  if (result instanceof Error) {
-    lines.push(`leuco: ${result.message}`)
-    return c.text(lines.join("\n"), 500)
-  }
 
   lines.push(
     `[leuco] started in background (pid ${result.pid})`,

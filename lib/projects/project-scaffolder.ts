@@ -45,14 +45,12 @@ export class LeucoProjectScaffolder {
     Object.freeze(this)
   }
 
-  create(createProps: CreateProps): ProjectScaffoldResult | Error {
+  create(createProps: CreateProps): ProjectScaffoldResult {
     const target = createProps.path
 
     const dir = ensureDir(target)
     const git = ensureGit(target)
-
     const registered = registerInStore(target, createProps, this.paths)
-    if (registered instanceof Error) return registered
 
     return {
       path: target,
@@ -84,10 +82,9 @@ const registerInStore = (
   target: string,
   createProps: CreateProps,
   paths: LeucoPaths,
-): RegisterResult | Error => {
+): RegisterResult => {
   const store = new LeucoProjectStore({ paths })
   const list = store.list()
-  if (list instanceof Error) return list
 
   const samePath = list.find((p) => p.path === target)
   if (samePath) {
@@ -101,7 +98,6 @@ const registerInStore = (
     agents: [],
   }
   const saved = store.save(project)
-  if (saved instanceof Error) return saved
 
   return { configPath: saved, step: "registered" }
 }

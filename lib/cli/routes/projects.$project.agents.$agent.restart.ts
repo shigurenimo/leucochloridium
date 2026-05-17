@@ -26,10 +26,8 @@ export const agentsRestartHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
-  if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const wasEnabled = agent.enabled
 
@@ -38,14 +36,12 @@ export const agentsRestartHandler = factory.createHandlers(async (c) => {
     agents: project.agents.map((a) => (a.name === agentName ? { ...a, enabled } : a)),
   })
 
-  const offSave = store.save(setAgentEnabled(false))
-  if (offSave instanceof Error) return c.text(`leuco: ${offSave.message}`, 500)
+  store.save(setAgentEnabled(false))
   c.var.daemon.reload()
 
   await sleepReconcileGap()
 
-  const onSave = store.save(setAgentEnabled(true))
-  if (onSave instanceof Error) return c.text(`leuco: ${onSave.message}`, 500)
+  store.save(setAgentEnabled(true))
   const reload = c.var.daemon.reload()
 
   const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"
