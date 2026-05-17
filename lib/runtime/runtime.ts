@@ -20,6 +20,7 @@ import { LeucoPromptPresets } from "@/engine/prompt-presets"
 import { LeucoTenant, type TenantAgentSpec } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { LeucoPaths } from "@/paths/leuco-paths"
+import { LeucoAgentStateStore } from "@/projects/agent-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Logger = (line: string) => void
@@ -68,6 +69,7 @@ export class LeucoRuntime {
     }
 
     const projectStore = new LeucoProjectStore({ paths })
+    const agentStateStore = new LeucoAgentStateStore({ paths })
     const projects = projectStore.list()
 
     // One MCP bearer token per daemon process. Codex children inherit it via
@@ -90,6 +92,7 @@ export class LeucoRuntime {
             onLog,
             bus,
             projectStore,
+            agentStateStore,
             mcpToken,
             mcpPort,
           }),
@@ -107,6 +110,7 @@ export class LeucoRuntime {
         onLog,
         bus,
         projectStore,
+        agentStateStore,
         mcpToken,
         mcpPort,
       })
@@ -162,6 +166,7 @@ type BuildTenantProps = {
   onLog: Logger
   bus: LeucoEventBus
   projectStore: LeucoProjectStore
+  agentStateStore: LeucoAgentStateStore
   mcpToken: string | null
   mcpPort: number | undefined
 }
@@ -237,6 +242,8 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
 
   const presets = LeucoPromptPresets.resolveAll(props.agent.prompts)
 
+  const initialState = props.agentStateStore.load(props.project.id, props.agent.name)
+
   return new LeucoTenant({
     projectId: props.project.id,
     projectName: props.project.name,
@@ -247,8 +254,8 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     plugins,
     onLog: props.onLog,
     bus: props.bus,
-    initialCodexThreadId: props.agent.codexThreadId,
-    projectStore: props.projectStore,
+    initialCodexThreadId: initialState.codexThreadId ?? undefined,
+    agentStateStore: props.agentStateStore,
     useCommonInstructions: props.agent.useCommonInstructions,
     listSubagents,
     presets,

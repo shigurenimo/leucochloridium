@@ -94,6 +94,16 @@ export class LeucoPaths {
     return join(this.agentDir(projectId, agentName), "home")
   }
 
+  /**
+   * Mutable per-agent runtime state (codex thread id, future per-entry
+   * lastFiredAt, etc). Kept out of `settings.json` so the settings file
+   * remains an idempotent, human-editable config surface — the daemon
+   * writes here on every persisted thread without touching settings.
+   */
+  agentStatePath(projectId: string, agentName: string): string {
+    return join(this.agentDir(projectId, agentName), "state.json")
+  }
+
   /** macOS LaunchAgents directory under the user's Library. */
   launchAgentsDir(): string {
     return join(this.home, "Library", "LaunchAgents")

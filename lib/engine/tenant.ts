@@ -2,7 +2,7 @@ import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
-import type { LeucoProjectStore } from "@/projects/project-store"
+import type { LeucoAgentStateStore } from "@/projects/agent-state-store"
 
 /**
  * Maximum wall-clock for a single codex turn. Approval-prompt deadlocks and
@@ -28,10 +28,10 @@ type Props = {
   projectPath: string
   agentName: string
   agentSpec?: TenantAgentSpec
-  /** Codex thread id loaded from settings.json, or undefined if the agent has never run yet. */
+  /** Codex thread id loaded from state.json, or undefined if the agent has never run yet. */
   initialCodexThreadId?: string
-  /** Used to persist a new codex thread id back into settings.json. Optional in tests. */
-  projectStore?: LeucoProjectStore
+  /** Used to persist a new codex thread id into agents/<a>/state.json. Optional in tests. */
+  agentStateStore?: LeucoAgentStateStore
   codex: CodexClientPort
   plugins: ChannelPlugin[]
   /**
@@ -69,8 +69,9 @@ export type TenantThreadEntry = {
  * book-keeping, but the tenant ignores it for codex routing and serializes
  * every turn through the same chain.
  *
- * Codex thread id persistence rides on the project's `settings.json` via
- * `LeucoProjectStore.setAgentThreadId()`; there is no separate thread.json.
+ * Codex thread id persistence rides on a separate per-agent state file
+ * (`agents/<a>/state.json`) written through `LeucoAgentStateStore` so the
+ * user-edited `settings.json` is never touched by the daemon.
  */
 export class LeucoTenant {
   readonly projectId: string
@@ -82,7 +83,7 @@ export class LeucoTenant {
   private readonly plugins: ChannelPlugin[]
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly projectStore: LeucoProjectStore | null
+  private readonly agentStateStore: LeucoAgentStateStore | null
   private readonly useCommonInstructions: boolean
   private readonly listSubagents: () => SubagentEntry[]
   private readonly presets: string[]
@@ -102,7 +103,7 @@ export class LeucoTenant {
     this.plugins = props.plugins
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
-    this.projectStore = props.projectStore ?? null
+    this.agentStateStore = props.agentStateStore ?? null
     this.useCommonInstructions = props.useCommonInstructions ?? true
     this.listSubagents = props.listSubagents ?? (() => [])
     this.presets = props.presets ?? []
@@ -333,10 +334,10 @@ export class LeucoTenant {
   }
 
   private persistAgentThread(): void {
-    const store = this.projectStore
+    const store = this.agentStateStore
     if (!store) return
     try {
-      store.setAgentThreadId(this.projectId, this.agentName, this.agentThreadId)
+      store.setCodexThreadId(this.projectId, this.agentName, this.agentThreadId)
     } catch (err) {
       this.log(`[leuco] failed to persist agent thread: ${errorText(err)}`)
     }

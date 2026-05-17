@@ -65,12 +65,6 @@ const agentSchema = z.object({
   name: safeName,
   enabled: z.boolean().default(true),
   /**
-   * Codex `thread/start` id this agent uses across every channel and turn.
-   * Set the first time the agent runs; reused via `thread/resume` afterward.
-   * Absent until the first turn fires.
-   */
-  codexThreadId: z.string().min(1).optional(),
-  /**
    * When true (default) leuco prepends a built-in dynamic preamble to the
    * agent's `developer_instructions` covering the bot's own Slack identity,
    * loop avoidance, sub-agent paths, and self-edit guidance. Set to false to

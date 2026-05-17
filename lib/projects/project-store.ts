@@ -124,35 +124,6 @@ export class LeucoProjectStore {
   }
 
   /**
-   * Read-modify-write helper: load the project, replace the named agent's
-   * `codexThreadId`, save. Pass `null` to clear the field. The persisted
-   * thread id is what `LeucoTenant.ensureAgentThread()` resumes from on the
-   * next daemon start.
-   */
-  setAgentThreadId(projectId: string, agentName: string, codexThreadId: string | null): string {
-    const project = this.load(projectId)
-
-    let touched = false
-    const nextAgents = project.agents.map((agent) => {
-      if (agent.name !== agentName) return agent
-      touched = true
-      if (codexThreadId === null) {
-        return {
-          name: agent.name,
-          enabled: agent.enabled,
-          useCommonInstructions: agent.useCommonInstructions,
-          prompts: agent.prompts,
-          channels: agent.channels,
-        }
-      }
-      return { ...agent, codexThreadId }
-    })
-    if (!touched) throw new Error(`agent '${agentName}' not found in project '${project.name}'`)
-
-    return this.save({ ...project, agents: nextAgents })
-  }
-
-  /**
    * Append a `ScheduleEntry` to the named schedule channel. The entry id and
    * name must both be unique within the channel — duplicate ids are a bug
    * (caller generates UUIDs); duplicate names would make CLI/MCP delete-by-name
@@ -259,35 +230,79 @@ export class LeucoProjectStore {
   }
 
   /**
-   * Load `settings.json` from a directory keyed either by UUID (current) or
-   * by `name` (legacy). For the legacy case, mint a UUID, write it back into
-   * `settings.json`, and rename the on-disk directory so the id becomes the
-   * key going forward. After migration the directory name equals `id`.
+   * Load `settings.json` and run any in-place migrations. Two are folded in
+   * here so a daemon start picks up legacy installs without an extra command:
+   *
+   *   1. legacy `name`-keyed directory → UUID id. Mints `id`, writes it into
+   *      `settings.json`, and renames the directory so the id becomes the
+   *      key going forward.
+   *   2. legacy `agents[i].codexThreadId` → `agents/<a>/state.json`. The
+   *      thread id was carried inside `settings.json` until 0.7.x; it now
+   *      lives in a separate state file so the settings surface stays
+   *      idempotent. Each migrated thread is dropped from `settings.json`
+   *      and written into the corresponding `state.json`.
+   *
+   * After both migrations the directory name equals `id` and no
+   * `codexThreadId` remains anywhere in `settings.json`.
    */
   private loadOrMigrate(dirName: string): Project {
     const path = this.paths.projectSettingsPath(dirName)
-    const json: unknown = JSON.parse(readFileSync(path, "utf8"))
+    const json = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
 
-    const hasId = typeof (json as { id?: unknown }).id === "string"
-    if (hasId) {
-      const parsed = projectSchema.parse(json)
-      if (parsed.id !== dirName) {
-        throw new Error(`project directory name '${dirName}' does not match id '${parsed.id}'`)
+    let id: string
+    let mutated = false
+    if (typeof json.id === "string") {
+      id = json.id
+      if (id !== dirName) {
+        throw new Error(`project directory name '${dirName}' does not match id '${id}'`)
       }
-      return parsed
+    } else {
+      id = crypto.randomUUID()
+      json.id = id
+      mutated = true
     }
 
-    const id = crypto.randomUUID()
-    const withId = { ...(json as Record<string, unknown>), id }
-    const parsed = projectSchema.parse(withId)
-
-    if (existsSync(this.paths.projectDir(id))) {
-      throw new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
+    const threadMigrations: Array<{ agentName: string; threadId: string }> = []
+    if (Array.isArray(json.agents)) {
+      for (const entry of json.agents) {
+        if (entry === null || typeof entry !== "object") continue
+        const agent = entry as Record<string, unknown>
+        const threadId = agent.codexThreadId
+        const agentName = agent.name
+        if (typeof threadId === "string" && threadId.length > 0 && typeof agentName === "string") {
+          threadMigrations.push({ agentName, threadId })
+          delete agent.codexThreadId
+          mutated = true
+        }
+      }
     }
 
-    writeFileSync(path, `${JSON.stringify(parsed, null, 2)}\n`)
-    chmodSync(path, 0o600)
-    renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
+    const parsed = projectSchema.parse(json)
+
+    if (id !== dirName) {
+      if (existsSync(this.paths.projectDir(id))) {
+        throw new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
+      }
+      renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
+    }
+
+    if (mutated) {
+      const settingsPath = this.paths.projectSettingsPath(id)
+      writeFileSync(settingsPath, `${JSON.stringify(parsed, null, 2)}\n`)
+      chmodSync(settingsPath, 0o600)
+    }
+
+    for (const migration of threadMigrations) {
+      const statePath = this.paths.agentStatePath(id, migration.agentName)
+      const stateDir = dirname(statePath)
+      if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
+      if (!existsSync(statePath)) {
+        writeFileSync(
+          statePath,
+          `${JSON.stringify({ codexThreadId: migration.threadId }, null, 2)}\n`,
+        )
+      }
+    }
 
     return parsed
   }
