@@ -1,5 +1,5 @@
 import { factory } from "@/cli/cli-factory"
-import { findAgent, findChannel } from "@/cli/utils/lookup-config"
+import { findAgent, findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -19,7 +19,7 @@ export const channelsStopHandler = factory.createHandlers(async (c) => {
   const channelName = c.req.param("channel")!
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)

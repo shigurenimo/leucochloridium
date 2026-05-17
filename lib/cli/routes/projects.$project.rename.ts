@@ -1,22 +1,22 @@
-import { existsSync, renameSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
+import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
-import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> rename — change a project's identifier
+const help = `leuco projects <p> rename — change a project's display name
 
 usage: leuco projects <p> rename <new-name>
 
   <new-name>   new identifier; must match ^[a-z][a-z0-9_-]*$
 
-Renames the directory under ~/.leuco/projects/<old>/ to <new>/ and updates
-the \`name\` field inside settings.json. The repository path itself and any
-\`.codex/agents/*.toml\` files in the repo are not touched.
+Edits the \`name\` field in settings.json. The on-disk directory is keyed by
+\`id\` (UUID), so nothing moves under ~/.leuco/projects/ and the daemon does
+not need to be stopped — codex children keep their \`/mcp/<id>/<agent>\` URLs
+intact across renames.
 
-The daemon must be stopped first; \`leuco run\` from this project's cwd will
-otherwise still see the project under its old paths until restart.`
+Same-name projects are allowed (e.g. two repos both called \`web\` under
+different parent directories); the CLI disambiguates by cwd.`
 
 export const projectsRenameHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -34,17 +34,9 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
   const validated = validateLeucoName(newName, "project name")
   if (validated instanceof Error) return c.text(`leuco: ${validated.message}`, 400)
 
-  const paths = new LeucoPaths()
-  const store = new LeucoProjectStore({ paths })
-
-  const project = store.load(oldName)
+  const store = new LeucoProjectStore()
+  const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
-
-  if (existsSync(paths.projectSettingsPath(newName))) {
-    return c.text(`leuco: project already exists: ${newName}`, 400)
-  }
-
-  renameSync(paths.projectDir(oldName), paths.projectDir(newName))
 
   const saved = store.save({ ...project, name: newName })
   if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)

@@ -1,4 +1,5 @@
 import { factory } from "@/cli/cli-factory"
+import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -18,7 +19,7 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const name = c.req.param("project")!
 
   const store = new LeucoProjectStore()
-  const project = store.load(name)
+  const project = resolveProject(store, name, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const cascade = flagBool(body.flags.cascade)
@@ -29,6 +30,6 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
     )
   }
 
-  store.remove(name)
+  store.remove(project.id)
   return c.text(`removed project ${name}`)
 })

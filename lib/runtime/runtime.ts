@@ -178,7 +178,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
   const filteredAgent: Agent = { ...props.agent, channels: enabledChannels }
 
   const plugins = LeucoChannelHost.buildForAgent({
-    projectName: props.project.name,
+    project: { id: props.project.id, name: props.project.name },
     agent: filteredAgent,
     projectStore: props.projectStore,
   })
@@ -192,14 +192,15 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
     )
   }
 
-  const codexHome = ensureCodexHome(props.paths, props.project.name, props.agent.name)
+  const codexHome = ensureCodexHome(props.paths, props.project.id, props.agent.name)
   ensureTenantConfigToml(codexHome, {
     projectPath: props.project.path,
+    projectId: props.project.id,
     projectName: props.project.name,
     agentName: props.agent.name,
     mcpEndpoint:
       props.mcpToken !== null && props.mcpPort !== undefined
-        ? { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.name}/${props.agent.name}` }
+        ? { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}/${props.agent.name}` }
         : null,
   })
   ensureAuthSymlink(codexHome)
@@ -242,6 +243,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
   const presets = LeucoPromptPresets.resolveAll(props.agent.prompts)
 
   return new LeucoTenant({
+    projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
     agentName: props.agent.name,
@@ -258,8 +260,8 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant | Error => {
   })
 }
 
-const ensureCodexHome = (paths: LeucoPaths, projectName: string, agentName: string): string => {
-  const dir = paths.agentHome(projectName, agentName)
+const ensureCodexHome = (paths: LeucoPaths, projectId: string, agentName: string): string => {
+  const dir = paths.agentHome(projectId, agentName)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -287,6 +289,7 @@ const ensureTenantConfigToml = (
   codexHome: string,
   tenant: {
     projectPath: string
+    projectId: string
     projectName: string
     agentName: string
     mcpEndpoint: { url: string } | null

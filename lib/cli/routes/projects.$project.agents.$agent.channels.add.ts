@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { Context } from "hono"
 import { factory, type Env } from "@/cli/cli-factory"
-import { findAgent } from "@/cli/utils/lookup-config"
+import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { type CliBody, flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { resolveTokenFlag } from "@/cli/utils/resolve-token-flag"
 import type { Channel } from "@/config/config-schema"

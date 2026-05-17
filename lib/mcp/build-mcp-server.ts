@@ -17,7 +17,7 @@ import {
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
-  projectName: string
+  projectId: string
   agentName: string
   store?: LeucoProjectStore
 }
@@ -132,13 +132,13 @@ const SCHEDULE_DELETE_INPUT_SCHEMA = {
 export const buildMcpServer = (props: Props): Server => {
   const store = props.store ?? new LeucoProjectStore()
   const handlerProps: HandlerProps = {
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     store,
   }
 
   const server = new Server(
-    { name: `leuco/${props.projectName}/${props.agentName}`, version: pkg.version },
+    { name: `leuco/${props.projectId}/${props.agentName}`, version: pkg.version },
     { capabilities: { tools: {} } },
   )
 
@@ -187,7 +187,7 @@ export const buildMcpServer = (props: Props): Server => {
 }
 
 type HandlerProps = {
-  projectName: string
+  projectId: string
   agentName: string
   store: LeucoProjectStore
 }
@@ -198,7 +198,7 @@ const handleSlackCall = async (props: HandlerProps, args: unknown) => {
 
   const tokens = resolveTenantTokens({
     store: props.store,
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
@@ -226,7 +226,7 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
 
   const channel = resolveScheduleChannel({
     store: props.store,
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
@@ -241,7 +241,7 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
   }
 
   const result = props.store.addScheduleEntry({
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     channelName: channel.name,
     entry,
@@ -263,7 +263,7 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
   const channelNameArg = parsed.data.channel_name
 
-  const project = props.store.load(props.projectName)
+  const project = props.store.load(props.projectId)
   if (project instanceof Error) return errorResponse(project.message)
 
   const agent = findAgent(project, props.agentName)
@@ -277,8 +277,8 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   if (channels.length === 0) {
     return errorResponse(
       channelNameArg
-        ? `schedule channel '${channelNameArg}' not found in ${props.projectName}/${props.agentName}`
-        : `${props.projectName}/${props.agentName} has no schedule channel`,
+        ? `schedule channel '${channelNameArg}' not found in ${props.projectId}/${props.agentName}`
+        : `${props.projectId}/${props.agentName} has no schedule channel`,
     )
   }
 
@@ -302,14 +302,14 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
 
   const channel = resolveScheduleChannel({
     store: props.store,
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
   if (channel instanceof Error) return errorResponse(channel.message)
 
   const result = props.store.removeScheduleEntry({
-    projectName: props.projectName,
+    projectId: props.projectId,
     agentName: props.agentName,
     channelName: channel.name,
     entryIdOrName: parsed.data.id_or_name,
@@ -328,11 +328,11 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
 
 const resolveScheduleChannel = (input: {
   store: LeucoProjectStore
-  projectName: string
+  projectId: string
   agentName: string
   channelName?: string
 }): ScheduleChannel | Error => {
-  const project = input.store.load(input.projectName)
+  const project = input.store.load(input.projectId)
   if (project instanceof Error) return project
 
   const agent = findAgent(project, input.agentName)
@@ -344,14 +344,14 @@ const resolveScheduleChannel = (input: {
     const match = channels.find((c) => c.name === input.channelName)
     if (!match) {
       return new Error(
-        `schedule channel '${input.channelName}' not found in ${input.projectName}/${input.agentName}`,
+        `schedule channel '${input.channelName}' not found in ${input.projectId}/${input.agentName}`,
       )
     }
     return match
   }
 
   if (channels.length === 0) {
-    return new Error(`${input.projectName}/${input.agentName} has no schedule channel`)
+    return new Error(`${input.projectId}/${input.agentName} has no schedule channel`)
   }
   if (channels.length > 1) {
     const names = channels.map((c) => c.name).join(", ")
@@ -364,11 +364,11 @@ const resolveScheduleChannel = (input: {
 
 const resolveTenantTokens = (input: {
   store: LeucoProjectStore
-  projectName: string
+  projectId: string
   agentName: string
   channelName?: string
 }): { botToken: string; channelName: string } | Error => {
-  const project = input.store.load(input.projectName)
+  const project = input.store.load(input.projectId)
   if (project instanceof Error) return project
 
   const agent = findAgent(project, input.agentName)

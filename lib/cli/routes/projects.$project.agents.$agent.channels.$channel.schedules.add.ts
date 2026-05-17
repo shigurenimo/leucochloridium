@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { factory } from "@/cli/cli-factory"
 import { help } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
-import { findAgent, findChannel } from "@/cli/utils/lookup-config"
+import { findAgent, findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import type { ScheduleEntry } from "@/config/config-schema"
@@ -35,7 +35,7 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
   if (validatedRunAt instanceof Error) return c.text(`leuco: ${validatedRunAt.message}`, 400)
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
@@ -57,7 +57,7 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
   }
 
   const result = store.addScheduleEntry({
-    projectName,
+    projectId: project.id,
     agentName,
     channelName,
     entry,

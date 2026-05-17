@@ -1,6 +1,6 @@
 import { existsSync, renameSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
-import { findAgent } from "@/cli/utils/lookup-config"
+import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
@@ -41,7 +41,7 @@ export const agentsRenameHandler = factory.createHandlers(async (c) => {
   const paths = new LeucoPaths()
   const store = new LeucoProjectStore({ paths })
 
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, oldName)
@@ -58,8 +58,8 @@ export const agentsRenameHandler = factory.createHandlers(async (c) => {
   if (tomlResult instanceof Error) return c.text(`leuco: ${tomlResult.message}`, 500)
 
   // 2. Rename the codex-home directory so memories travel with the agent.
-  const oldHome = paths.agentDir(projectName, oldName)
-  const newHome = paths.agentDir(projectName, newName)
+  const oldHome = paths.agentDir(project.id, oldName)
+  const newHome = paths.agentDir(project.id, newName)
   if (existsSync(oldHome)) {
     if (existsSync(newHome)) {
       return c.text(`leuco: target codex-home already exists: ${newHome}`, 500)

@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
-import { findAgent } from "@/cli/utils/lookup-config"
+import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
@@ -24,7 +24,7 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
   const agentName = c.req.param("agent")!
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
@@ -50,7 +50,7 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
 
   if (cascade) {
     const paths = new LeucoPaths()
-    rmSync(paths.agentDir(projectName, agentName), { recursive: true, force: true })
+    rmSync(paths.agentDir(project.id, agentName), { recursive: true, force: true })
   }
 
   return c.text(`removed agent ${projectName}/${agentName} ${tomlMessage}`)

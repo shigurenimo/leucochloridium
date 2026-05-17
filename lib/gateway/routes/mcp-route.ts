@@ -3,9 +3,11 @@ import { factory } from "@/gateway/gateway-factory"
 import { buildMcpServer } from "@/mcp/build-mcp-server"
 
 /**
- * Streamable HTTP MCP endpoint at `/mcp/:project/:agent`. Codex tenants point
- * their `[mcp_servers.leuco]` here via the daemon-wide bearer token (written
- * into each tenant's CODEX_HOME config.toml as `bearer_token_env_var`); this
+ * Streamable HTTP MCP endpoint at `/mcp/:projectId/:agent`. The path is keyed
+ * by the project's UUID (not its display name) so renames never invalidate the
+ * URL a running codex child holds. Codex tenants point their
+ * `[mcp_servers.leuco]` here via the daemon-wide bearer token (written into
+ * each tenant's CODEX_HOME config.toml as `bearer_token_env_var`); this
  * replaces the per-tenant `leuco mcp` stdio child and removes the orphan-MCP
  * failure mode entirely.
  *
@@ -22,11 +24,11 @@ export const mcpHandler = factory.createHandlers(async (c) => {
   const presented = header.startsWith("Bearer ") ? header.slice(7) : ""
   if (presented !== deps.mcpToken) return c.text("unauthorized", 401)
 
-  const projectName = c.req.param("project")
+  const projectId = c.req.param("project")
   const agentName = c.req.param("agent")
-  if (!projectName || !agentName) return c.text("project and agent required", 400)
+  if (!projectId || !agentName) return c.text("project and agent required", 400)
 
-  const server = buildMcpServer({ projectName, agentName })
+  const server = buildMcpServer({ projectId, agentName })
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

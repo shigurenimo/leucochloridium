@@ -43,6 +43,7 @@ type BuildOverrides = {
 
 const buildTenant = (overrides: BuildOverrides = {}) =>
   new LeucoTenant({
+    projectId: "00000000-0000-4000-8000-000000000000",
     projectName: "demo",
     projectPath: "/tmp/demo",
     agentName: "default",
@@ -184,6 +185,7 @@ describe("LeucoTenant introspection", () => {
 
   it("key combines projectName and agentName", () => {
     const tenant = new LeucoTenant({
+      projectId: "00000000-0000-4000-8000-000000000000",
       projectName: "p",
       projectPath: "/tmp/p",
       agentName: "a",

@@ -1,4 +1,5 @@
 import { factory } from "@/cli/cli-factory"
+import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -18,7 +19,7 @@ export const agentsListHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   if (project.agents.length === 0) return c.text("(no agents)")

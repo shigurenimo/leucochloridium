@@ -89,25 +89,17 @@ const registerInStore = (
   const list = store.list()
   if (list instanceof Error) return list
 
-  const conflictingPath = list.find((p) => p.path === target && p.name !== createProps.name)
-  if (conflictingPath) {
-    return new Error(
-      `another project '${conflictingPath.name}' is already registered at ${target}.`,
-    )
+  const samePath = list.find((p) => p.path === target)
+  if (samePath) {
+    return { configPath: paths.projectSettingsPath(samePath.id), step: "exists" }
   }
 
-  const existing = list.find((p) => p.name === createProps.name)
-  if (existing && existing.path !== target) {
-    return new Error(
-      `project name '${createProps.name}' is already used by ${existing.path}. pass --name to choose a different identifier.`,
-    )
+  const project: Project = {
+    id: crypto.randomUUID(),
+    name: createProps.name,
+    path: target,
+    agents: [],
   }
-
-  if (existing) {
-    return { configPath: paths.projectSettingsPath(existing.name), step: "exists" }
-  }
-
-  const project: Project = { name: createProps.name, path: target, agents: [] }
   const saved = store.save(project)
   if (saved instanceof Error) return saved
 

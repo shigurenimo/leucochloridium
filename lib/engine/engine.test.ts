@@ -21,6 +21,7 @@ const buildTenant = (
   codex: CodexClientPort = fakeCodex(),
 ) =>
   new LeucoTenant({
+    projectId: `00000000-0000-4000-8000-${projectName.padStart(12, "0").slice(0, 12)}`,
     projectName,
     projectPath: `/tmp/${projectName}`,
     agentName,
@@ -32,7 +33,9 @@ const buildTenant = (
 const fakeStore = (projects: Project[] = []): LeucoProjectStore => {
   return {
     list: () => projects,
-    load: (name: string) => projects.find((p) => p.name === name) ?? new Error("not found"),
+    load: (id: string) => projects.find((p) => p.id === id) ?? new Error("not found"),
+    resolveByName: (name: string) =>
+      projects.find((p) => p.name === name) ?? new Error("not found"),
     resolveByCwd: () => new Error("not used"),
     save: () => "" as string | Error,
     remove: () => undefined,
@@ -101,6 +104,7 @@ describe("LeucoEngine.start / stop", () => {
 
 describe("LeucoEngine.reconcile", () => {
   const project = (name: string, agents: Agent[]): Project => ({
+    id: `00000000-0000-4000-8000-${name.padStart(12, "0").slice(0, 12)}`,
     name,
     path: `/tmp/${name}`,
     agents,
@@ -254,6 +258,7 @@ describe("LeucoEngine introspection", () => {
   it("listProjects returns enabled state plus running flag for each agent", () => {
     const projects = [
       {
+        id: "00000000-0000-4000-8000-000000000000",
         name: "demo",
         path: "/tmp/demo",
         agents: [

@@ -1,5 +1,6 @@
 import { factory } from "@/cli/cli-factory"
 import { help } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
+import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -20,8 +21,11 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
   }
 
   const store = new LeucoProjectStore()
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
+
   const result = store.removeScheduleEntry({
-    projectName,
+    projectId: project.id,
     agentName,
     channelName,
     entryIdOrName: target,

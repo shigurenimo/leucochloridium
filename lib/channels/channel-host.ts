@@ -5,8 +5,10 @@ import type { Agent, Channel, ScheduleEntry } from "@/config/config-schema"
 import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
+type ProjectRef = { id: string; name: string }
+
 type BuildProps = {
-  projectName: string
+  project: ProjectRef
   agent: Agent
   /**
    * Required only when the agent has at least one schedule channel — the
@@ -34,7 +36,7 @@ export class LeucoChannelHost {
 
     for (const channel of props.agent.channels) {
       const plugin = LeucoChannelHost.toPlugin({
-        projectName: props.projectName,
+        project: props.project,
         agentName: props.agent.name,
         channel,
         projectStore: props.projectStore,
@@ -47,12 +49,12 @@ export class LeucoChannelHost {
   }
 
   private static toPlugin(props: {
-    projectName: string
+    project: ProjectRef
     agentName: string
     channel: Channel
     projectStore?: LeucoProjectStore
   }): ChannelPlugin | Error {
-    const label = `${props.projectName}/${props.agentName}/${props.channel.name}`
+    const label = `${props.project.name}/${props.agentName}/${props.channel.name}`
 
     if (props.channel.type === "slack") {
       if (props.channel.botToken.length === 0)
@@ -74,7 +76,7 @@ export class LeucoChannelHost {
       }
       const store = buildScheduleStore({
         projectStore: props.projectStore,
-        projectName: props.projectName,
+        projectId: props.project.id,
         agentName: props.agentName,
         channelName: props.channel.name,
       })
@@ -87,13 +89,13 @@ export class LeucoChannelHost {
 
 const buildScheduleStore = (input: {
   projectStore: LeucoProjectStore
-  projectName: string
+  projectId: string
   agentName: string
   channelName: string
 }): ScheduleStorePort => {
   return {
     listEntries(): ScheduleEntry[] | Error {
-      const project = input.projectStore.load(input.projectName)
+      const project = input.projectStore.load(input.projectId)
       if (project instanceof Error) return project
       const agent = project.agents.find((a) => a.name === input.agentName)
       if (!agent) return new Error(`agent '${input.agentName}' not found`)
@@ -106,7 +108,7 @@ const buildScheduleStore = (input: {
     },
     removeEntry(entryId: string): void | Error {
       const result = input.projectStore.removeScheduleEntry({
-        projectName: input.projectName,
+        projectId: input.projectId,
         agentName: input.agentName,
         channelName: input.channelName,
         entryIdOrName: entryId,

@@ -7,18 +7,22 @@ type Props = {
 
 /**
  * Single source of truth for every path under `~/.leuco/`. The directory tree
- * mirrors the URL tree the CLI walks (`projects/<p>/agents/<a>/...`); a
+ * mirrors the URL tree the CLI walks (`projects/<id>/agents/<a>/...`); a
  * project's full state — including its agents, channels, and channel tokens —
  * lives in `<projectDir>/settings.json` (chmod 600), so adding a bot involves
  * one write rather than two. Cross-project (machine-wide) settings live in
  * `~/.leuco/settings.json`; per-project settings live in
- * `~/.leuco/projects/<p>/settings.json`. Same name at every scope.
+ * `~/.leuco/projects/<id>/settings.json`.
+ *
+ * Project directories are keyed by UUID (`Project.id`) rather than `name`, so
+ * the on-disk layout never moves when a user renames a project and same-name
+ * projects pointing at different repos can coexist.
  *
  *   ~/.leuco/
  *   ├── settings.json                                ← global settings
  *   ├── daemon/{pid,log}
  *   └── projects/
- *       └── <projectName>/
+ *       └── <projectId>/
  *           ├── settings.json                        ← project config + secrets
  *           └── agents/
  *               └── <agentName>/
@@ -69,25 +73,25 @@ export class LeucoPaths {
     return join(this.base, "projects")
   }
 
-  projectDir(projectName: string): string {
-    return join(this.projectsRoot(), projectName)
+  projectDir(projectId: string): string {
+    return join(this.projectsRoot(), projectId)
   }
 
-  projectSettingsPath(projectName: string): string {
-    return join(this.projectDir(projectName), "settings.json")
+  projectSettingsPath(projectId: string): string {
+    return join(this.projectDir(projectId), "settings.json")
   }
 
-  agentsRoot(projectName: string): string {
-    return join(this.projectDir(projectName), "agents")
+  agentsRoot(projectId: string): string {
+    return join(this.projectDir(projectId), "agents")
   }
 
-  agentDir(projectName: string, agentName: string): string {
-    return join(this.agentsRoot(projectName), agentName)
+  agentDir(projectId: string, agentName: string): string {
+    return join(this.agentsRoot(projectId), agentName)
   }
 
   /** CODEX_HOME for one tenant. */
-  agentHome(projectName: string, agentName: string): string {
-    return join(this.agentDir(projectName, agentName), "home")
+  agentHome(projectId: string, agentName: string): string {
+    return join(this.agentDir(projectId, agentName), "home")
   }
 
   /** macOS LaunchAgents directory under the user's Library. */

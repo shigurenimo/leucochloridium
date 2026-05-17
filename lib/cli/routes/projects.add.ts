@@ -27,14 +27,11 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
   const list = store.list()
   if (list instanceof Error) return c.text(`leuco: ${list.message}`, 500)
 
-  if (list.some((p) => p.name === name)) {
-    return c.text(`leuco: project already exists: ${name}`, 400)
-  }
   if (list.some((p) => p.path === path)) {
     return c.text(`leuco: another project is already registered at ${path}`, 400)
   }
 
-  const project: Project = { name, path, agents: [] }
+  const project: Project = { id: crypto.randomUUID(), name, path, agents: [] }
   const saved = store.save(project)
   if (saved instanceof Error) return c.text(`leuco: ${saved.message}`, 500)
 

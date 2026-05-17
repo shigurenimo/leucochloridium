@@ -1,5 +1,5 @@
 import { factory } from "@/cli/cli-factory"
-import { findAgent } from "@/cli/utils/lookup-config"
+import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
 import type { Project } from "@/config/config-schema"
@@ -25,14 +25,14 @@ export const agentsResetHandler = factory.createHandlers(async (c) => {
   const agentName = c.req.param("agent")!
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)
   if (agent instanceof Error) return c.text(`leuco: ${agent.message}`, 404)
 
   const previousThreadId = agent.codexThreadId ?? null
-  const cleared = store.setAgentThreadId(projectName, agentName, null)
+  const cleared = store.setAgentThreadId(project.id, agentName, null)
   if (cleared instanceof Error) return c.text(`leuco: ${cleared.message}`, 500)
 
   if (!agent.enabled) {
@@ -42,7 +42,7 @@ export const agentsResetHandler = factory.createHandlers(async (c) => {
     )
   }
 
-  const reloaded = store.load(projectName)
+  const reloaded = store.load(project.id)
   if (reloaded instanceof Error) return c.text(`leuco: ${reloaded.message}`, 500)
 
   const setEnabled = (enabled: boolean): Project => ({

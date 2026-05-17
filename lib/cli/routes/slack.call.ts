@@ -1,6 +1,6 @@
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
-import { findAgent } from "@/cli/utils/lookup-config"
+import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -41,7 +41,7 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
   if (parsedBody instanceof Error) return c.text(`leuco: --body: ${parsedBody.message}`, 400)
 
   const store = new LeucoProjectStore()
-  const project = store.load(projectName)
+  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (project instanceof Error) return c.text(`leuco: ${project.message}`, 404)
 
   const agent = findAgent(project, agentName)

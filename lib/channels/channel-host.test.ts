@@ -35,7 +35,7 @@ const agent = (channels: Agent["channels"]): Agent => ({
 describe("LeucoChannelHost.buildForAgent", () => {
   it("returns no plugins for an agent with no channels", () => {
     const plugins = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([]),
     })
     expect(plugins).toEqual([])
@@ -43,7 +43,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
 
   it("builds a LeucoSlackChannelPlugin when both tokens are present", () => {
     const plugins = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([slackChannel("main")]),
     })
     expect(plugins).not.toBeInstanceOf(Error)
@@ -55,7 +55,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
 
   it("returns Error when bot token is empty", () => {
     const result = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([slackChannel("main", "", "xapp-1")]),
     })
     expect(result).toBeInstanceOf(Error)
@@ -66,7 +66,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
 
   it("returns Error when app token is empty", () => {
     const result = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([slackChannel("main", "xoxb-1", "")]),
     })
     expect(result).toBeInstanceOf(Error)
@@ -77,7 +77,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
 
   it("stops at the first failing channel", () => {
     const result = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([slackChannel("ok"), slackChannel("missing", "", "")]),
     })
     expect(result).toBeInstanceOf(Error)
@@ -91,6 +91,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
     try {
       const store = new LeucoProjectStore({ paths: new LeucoPaths({ home }) })
       const project: Project = {
+        id: "00000000-0000-4000-8000-000000000000",
         name: "demo",
         path: "/tmp/demo",
         agents: [
@@ -114,7 +115,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
       store.save(project)
 
       const plugins = LeucoChannelHost.buildForAgent({
-        projectName: "demo",
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
         agent: project.agents[0]!,
         projectStore: store,
       })
@@ -136,7 +137,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
       entries: [],
     }
     const result = LeucoChannelHost.buildForAgent({
-      projectName: "demo",
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
       agent: agent([scheduleChannel]),
     })
     expect(result).toBeInstanceOf(Error)

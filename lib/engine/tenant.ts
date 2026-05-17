@@ -23,6 +23,7 @@ export type TenantAgentSpec = {
 }
 
 type Props = {
+  projectId: string
   projectName: string
   projectPath: string
   agentName: string
@@ -72,6 +73,7 @@ export type TenantThreadEntry = {
  * `LeucoProjectStore.setAgentThreadId()`; there is no separate thread.json.
  */
 export class LeucoTenant {
+  readonly projectId: string
   readonly projectName: string
   readonly projectPath: string
   readonly agentName: string
@@ -91,6 +93,7 @@ export class LeucoTenant {
   private turnChain: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
+    this.projectId = props.projectId
     this.projectName = props.projectName
     this.projectPath = props.projectPath
     this.agentName = props.agentName
@@ -332,7 +335,7 @@ export class LeucoTenant {
   private persistAgentThread(): void {
     const store = this.projectStore
     if (!store) return
-    const result = store.setAgentThreadId(this.projectName, this.agentName, this.agentThreadId)
+    const result = store.setAgentThreadId(this.projectId, this.agentName, this.agentThreadId)
     if (result instanceof Error) {
       this.log(`[leuco] failed to persist agent thread: ${result.message}`)
     }
