@@ -68,6 +68,12 @@ describe("toRequest", () => {
     ).toBe("/projects/p/agents/a/channels/old/rename")
   })
 
+  it("treats `move-to` as a named-leaf with the destination as positional", () => {
+    const r = toRequest(["projects", "src", "agents", "a", "move-to", "dst"])
+    expect(r.path).toBe("/projects/src/agents/a/move-to")
+    expect(r.parsed.args).toEqual(["dst"])
+  })
+
   it("treats remaining tokens as positional args", () => {
     const r = toRequest(["projects", "create", "/tmp/repo"])
     expect(r.path).toBe("/projects/create")

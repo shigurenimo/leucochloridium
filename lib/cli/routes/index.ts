@@ -23,6 +23,7 @@ import { help as channelsHelp } from "@/cli/routes/projects.$project.agents.$age
 import { channelsListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.list"
 import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.help"
 import { channelsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.remove"
+import { agentsMoveToHandler } from "@/cli/routes/projects.$project.agents.$agent.move-to"
 import { agentsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.remove"
 import { agentsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.rename"
 import { agentsResetHandler } from "@/cli/routes/projects.$project.agents.$agent.reset"
@@ -102,6 +103,7 @@ export const app = base
   .post("/projects/:project/agents/:agent", ...groupHelpHandler(agentsNamedHelp))
   .post("/projects/:project/agents/:agent/remove", ...agentsRemoveHandler)
   .post("/projects/:project/agents/:agent/rename", ...agentsRenameHandler)
+  .post("/projects/:project/agents/:agent/move-to", ...agentsMoveToHandler)
   .post("/projects/:project/agents/:agent/start", ...agentsStartHandler)
   .post("/projects/:project/agents/:agent/stop", ...agentsStopHandler)
   .post("/projects/:project/agents/:agent/restart", ...agentsRestartHandler)

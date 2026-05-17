@@ -12,6 +12,7 @@ const NAMED_LEAFS = new Set([
   "remove",
   "show",
   "rename",
+  "move-to",
   "start",
   "stop",
   "restart",
@@ -66,7 +67,7 @@ export type CliRequest = {
  * `project-leafs` / `agent-leafs` / `channel-leafs`: list | create | add
  * `config-leafs`: list | get | set
  * `boot-leafs`: install | uninstall | status
- * `named-leafs` (after a name): remove | show | rename | start | stop | restart | reset | set-tokens
+ * `named-leafs` (after a name): remove | show | rename | move-to | start | stop | restart | reset | set-tokens
  *
  * Anything past the recognised leaf becomes positional `args`. `--key value`
  * and bare `--flag` populate `flags`; single-letter `-x` expands via SHORT_FLAGS.
