@@ -34,6 +34,13 @@
 - const のみ、destructuring 禁止
 - for-of、early return、if を使う（switch 禁止。ただし Reducer の Action 分岐は exhaustive switch）
 
+## ports と Memory 実装
+
+- 外部境界（FS / HTTP / process / clock / id / Slack / codex 等）は新規追加時に **abstract class + Node 実装 + Memory 実装** で並置する
+- 既存の `*Port` 型 alias は段階的に abstract class に寄せる。Memory 実装は別ファイル（`*-memory-*.ts`）に置き、テストでは Node 実装ではなく Memory 実装に依存する
+- 抽象 class はメソッドシグネチャだけ。状態を持つのは Node / Memory 実装側
+- テストは実 FS / spawn / fetch / WebSocket に触れない。tmpdir でしか書けないものは抽象化が漏れているサイン
+
 ## エラー
 
 - Service / store は throw する。戻り値の union `T | Error` は使わない

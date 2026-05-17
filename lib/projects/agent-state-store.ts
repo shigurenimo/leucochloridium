@@ -10,11 +10,20 @@ const agentStateSchema = z.object({
    * `null` while the agent has never run, or after `agents reset` clears it.
    */
   codexThreadId: z.string().min(1).nullable().default(null),
+  /**
+   * Per-schedule-entry `lastFiredAt` (epoch ms). Used by the schedule plugin
+   * to fire a single catch-up after daemon downtime / system sleep — the
+   * `lastFiredMinute` Map is in-memory only and forgets across restarts, so
+   * a persistent timestamp is the only way to know whether a cron should
+   * back-fill. Keyed by `ScheduleEntry.id`; missing entries are treated as
+   * "never fired".
+   */
+  scheduleLastFiredAt: z.record(z.string(), z.number()).default({}),
 })
 
 export type AgentState = z.infer<typeof agentStateSchema>
 
-const EMPTY_STATE: AgentState = { codexThreadId: null }
+const EMPTY_STATE: AgentState = { codexThreadId: null, scheduleLastFiredAt: {} }
 
 type Props = {
   paths?: LeucoPaths
@@ -56,5 +65,18 @@ export class LeucoAgentStateStore {
   setCodexThreadId(projectId: string, agentName: string, codexThreadId: string | null): string {
     const current = this.load(projectId, agentName)
     return this.save(projectId, agentName, { ...current, codexThreadId })
+  }
+
+  markScheduleEntryFired(
+    projectId: string,
+    agentName: string,
+    entryId: string,
+    firedAt: number,
+  ): string {
+    const current = this.load(projectId, agentName)
+    return this.save(projectId, agentName, {
+      ...current,
+      scheduleLastFiredAt: { ...current.scheduleLastFiredAt, [entryId]: firedAt },
+    })
   }
 }

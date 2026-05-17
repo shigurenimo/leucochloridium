@@ -3,6 +3,7 @@ import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import type { Agent, Channel, ScheduleEntry } from "@/config/config-schema"
 import type { ChannelPlugin } from "@/engine/channel-plugin"
+import type { LeucoAgentStateStore } from "@/projects/agent-state-store"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
 type ProjectRef = { id: string; name: string }
@@ -16,6 +17,11 @@ type BuildProps = {
    * Slack-only agents pass nothing.
    */
   projectStore?: LeucoProjectStore
+  /**
+   * Sibling of `projectStore` for schedule channels: holds per-entry
+   * `lastFiredAt` (the cron catch-up bound) in `agents/<a>/state.json`.
+   */
+  agentStateStore?: LeucoAgentStateStore
 }
 
 /**
@@ -40,6 +46,7 @@ export class LeucoChannelHost {
           agentName: props.agent.name,
           channel,
           projectStore: props.projectStore,
+          agentStateStore: props.agentStateStore,
         }),
       )
     }
@@ -51,6 +58,7 @@ export class LeucoChannelHost {
     agentName: string
     channel: Channel
     projectStore?: LeucoProjectStore
+    agentStateStore?: LeucoAgentStateStore
   }): ChannelPlugin {
     const label = `${props.project.name}/${props.agentName}/${props.channel.name}`
 
@@ -74,8 +82,12 @@ export class LeucoChannelHost {
       if (!props.projectStore) {
         throw new Error(`channel ${label}: schedule channels require a projectStore`)
       }
+      if (!props.agentStateStore) {
+        throw new Error(`channel ${label}: schedule channels require an agentStateStore`)
+      }
       const store = buildScheduleStore({
         projectStore: props.projectStore,
+        agentStateStore: props.agentStateStore,
         projectId: props.project.id,
         agentName: props.agentName,
         channelName: props.channel.name,
@@ -89,6 +101,7 @@ export class LeucoChannelHost {
 
 const buildScheduleStore = (input: {
   projectStore: LeucoProjectStore
+  agentStateStore: LeucoAgentStateStore
   projectId: string
   agentName: string
   channelName: string
@@ -112,6 +125,18 @@ const buildScheduleStore = (input: {
         channelName: input.channelName,
         entryIdOrName: entryId,
       })
+    },
+    getLastFiredAt(entryId: string): number | null {
+      const state = input.agentStateStore.load(input.projectId, input.agentName)
+      return state.scheduleLastFiredAt[entryId] ?? null
+    },
+    markFired(entryId: string, firedAt: number): void {
+      input.agentStateStore.markScheduleEntryFired(
+        input.projectId,
+        input.agentName,
+        entryId,
+        firedAt,
+      )
     },
   }
 }

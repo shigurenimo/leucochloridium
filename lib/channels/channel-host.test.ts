@@ -7,6 +7,7 @@ import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import type { Agent, Channel, Project } from "@/config/config-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
+import { LeucoAgentStateStore } from "@/projects/agent-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const slackChannel = (name: string, botToken = "xoxb-1", appToken = "xapp-1"): Channel => ({
@@ -106,10 +107,12 @@ describe("LeucoChannelHost.buildForAgent", () => {
       }
       store.save(project)
 
+      const stateStore = new LeucoAgentStateStore({ paths: new LeucoPaths({ home }) })
       const plugins = LeucoChannelHost.buildForAgent({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
         agent: project.agents[0]!,
         projectStore: store,
+        agentStateStore: stateStore,
       })
       expect(plugins).toHaveLength(1)
       expect(plugins[0]).toBeInstanceOf(LeucoScheduleChannelPlugin)

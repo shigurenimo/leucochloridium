@@ -32,17 +32,28 @@ const makeCtx = (): { ctx: ChannelPluginContext; captured: Captured } => {
   return { ctx, captured }
 }
 
-const makeStore = (entries: ScheduleEntry[]): ScheduleStorePort & { entries: ScheduleEntry[] } => {
+const makeStore = (
+  entries: ScheduleEntry[],
+): ScheduleStorePort & {
+  entries: ScheduleEntry[]
+  lastFiredAt: Record<string, number>
+} => {
   const store = {
     entries,
+    lastFiredAt: {} as Record<string, number>,
     listEntries() {
       return store.entries
     },
     removeEntry(entryId: string) {
       const before = store.entries.length
       store.entries = store.entries.filter((e) => e.id !== entryId)
-      if (store.entries.length === before) return new Error(`not found: ${entryId}`)
-      return undefined
+      if (store.entries.length === before) throw new Error(`not found: ${entryId}`)
+    },
+    getLastFiredAt(entryId: string): number | null {
+      return store.lastFiredAt[entryId] ?? null
+    },
+    markFired(entryId: string, firedAt: number): void {
+      store.lastFiredAt[entryId] = firedAt
     },
   }
   return store
@@ -196,6 +207,49 @@ describe("LeucoScheduleChannelPlugin", () => {
     await plugin.start(ctx)
 
     expect(calls).toBe(2)
+    expect(captured.turns).toHaveLength(1)
+  })
+
+  it("catches up a cron fire that was missed during daemon downtime", async () => {
+    // Entry fires every day at 09:30. Last actual fire two days ago; daemon
+    // now wakes up at 12:00 on day three — a 09:30 catch-up should land.
+    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
+    store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 4, 5, 9, 30).getTime()
+    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+
+    const { ctx, captured } = makeCtx()
+    await plugin.start(ctx)
+
+    expect(captured.turns).toHaveLength(1)
+    expect(captured.turns[0]!.text).toContain("ping")
+    expect(store.lastFiredAt[store.entries[0]!.id]).toBeGreaterThan(
+      new Date(2026, 4, 5, 9, 30).getTime(),
+    )
+  })
+
+  it("does not catch up entries that have never fired", async () => {
+    // No `lastFiredAt` → the plugin treats this as a fresh agent and only
+    // fires on the current minute. Catch-up requires a prior baseline.
+    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
+    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+
+    const { ctx, captured } = makeCtx()
+    await plugin.start(ctx)
+
+    expect(captured.turns).toEqual([])
+  })
+
+  it("caps catch-up lookback to 24 hours", async () => {
+    // lastFiredAt is a week ago; only the matches within the 24h window
+    // count. With `30 9 * * *` there is exactly one such minute, so one
+    // catch-up fires (not seven).
+    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
+    store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 3, 30, 9, 30).getTime()
+    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+
+    const { ctx, captured } = makeCtx()
+    await plugin.start(ctx)
+
     expect(captured.turns).toHaveLength(1)
   })
 })

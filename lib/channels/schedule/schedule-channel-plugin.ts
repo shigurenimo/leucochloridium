@@ -31,6 +31,13 @@ type Props = {
 const DEFAULT_INTERVAL_MS = 60_000
 
 /**
+ * Cap on how far back the plugin will look when checking for missed cron
+ * firings on daemon start / wake-from-sleep. A day of standups is useful;
+ * resurrecting two-week-old cron triggers is noise.
+ */
+const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
+
+/**
  * Timer-driven channel. On each minute tick the plugin re-reads its entry
  * list (so CLI/MCP mutations are picked up without a daemon restart) and,
  * for every enabled entry, decides whether to fire:
@@ -120,14 +127,61 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
 
     for (const entry of entries) {
       if (!entry.enabled) continue
+
+      // 1. Catch-up firing for cron entries: when the daemon was down (or
+      //    the machine was asleep) across a minute the cron expression
+      //    would have matched, fire once on the next tick so daily / hourly
+      //    schedules don't silently skip. Capped at 24h; one-shots already
+      //    catch up implicitly via the `ts <= now` branch.
+      const catchupFired = await this.maybeCatchUp(entry, now, minuteEpoch, ctx)
+
       if (this.lastFiredMinute.get(entry.id) === minuteEpoch) continue
 
       const decision = decideFire(entry, now, ctx)
-      if (decision === "skip") continue
+      if (decision === "skip") {
+        if (catchupFired) this.lastFiredMinute.set(entry.id, minuteEpoch)
+        continue
+      }
 
       this.lastFiredMinute.set(entry.id, minuteEpoch)
       await this.fire(entry, ctx, decision)
     }
+  }
+
+  private async maybeCatchUp(
+    entry: ScheduleEntry,
+    now: Date,
+    minuteEpoch: number,
+    ctx: ChannelPluginContext,
+  ): Promise<boolean> {
+    if (!looksLikeCron(entry.runAt)) return false
+
+    const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
+    if (lastFiredAt === null) return false
+
+    const cutoff = Math.max(lastFiredAt, now.getTime() - CATCHUP_MAX_LOOKBACK_MS)
+    const currentMinuteStart = minuteEpoch * 60_000
+
+    // Walk minutes between (cutoff, current minute] looking for a single
+    // missed match. One catch-up fire per gap is enough — the prompt is
+    // identical anyway, and emitting one event per skipped minute would
+    // flood the bus when the gap is long.
+    let cursor = currentMinuteStart - 60_000
+    while (cursor > cutoff) {
+      let expr: ReturnType<typeof parseCronExpression>
+      try {
+        expr = parseCronExpression(entry.runAt)
+      } catch {
+        return false
+      }
+      if (cronMatches(expr, new Date(cursor))) {
+        this.lastFiredMinute.set(entry.id, minuteEpoch)
+        await this.fire(entry, ctx, "cron")
+        return true
+      }
+      cursor -= 60_000
+    }
+    return false
   }
 
   private async fire(
@@ -154,6 +208,15 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     const reply = await ctx.runTextTurn(threadKey, text)
     if (reply instanceof Error) {
       ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
+    }
+
+    if (kind === "cron") {
+      try {
+        this.props.store.markFired(entry.id, Date.now())
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        ctx.onLog(`[${this.name}] entry ${entry.name} fired but failed to mark: ${message}`)
+      }
     }
 
     if (kind === "one-shot") {

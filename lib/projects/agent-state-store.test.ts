@@ -24,7 +24,10 @@ describe("LeucoAgentStateStore", () => {
   })
 
   it("load returns the empty state when state.json is missing", () => {
-    expect(store.load(PROJECT_ID, "reviewer")).toEqual({ codexThreadId: null })
+    expect(store.load(PROJECT_ID, "reviewer")).toEqual({
+      codexThreadId: null,
+      scheduleLastFiredAt: {},
+    })
   })
 
   it("setCodexThreadId writes state.json under agents/<a>/", () => {
@@ -33,13 +36,28 @@ describe("LeucoAgentStateStore", () => {
     const text = readFileSync(written, "utf8")
     expect(text).toContain('"codexThreadId": "thr_123"')
 
-    expect(store.load(PROJECT_ID, "reviewer")).toEqual({ codexThreadId: "thr_123" })
+    expect(store.load(PROJECT_ID, "reviewer")).toEqual({
+      codexThreadId: "thr_123",
+      scheduleLastFiredAt: {},
+    })
   })
 
   it("setCodexThreadId(null) clears the field but keeps the file", () => {
     store.setCodexThreadId(PROJECT_ID, "reviewer", "thr_123")
     store.setCodexThreadId(PROJECT_ID, "reviewer", null)
-    expect(store.load(PROJECT_ID, "reviewer")).toEqual({ codexThreadId: null })
+    expect(store.load(PROJECT_ID, "reviewer")).toEqual({
+      codexThreadId: null,
+      scheduleLastFiredAt: {},
+    })
+  })
+
+  it("markScheduleEntryFired records lastFiredAt per entry id", () => {
+    store.markScheduleEntryFired(PROJECT_ID, "reviewer", "entry-a", 1000)
+    store.markScheduleEntryFired(PROJECT_ID, "reviewer", "entry-b", 2000)
+    expect(store.load(PROJECT_ID, "reviewer").scheduleLastFiredAt).toEqual({
+      "entry-a": 1000,
+      "entry-b": 2000,
+    })
   })
 })
 

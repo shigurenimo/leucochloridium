@@ -179,6 +179,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     project: { id: props.project.id, name: props.project.name },
     agent: filteredAgent,
     projectStore: props.projectStore,
+    agentStateStore: props.agentStateStore,
   })
 
   const tomlStore = new LeucoCodexAgentStore({ cwd: props.project.path })
