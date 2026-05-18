@@ -2,12 +2,19 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects list — list registered projects
+const help = `leuco projects — list registered projects
 
-usage: leuco projects list
+usage:
+  leuco projects                                   list registered projects
+  leuco projects create <path>                     scaffold a new repository
+  leuco projects add [<path>]                      register an existing repository
+  leuco projects <p> remove [--cascade]            unregister a project
+  leuco projects <p> rename <new>                  rename a project
+  leuco projects <p> agents ...                    manage agents under a project
 
-Prints each project on its own line: <name> <tab> <path> [agents=<count>].
-Reads from ~/.leuco/config.json.`
+Each row prints \`<name> <tab> <path> [agents=<count>]\`.
+
+Run \`leuco projects <subcommand> -h\` for details on a specific subcommand.`
 
 export const projectsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

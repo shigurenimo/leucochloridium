@@ -1,25 +1,20 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { bootInstallHandler } from "@/cli/routes/boot.install"
-import { help as bootHelp } from "@/cli/routes/boot.help"
 import { bootStatusHandler } from "@/cli/routes/boot.status"
 import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
 import { configGetHandler } from "@/cli/routes/config.get"
-import { help as configHelp } from "@/cli/routes/config.help"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
 import { help as groupHelp } from "@/cli/routes/group.help"
 import { logsHandler } from "@/cli/routes/logs"
 import { projectsAddHandler } from "@/cli/routes/projects.add"
 import { projectsCreateHandler } from "@/cli/routes/projects.create"
-import { help as projectsHelp } from "@/cli/routes/projects.help"
 import { projectsListHandler } from "@/cli/routes/projects.list"
 import { agentsAddHandler } from "@/cli/routes/projects.$project.agents.add"
 import { agentsListHandler } from "@/cli/routes/projects.$project.agents.list"
-import { help as agentsHelp } from "@/cli/routes/projects.$project.agents.help"
 import { help as agentsNamedHelp } from "@/cli/routes/projects.$project.agents.$agent.help"
 import { channelsAddHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.add"
-import { help as channelsHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.help"
 import { channelsListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.list"
 import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.help"
 import { channelsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.remove"
@@ -32,7 +27,6 @@ import { agentsStartHandler } from "@/cli/routes/projects.$project.agents.$agent
 import { agentsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.stop"
 import { channelsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.rename"
 import { channelsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.restart"
-import { help as schedulesHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
 import { schedulesAddHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.add"
 import { schedulesListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.list"
 import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.remove"
@@ -89,7 +83,11 @@ export const app = base
   .post("/tui", ...tuiHandler)
   .post("/update", ...updateHandler)
 
-  .post("/projects", ...groupHelpHandler(projectsHelp))
+  // Collection URLs (`/projects`, `/projects/:p/agents`, etc) return the list
+  // directly so `leuco projects` is enough to see what's registered. The
+  // explicit `/list` aliases stay for backwards-compat scripts. Each leaf
+  // handler honours `--help` itself so `leuco projects --help` keeps working.
+  .post("/projects", ...projectsListHandler)
   .post("/projects/list", ...projectsListHandler)
   .post("/projects/create", ...projectsCreateHandler)
   .post("/projects/add", ...projectsAddHandler)
@@ -97,7 +95,7 @@ export const app = base
   .post("/projects/:project/remove", ...projectsRemoveHandler)
   .post("/projects/:project/rename", ...projectsRenameHandler)
 
-  .post("/projects/:project/agents", ...groupHelpHandler(agentsHelp))
+  .post("/projects/:project/agents", ...agentsListHandler)
   .post("/projects/:project/agents/list", ...agentsListHandler)
   .post("/projects/:project/agents/add", ...agentsAddHandler)
   .post("/projects/:project/agents/:agent", ...groupHelpHandler(agentsNamedHelp))
@@ -109,7 +107,7 @@ export const app = base
   .post("/projects/:project/agents/:agent/restart", ...agentsRestartHandler)
   .post("/projects/:project/agents/:agent/reset", ...agentsResetHandler)
 
-  .post("/projects/:project/agents/:agent/channels", ...groupHelpHandler(channelsHelp))
+  .post("/projects/:project/agents/:agent/channels", ...channelsListHandler)
   .post("/projects/:project/agents/:agent/channels/list", ...channelsListHandler)
   .post("/projects/:project/agents/:agent/channels/add", ...channelsAddHandler)
   .post(
@@ -127,7 +125,7 @@ export const app = base
   )
   .post(
     "/projects/:project/agents/:agent/channels/:channel/schedules",
-    ...groupHelpHandler(schedulesHelp),
+    ...schedulesListHandler,
   )
   .post("/projects/:project/agents/:agent/channels/:channel/schedules/add", ...schedulesAddHandler)
   .post(
@@ -142,12 +140,12 @@ export const app = base
   .post("/slack", ...groupHelpHandler(slackHelp))
   .post("/slack/call", ...slackCallHandler)
 
-  .post("/config", ...groupHelpHandler(configHelp))
+  .post("/config", ...configListHandler)
   .post("/config/list", ...configListHandler)
   .post("/config/get", ...configGetHandler)
   .post("/config/set", ...configSetHandler)
 
-  .post("/boot", ...groupHelpHandler(bootHelp))
+  .post("/boot", ...bootStatusHandler)
   .post("/boot/install", ...bootInstallHandler)
   .post("/boot/uninstall", ...bootUninstallHandler)
   .post("/boot/status", ...bootStatusHandler)

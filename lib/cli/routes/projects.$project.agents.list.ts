@@ -4,13 +4,21 @@ import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> agents list — list agents registered under a project
+const help = `leuco projects <p> agents — list agents under a project
 
-usage: leuco projects <p> agents list
+usage:
+  leuco projects <p> agents                        list agents in this project
+  leuco projects <p> agents add <a>                add an agent
+  leuco projects <p> agents <a> remove [--cascade] remove an agent
+  leuco projects <p> agents <a> rename <new>       rename an agent
+  leuco projects <p> agents <a> move-to <dst>      move an agent to another project
+  leuco projects <p> agents <a> channels ...       manage channels under an agent
 
-Prints each agent on its own line: <name> <tab> channels=<count>.
-A trailing "(toml missing)" indicates the project's .codex/agents/<name>.toml
-is absent — drift between config and filesystem.`
+Each row prints \`<name> <tab> <state> <tab> channels=<count>\`. A trailing
+"(toml missing)" indicates the project's .codex/agents/<name>.toml is absent
+— drift between config and filesystem.
+
+Run \`leuco projects <p> agents <subcommand> -h\` for details on a specific subcommand.`
 
 export const agentsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

@@ -4,12 +4,19 @@ import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import type { Channel } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> agents <a> channels list — list channels under an agent
+const help = `leuco projects <p> agents <a> channels — list channels under an agent
 
-usage: leuco projects <p> agents <a> channels list
+usage:
+  leuco projects <p> agents <a> channels                  list channels under this agent
+  leuco projects <p> agents <a> channels add slack        add a slack channel
+  leuco projects <p> agents <a> channels <c> remove       remove a channel
+  leuco projects <p> agents <a> channels <c> rename <new> rename a channel
+  leuco projects <p> agents <a> channels <c> schedules    manage schedule entries
 
-Prints each channel on its own line, with the env var names referenced for
-its tokens (the tokens themselves are not stored in config).`
+Each row prints \`<name> <tab> <type> <tab> <state>\` plus a per-type status
+suffix (\`(tokens empty)\` for slack, \`(<n> entries)\` for schedule).
+
+Run \`leuco projects <p> agents <a> channels <subcommand> -h\` for details on a specific subcommand.`
 
 export const channelsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
