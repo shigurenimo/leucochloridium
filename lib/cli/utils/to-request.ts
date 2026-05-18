@@ -13,6 +13,7 @@ const NAMED_LEAFS = new Set([
   "show",
   "rename",
   "move-to",
+  "merge-into",
   "relocate",
   "start",
   "stop",

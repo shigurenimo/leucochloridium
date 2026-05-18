@@ -158,6 +158,38 @@ describe("LeucoTenant.runTextTurn", () => {
     if (result instanceof Error) expect(result.message).toBe("turn failed")
   })
 
+  it("batches turns that arrive while another turn is in flight", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const calls: string[] = []
+    const tenant = buildTenant({
+      codex: fakeCodex({
+        runTextTurn: async (_id, text) => {
+          calls.push(text)
+          if (calls.length === 1) await firstTurnGate
+          return text
+        },
+      }),
+    })
+
+    const p1 = tenant.runTextTurn("k", "1")
+    // Let the first turn enter the gated codex.runTextTurn before queueing
+    // more — otherwise everything ends up in a single batch.
+    await new Promise((r) => setTimeout(r, 5))
+
+    const p2 = tenant.runTextTurn("k", "2")
+    const p3 = tenant.runTextTurn("k", "3")
+    releaseFirstTurn()
+
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3])
+    expect(calls).toEqual(["1", "2\n\n3"])
+    expect(r1).toBe("1")
+    expect(r2).toBe("2\n\n3")
+    expect(r3).toBe("2\n\n3")
+  })
+
   it("recovers a failed turn so the next turn in the same thread still runs", async () => {
     let attempt = 0
     const tenant = buildTenant({

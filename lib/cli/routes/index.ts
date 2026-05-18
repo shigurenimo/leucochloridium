@@ -34,6 +34,7 @@ import { channelsSetTokensHandler } from "@/cli/routes/projects.$project.agents.
 import { channelsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.start"
 import { channelsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.stop"
 import { help as projectsNamedHelp } from "@/cli/routes/projects.$project.help"
+import { projectsMergeIntoHandler } from "@/cli/routes/projects.$project.merge-into"
 import { projectsRelocateHandler } from "@/cli/routes/projects.$project.relocate"
 import { projectsRemoveHandler } from "@/cli/routes/projects.$project.remove"
 import { projectsRenameHandler } from "@/cli/routes/projects.$project.rename"
@@ -96,6 +97,7 @@ export const app = base
   .post("/projects/:project/remove", ...projectsRemoveHandler)
   .post("/projects/:project/rename", ...projectsRenameHandler)
   .post("/projects/:project/relocate", ...projectsRelocateHandler)
+  .post("/projects/:project/merge-into", ...projectsMergeIntoHandler)
 
   .post("/projects/:project/agents", ...agentsListHandler)
   .post("/projects/:project/agents/list", ...agentsListHandler)

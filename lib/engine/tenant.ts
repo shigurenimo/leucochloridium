@@ -61,6 +61,12 @@ export type TenantThreadEntry = {
   threadId: string
 }
 
+type PendingTurn = {
+  threadKey: string
+  text: string
+  resolve: (reply: string | Error) => void
+}
+
 /**
  * Owns one (project, agent) pair: a single codex app-server child, the channel
  * plugins routed at it, and ONE codex thread shared across every channel,
@@ -90,8 +96,15 @@ export class LeucoTenant {
   private agentThreadId: string | null
   /** True once the agent thread is loaded into the running codex app-server. */
   private agentThreadLive = false
-  /** Single chain — all turns serialize through one codex thread. */
-  private turnChain: Promise<void> = Promise.resolve()
+  /**
+   * Pending text turns from every channel. While one batch is running, new
+   * arrivals queue here; once the current turn finishes, everything in the
+   * queue is merged into the next batch (separator: blank line). This is the
+   * "true end-of-turn queue" behaviour the upstream Claude Code feature
+   * request asks for — codex never sees a half-finished turn interrupted.
+   */
+  private pendingTurns: PendingTurn[] = []
+  private turnInflight = false
 
   constructor(props: Props) {
     this.projectId = props.projectId
@@ -181,67 +194,94 @@ export class LeucoTenant {
   }
 
   /**
-   * Queue a text turn. `threadKey` is propagated to the bus so consumers can
-   * still see which Slack thread / channel triggered the turn, but every turn
-   * runs through the agent's single codex thread (serialized).
+   * Queue a text turn. While a turn is running, additional calls collect in
+   * `pendingTurns` and are merged into a single follow-up turn once the
+   * current one finishes — so a Slack thread that bursts three messages
+   * during a long codex run produces ONE next-turn instead of three queued
+   * ones. Each caller's awaited promise resolves with the same merged reply.
+   *
+   * `threadKey` is propagated to the bus event for the first message in a
+   * batch so consumers can still see which Slack thread / channel kicked
+   * the turn off; merged inputs share that event id.
    */
   runTextTurn(threadKey: string, text: string): Promise<string | Error> {
-    const next = this.turnChain
-      .catch(() => undefined)
-      .then(async (): Promise<string | Error> => {
-        const threadIdOrError = await this.ensureAgentThread()
-        if (threadIdOrError instanceof Error) {
-          this.bus.emit({
-            ts: Date.now(),
-            type: "turn.error",
-            project: this.projectName,
-            agent: this.agentName,
-            threadKey,
-            error: threadIdOrError.message,
-          })
-          return threadIdOrError
-        }
-        const threadId = threadIdOrError
+    return new Promise<string | Error>((resolve) => {
+      this.pendingTurns.push({ threadKey, text, resolve })
+      void this.drainTurns()
+    })
+  }
 
-        this.log(`[leuco] turn → ${threadId} (${truncate(text, 60)})`)
-        this.bus.emit({
-          ts: Date.now(),
-          type: "turn.start",
-          project: this.projectName,
-          agent: this.agentName,
-          threadKey,
-          input: text,
-        })
+  private async drainTurns(): Promise<void> {
+    if (this.turnInflight) return
+    this.turnInflight = true
+    try {
+      while (this.pendingTurns.length > 0) {
+        const batch = this.pendingTurns.splice(0)
+        const reply = await this.executeBatchedTurn(batch).catch((err: unknown) =>
+          err instanceof Error ? err : new Error(String(err)),
+        )
+        for (const pending of batch) pending.resolve(reply)
+      }
+    } finally {
+      this.turnInflight = false
+    }
+  }
 
-        const reply = await this.runTextTurnWithTimeout(threadId, text)
-        if (reply instanceof Error) {
-          this.bus.emit({
-            ts: Date.now(),
-            type: "turn.error",
-            project: this.projectName,
-            agent: this.agentName,
-            threadKey,
-            error: reply.message,
-          })
-          return reply
-        }
+  private async executeBatchedTurn(batch: PendingTurn[]): Promise<string | Error> {
+    const primaryThreadKey = batch[0]!.threadKey
+    const combinedText =
+      batch.length === 1 ? batch[0]!.text : batch.map((t) => t.text).join("\n\n")
 
-        this.bus.emit({
-          ts: Date.now(),
-          type: "turn.complete",
-          project: this.projectName,
-          agent: this.agentName,
-          threadKey,
-          reply,
-        })
-        return reply
+    const threadIdOrError = await this.ensureAgentThread()
+    if (threadIdOrError instanceof Error) {
+      this.bus.emit({
+        ts: Date.now(),
+        type: "turn.error",
+        project: this.projectName,
+        agent: this.agentName,
+        threadKey: primaryThreadKey,
+        error: threadIdOrError.message,
       })
+      return threadIdOrError
+    }
+    const threadId = threadIdOrError
 
-    this.turnChain = next.then(
-      () => undefined,
-      () => undefined,
+    this.log(
+      batch.length === 1
+        ? `[leuco] turn → ${threadId} (${truncate(combinedText, 60)})`
+        : `[leuco] turn ×${batch.length} → ${threadId} (${truncate(combinedText, 60)})`,
     )
-    return next
+    this.bus.emit({
+      ts: Date.now(),
+      type: "turn.start",
+      project: this.projectName,
+      agent: this.agentName,
+      threadKey: primaryThreadKey,
+      input: combinedText,
+    })
+
+    const reply = await this.runTextTurnWithTimeout(threadId, combinedText)
+    if (reply instanceof Error) {
+      this.bus.emit({
+        ts: Date.now(),
+        type: "turn.error",
+        project: this.projectName,
+        agent: this.agentName,
+        threadKey: primaryThreadKey,
+        error: reply.message,
+      })
+      return reply
+    }
+
+    this.bus.emit({
+      ts: Date.now(),
+      type: "turn.complete",
+      project: this.projectName,
+      agent: this.agentName,
+      threadKey: primaryThreadKey,
+      reply,
+    })
+    return reply
   }
 
   /**
