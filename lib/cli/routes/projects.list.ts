@@ -10,6 +10,7 @@ usage:
   leuco projects add [<path>]                      register an existing repository
   leuco projects <p> remove [--cascade]            unregister a project
   leuco projects <p> rename <new>                  rename a project
+  leuco projects <p> relocate <new-path>           move the repo dir + update path
   leuco projects <p> agents ...                    manage agents under a project
 
 Each row prints \`<name> <tab> <path> [agents=<count>]\`.
