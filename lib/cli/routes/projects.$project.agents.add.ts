@@ -65,6 +65,7 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
     useCommonInstructions: true,
     prompts: ["friendly"],
     channels: [],
+    mcpServers: {},
   }
   store.save({ ...project, agents: [...project.agents, nextAgent] })
 

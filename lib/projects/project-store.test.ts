@@ -34,6 +34,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
           },
         },
       ],
+      mcpServers: {},
     },
   ],
   ...overrides,
@@ -94,6 +95,7 @@ describe("LeucoProjectStore", () => {
               },
             },
           ],
+          mcpServers: {},
         },
       ],
     })
@@ -215,6 +217,7 @@ describe("LeucoProjectStore", () => {
                 entries: [],
               },
             ],
+            mcpServers: {},
           },
         ],
       })

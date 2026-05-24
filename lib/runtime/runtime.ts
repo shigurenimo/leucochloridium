@@ -12,7 +12,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoChannelHost } from "@/channels/channel-host"
-import type { Agent, Project } from "@/config/config-schema"
+import type { Agent, McpServer, Project } from "@/config/config-schema"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { LeucoEngine } from "@/engine/engine"
@@ -203,6 +203,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
       props.mcpToken !== null && props.mcpPort !== undefined
         ? { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}/${props.agent.name}` }
         : null,
+    extraMcpServers: props.agent.mcpServers,
   })
   ensureAuthSymlink(codexHome)
 
@@ -287,6 +288,9 @@ const ensureCodexHome = (paths: LeucoPaths, projectId: string, agentName: string
  *   4. `approval_mode = "approve"` overrides on every leuco-managed tool — kept
  *      even with the global `never` policy as belt-and-suspenders in case the
  *      global default changes in a future codex release.
+ *   5. any per-agent `mcpServers` from settings.json, each as its own
+ *      `[mcp_servers.<key>]` stdio block. The reserved `leuco` key is skipped
+ *      so a misconfigured agent can never shadow the built-in server.
  */
 const ensureTenantConfigToml = (
   codexHome: string,
@@ -296,6 +300,7 @@ const ensureTenantConfigToml = (
     projectName: string
     agentName: string
     mcpEndpoint: { url: string } | null
+    extraMcpServers: Record<string, McpServer>
   },
 ): void => {
   const path = join(codexHome, "config.toml")
@@ -327,6 +332,24 @@ const ensureTenantConfigToml = (
   for (const tool of autoApproveTools) {
     lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")
   }
+
+  for (const [name, server] of Object.entries(tenant.extraMcpServers)) {
+    if (name === "leuco") continue
+    lines.push(
+      `[mcp_servers.${name}]`,
+      `command = ${tomlKeyString(server.command)}`,
+      `args = ${tomlStringArray(server.args)}`,
+    )
+    const envEntries = Object.entries(server.env)
+    if (envEntries.length > 0) {
+      const inline = envEntries
+        .map(([key, value]) => `${key} = ${tomlKeyString(value)}`)
+        .join(", ")
+      lines.push(`env = { ${inline} }`)
+    }
+    lines.push("")
+  }
+
   writeFileSync(path, lines.join("\n"))
 }
 
@@ -367,4 +390,8 @@ const currentSymlinkTarget = (path: string): string | null => {
 
 const tomlKeyString = (value: string): string => {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+const tomlStringArray = (values: string[]): string => {
+  return `[${values.map(tomlKeyString).join(", ")}]`
 }

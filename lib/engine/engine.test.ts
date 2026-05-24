@@ -115,6 +115,7 @@ describe("LeucoEngine.reconcile", () => {
     useCommonInstructions: true,
     prompts: ["friendly"],
     channels: [],
+    mcpServers: {},
   })
 
   it("stops tenants whose agent has been disabled", async () => {
@@ -268,6 +269,7 @@ describe("LeucoEngine introspection", () => {
             useCommonInstructions: true,
             prompts: ["friendly" as const],
             channels: [],
+            mcpServers: {},
           },
           {
             name: "b",
@@ -275,6 +277,7 @@ describe("LeucoEngine introspection", () => {
             useCommonInstructions: true,
             prompts: ["friendly" as const],
             channels: [],
+            mcpServers: {},
           },
         ],
       },

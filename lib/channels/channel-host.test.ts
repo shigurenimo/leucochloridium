@@ -31,6 +31,7 @@ const agent = (channels: Agent["channels"]): Agent => ({
   useCommonInstructions: true,
   prompts: ["friendly"],
   channels,
+  mcpServers: {},
 })
 
 describe("LeucoChannelHost.buildForAgent", () => {
@@ -102,6 +103,7 @@ describe("LeucoChannelHost.buildForAgent", () => {
                 entries: [],
               },
             ],
+            mcpServers: {},
           },
         ],
       }

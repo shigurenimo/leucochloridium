@@ -61,6 +61,21 @@ const scheduleChannelSchema = z.object({
 
 const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, scheduleChannelSchema])
 
+/**
+ * One extra stdio MCP server to attach to this agent's codex, on top of the
+ * built-in `leuco` server. leuco stays agnostic about what the server does:
+ * it only forwards `command`/`args`/`env` verbatim into the tenant's
+ * CODEX_HOME `config.toml` as a `[mcp_servers.<key>]` block. Per-agent `env`
+ * is how callers scope a shared MCP binary to a specific identity (e.g. a
+ * token-vault MCP keyed by the owner's email), without leuco needing to model
+ * that identity itself.
+ */
+const mcpServerSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string(), z.string()).default({}),
+})
+
 const agentSchema = z.object({
   name: safeName,
   enabled: z.boolean().default(true),
@@ -80,6 +95,12 @@ const agentSchema = z.object({
    */
   prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
   channels: z.array(channelSchema).default([]),
+  /**
+   * Extra stdio MCP servers to wire into this agent's codex, keyed by the
+   * `[mcp_servers.<key>]` name written to `config.toml`. The reserved key
+   * `leuco` is owned by the runtime and must not appear here. Empty by default.
+   */
+  mcpServers: z.record(safeName, mcpServerSchema).default({}),
 })
 
 export const projectSchema = z.object({
@@ -101,5 +122,6 @@ export type Channel = z.infer<typeof channelSchema>
 export type SlackChannel = z.infer<typeof slackChannelSchema>
 export type ScheduleChannel = z.infer<typeof scheduleChannelSchema>
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
+export type McpServer = z.infer<typeof mcpServerSchema>
 export type Agent = z.infer<typeof agentSchema>
 export type Project = z.infer<typeof projectSchema>
