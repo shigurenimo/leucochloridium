@@ -83,6 +83,13 @@ const mcpServerSchema = z.object({
  */
 const CURRENT_SCHEMA_VERSION = 2
 
+const projectStateSchema = z
+  .object({
+    codexThreadId: z.string().min(1).nullable().default(null),
+    scheduleLastFiredAt: z.record(z.string(), z.number()).default({}),
+  })
+  .default({ codexThreadId: null, scheduleLastFiredAt: {} })
+
 export const projectSchema = z.object({
   version: z.number().int().default(CURRENT_SCHEMA_VERSION),
   /**
@@ -106,6 +113,7 @@ export const projectSchema = z.object({
   prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
   channels: z.array(channelSchema).default([]),
   mcpServers: z.record(safeName, mcpServerSchema).default({}),
+  state: projectStateSchema,
 })
 
 export { CURRENT_SCHEMA_VERSION }
@@ -115,4 +123,7 @@ export type SlackChannel = z.infer<typeof slackChannelSchema>
 export type ScheduleChannel = z.infer<typeof scheduleChannelSchema>
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
 export type McpServer = z.infer<typeof mcpServerSchema>
+export type ProjectState = z.infer<typeof projectStateSchema>
 export type Project = z.infer<typeof projectSchema>
+
+export const EMPTY_PROJECT_STATE: ProjectState = { codexThreadId: null, scheduleLastFiredAt: {} }

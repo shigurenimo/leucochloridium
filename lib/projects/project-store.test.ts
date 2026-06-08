@@ -33,6 +33,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
     },
   ],
   mcpServers: {},
+  state: { codexThreadId: null, scheduleLastFiredAt: {} },
   ...overrides,
 })
 
@@ -196,6 +197,22 @@ describe("LeucoProjectStore", () => {
 
     const unified = JSON.parse(readFileSync(paths.settingsPath(), "utf8"))
     expect(unified.projects).toHaveLength(1)
+  })
+
+  it("list() migrates legacy state.json into the project's state field", () => {
+    store.save(sampleProject())
+    const paths = store.getPaths()
+    const statePath = paths.projectStatePath(DEMO_ID)
+    writeFileSync(
+      statePath,
+      JSON.stringify({ codexThreadId: "thread-123", scheduleLastFiredAt: { e1: 1000 } }),
+    )
+
+    const result = store.list()
+    expect(result).toHaveLength(1)
+    expect(result[0]!.state.codexThreadId).toBe("thread-123")
+    expect(result[0]!.state.scheduleLastFiredAt).toEqual({ e1: 1000 })
+    expect(() => statSync(statePath)).toThrow()
   })
 
   it("list() migrates a legacy name-keyed directory to id-keyed", () => {

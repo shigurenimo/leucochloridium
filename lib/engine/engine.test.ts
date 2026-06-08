@@ -59,6 +59,7 @@ const makeProject = (name: string, enabled = true): Project => ({
   prompts: ["friendly"],
   channels: [],
   mcpServers: {},
+  state: { codexThreadId: null, scheduleLastFiredAt: {} },
 })
 
 describe("LeucoEngine.start / stop", () => {

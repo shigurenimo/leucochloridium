@@ -99,6 +99,7 @@ const registerInStore = (
     prompts: ["friendly"],
     channels: [],
     mcpServers: {},
+    state: { codexThreadId: null, scheduleLastFiredAt: {} },
   }
   const saved = store.save(project)
 

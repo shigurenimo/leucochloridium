@@ -3,8 +3,10 @@ import { resolve as resolvePath } from "node:path"
 import { z } from "zod"
 import {
   CURRENT_SCHEMA_VERSION,
+  EMPTY_PROJECT_STATE,
   type Channel,
   type Project,
+  type ProjectState,
   type ScheduleEntry,
   projectSchema,
 } from "@/config/config-schema"
@@ -232,37 +234,57 @@ export class LeucoProjectStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Migration: per-project settings.json → unified file
+  // Migration: per-project settings.json / state.json → unified file
   // ---------------------------------------------------------------------------
 
   /**
-   * Scan `~/.leuco/projects/` for legacy per-project `settings.json` files.
-   * Returns the merged array if any were found (caller must persist), or null
-   * if nothing to migrate.
+   * Scan `~/.leuco/projects/` for legacy per-project files.
+   * - `settings.json`: migrated as a new project entry
+   * - `state.json`: merged into the project's `state` field
+   * Returns the merged array if anything was found, or null if clean.
    */
   private migratePerProjectFiles(existing: Project[]): Project[] | null {
     const root = this.paths.projectsRoot()
     if (!existsSync(root)) return null
 
     const entries = readdirSync(root, { withFileTypes: true })
-    const existingIds = new Set(existing.map((p) => p.id))
+    const byId = new Map(existing.map((p) => [p.id, p]))
     let migrated: Project[] | null = null
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const legacyPath = this.paths.projectSettingsPath(entry.name)
-      if (!existsSync(legacyPath)) continue
+
+      const legacySettingsPath = this.paths.projectSettingsPath(entry.name)
+      const legacyStatePath = this.paths.projectStatePath(entry.name)
+      const hasSettings = existsSync(legacySettingsPath)
+      const hasState = existsSync(legacyStatePath)
+      if (!hasSettings && !hasState) continue
 
       if (migrated === null) migrated = existing.slice()
 
-      for (const project of this.loadOrMigrate(entry.name)) {
-        if (!existingIds.has(project.id)) {
-          migrated.push(project)
-          existingIds.add(project.id)
+      if (hasSettings) {
+        for (const project of this.loadOrMigrate(entry.name)) {
+          if (!byId.has(project.id)) {
+            const state = hasState ? readLegacyState(legacyStatePath) : project.state
+            const withState = { ...project, state }
+            migrated.push(withState)
+            byId.set(project.id, withState)
+          }
         }
+        rmSync(legacySettingsPath, { force: true })
       }
 
-      rmSync(legacyPath, { force: true })
+      if (hasState) {
+        const existing = byId.get(entry.name)
+        if (existing !== undefined && isEmptyState(existing.state)) {
+          const state = readLegacyState(legacyStatePath)
+          const patched = { ...existing, state }
+          const index = migrated.findIndex((p) => p.id === existing.id)
+          if (index >= 0) migrated[index] = patched
+          byId.set(existing.id, patched)
+        }
+        rmSync(legacyStatePath, { force: true })
+      }
     }
 
     return migrated
@@ -408,3 +430,20 @@ export class LeucoProjectStore {
     }
   }
 }
+
+const legacyStateSchema = z.object({
+  codexThreadId: z.string().min(1).nullable().default(null),
+  scheduleLastFiredAt: z.record(z.string(), z.number()).default({}),
+})
+
+const readLegacyState = (path: string): ProjectState => {
+  try {
+    const raw = readFileSync(path, "utf8")
+    return legacyStateSchema.parse(JSON.parse(raw))
+  } catch {
+    return EMPTY_PROJECT_STATE
+  }
+}
+
+const isEmptyState = (state: ProjectState): boolean =>
+  state.codexThreadId === null && Object.keys(state.scheduleLastFiredAt).length === 0

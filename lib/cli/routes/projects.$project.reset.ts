@@ -3,15 +3,14 @@ import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
 import { LeucoProjectStore } from "@/projects/project-store"
-import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 const help = `leuco projects <p> reset / drop the codex thread id
 
 usage / leuco projects <p> reset
 
-Clears codexThreadId in state.json so the next turn starts a fresh codex
-thread. Codex memories under .codex/memory/ are kept. If the project is
-enabled, the tenant is restarted so the in-memory thread id is also discarded.`
+Clears codexThreadId so the next turn starts a fresh codex thread. Codex
+memories under .codex/memory/ are kept. If the project is enabled, the
+tenant is restarted so the in-memory thread id is also discarded.`
 
 export const projectsResetHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -22,9 +21,8 @@ export const projectsResetHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
 
-  const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
-  const previousThreadId = stateStore.load(project.id).codexThreadId
-  stateStore.setCodexThreadId(project.id, null)
+  const previousThreadId = project.state.codexThreadId
+  store.save({ ...project, state: { ...project.state, codexThreadId: null } })
 
   if (!project.enabled) {
     const tail = previousThreadId === null ? " (was already empty)" : ` (was ${previousThreadId})`

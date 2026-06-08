@@ -65,7 +65,7 @@ export class LeucoRuntime {
     }
 
     const projectStore = new LeucoProjectStore({ paths })
-    const projectStateStore = new LeucoProjectStateStore({ paths })
+    const projectStateStore = new LeucoProjectStateStore({ projectStore })
     const projects = projectStore.list()
 
     const mcpToken = buildProps.port !== undefined ? randomBytes(32).toString("hex") : null
@@ -227,8 +227,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
 
   const presets = LeucoPromptPresets.resolveAll(props.project.prompts)
 
-  const initialState = props.projectStateStore.load(props.project.id)
-
   return new LeucoTenant({
     projectId: props.project.id,
     projectName: props.project.name,
@@ -238,7 +236,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     plugins,
     onLog: props.onLog,
     bus: props.bus,
-    initialCodexThreadId: initialState.codexThreadId ?? undefined,
+    initialCodexThreadId: props.project.state.codexThreadId ?? undefined,
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
     listSubagents,

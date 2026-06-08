@@ -126,15 +126,13 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 
 ```
 ~/.leuco/
-  settings.json                          machine-wide settings
+  settings.json                          config + projects array (chmod 600)
   daemon/
     pid
     log
     events.jsonl                         newline-delimited LeucoEvent stream
   projects/
     <uuid>/
-      settings.json                      project config + per-channel tokens (chmod 600)
-      state.json                         runtime state (codex thread id etc.)
       .codex/                            CODEX_HOME for this tenant
         auth.json                        symlink -> ~/.codex/auth.json
         config.toml                      project trust + mcp_servers.leuco

@@ -80,7 +80,7 @@ export class LeucoPaths {
     return join(this.projectDir(projectId), ".codex")
   }
 
-  /** Mutable per-project runtime state (codex thread id, schedule lastFiredAt). */
+  /** @deprecated Used only by migration from per-project state.json. */
   projectStatePath(projectId: string): string {
     return join(this.projectDir(projectId), "state.json")
   }

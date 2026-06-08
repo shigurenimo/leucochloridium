@@ -94,10 +94,11 @@ describe("LeucoChannelHost.buildForProject", () => {
           },
         ],
         mcpServers: {},
+        state: { codexThreadId: null, scheduleLastFiredAt: {} },
       }
       store.save(project)
 
-      const stateStore = new LeucoProjectStateStore({ paths })
+      const stateStore = new LeucoProjectStateStore({ projectStore: store })
       const plugins = LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
         channels: project.channels,

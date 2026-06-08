@@ -44,6 +44,7 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
     prompts: ["friendly"],
     channels: [],
     mcpServers: {},
+    state: { codexThreadId: null, scheduleLastFiredAt: {} },
   }
   store.save(project)
 

@@ -36,7 +36,7 @@ Slack message → `slack-listener` → `slack-event-processor` → `LeucoTenant`
 
 ## 合成ルート
 
-`LeucoRuntime.build({ env })` が唯一の wiring 点。`~/.leuco/projects/<id>/settings.json` を `LeucoProjectStore` で読み、無効な channel を除外し、有効な project ごとに `LeucoTenant` を作る。テナントは固有の `CODEX_HOME`（`~/.leuco/projects/<id>/.codex/`）を持ち、`LeucoChannelHost` から channel plugins を組み立て、`LeucoEventBus` に ack/onLog を bind する。最後に `LeucoEngine` が reconcile / start / stop を所有。`leuco run`、background 子プロセス、TUI 起動はいずれも `LeucoRuntime.build(...).start()` の薄いラッパ。
+`LeucoRuntime.build({ env })` が唯一の wiring 点。`~/.leuco/settings.json` の `projects` 配列を `LeucoProjectStore` で読み、無効な channel を除外し、有効な project ごとに `LeucoTenant` を作る。テナントは固有の `CODEX_HOME`（`~/.leuco/projects/<id>/.codex/`）を持ち、`LeucoChannelHost` から channel plugins を組み立て、`LeucoEventBus` に ack/onLog を bind する。最後に `LeucoEngine` が reconcile / start / stop を所有。`leuco run`、background 子プロセス、TUI 起動はいずれも `LeucoRuntime.build(...).start()` の薄いラッパ。
 
 ## CLI ルート
 
@@ -79,7 +79,7 @@ bun run dev        lib/index.ts をフォアグラウンド実行
 
 Codex `app-server` は JSON-RPC `initialize` ハンドシェイクが必須。エラー応答が `jsonrpc` フィールドを欠くケースがある（`lib/engine/codex/codex-protocol.ts`）。
 
-`~/.leuco/projects/<p>/settings.json` は Slack トークンを持つので chmod 600。`LeucoProjectStore.write` がモードを強制する。
+`~/.leuco/settings.json` は Slack トークンを含む projects 配列を持つので chmod 600。`LeucoProjectStore` と `LeucoGlobalSettingsStore` が書き込み時にモードを強制する。
 
 各テナントの `CODEX_HOME` は `~/.codex/auth.json` を symlink して codex ログインを共有しつつ、メモリは独立させている。
 
