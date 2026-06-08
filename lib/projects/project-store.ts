@@ -9,6 +9,7 @@ import {
   projectSchema,
 } from "@/config/config-schema"
 import { atomicWriteJson } from "@/fs/atomic-write-json"
+import { globalSettingsSchema } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 /**
@@ -45,15 +46,14 @@ type Props = {
 type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
 
 /**
- * Per-project JSON store. Each registered project owns a directory at
- * `~/.leuco/projects/<id>/` keyed by UUID, whose `settings.json` (chmod 600)
- * holds the full registration tree — name, channels, and per-channel secrets
- * — in one place. The set of projects is just the contents of the directory;
- * cross-project settings live in `~/.leuco/settings.json`.
+ * Project registry backed by the `projects` array inside
+ * `~/.leuco/settings.json`. All CRUD goes through a single atomic file
+ * (chmod 600 because channel configs embed Slack tokens). Per-project
+ * runtime state (codexThreadId, .codex/) stays in UUID directories under
+ * `~/.leuco/projects/<id>/`.
  *
- * On first load, legacy settings (pre-0.9 agents array, name-keyed dirs,
- * inline codexThreadId) are migrated transparently by `loadOrMigrate`. The
- * `version` field in settings.json tracks schema revision.
+ * On first `list()`, legacy per-project `settings.json` files (pre-0.10)
+ * are migrated into the unified file automatically.
  */
 export class LeucoProjectStore {
   private readonly paths: LeucoPaths
@@ -68,27 +68,20 @@ export class LeucoProjectStore {
   }
 
   list(): Project[] {
-    const root = this.paths.projectsRoot()
-    if (!existsSync(root)) return []
-
-    const entries = readdirSync(root, { withFileTypes: true })
-    const projects: Project[] = []
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const settingsPath = this.paths.projectSettingsPath(entry.name)
-      if (!existsSync(settingsPath)) continue
-      projects.push(...this.loadOrMigrate(entry.name))
+    const settings = this.readSettings()
+    const migrated = this.migratePerProjectFiles(settings.projects)
+    if (migrated !== null) {
+      this.writeSettings({ ...settings, projects: migrated })
+      return migrated
     }
-    return projects
+    return settings.projects
   }
 
   load(projectId: string): Project {
-    const path = this.paths.projectSettingsPath(projectId)
-    if (!existsSync(path)) throw new Error(`project not found: ${projectId}`)
-
-    const text = readFileSync(path, "utf8")
-    const json = JSON.parse(text)
-    return projectSchema.parse(json)
+    const settings = this.readSettings()
+    const found = settings.projects.find((p) => p.id === projectId)
+    if (!found) throw new Error(`project not found: ${projectId}`)
+    return found
   }
 
   resolveByName(name: string, opts: { preferCwd?: string } = {}): Project {
@@ -110,14 +103,27 @@ export class LeucoProjectStore {
   }
 
   save(project: Project): string {
-    return atomicWriteJson({
-      path: this.paths.projectSettingsPath(project.id),
-      data: project,
-      mode: 0o600,
-    })
+    const settings = this.readSettings()
+    const index = settings.projects.findIndex((p) => p.id === project.id)
+    const next = settings.projects.slice()
+
+    if (index >= 0) {
+      next[index] = project
+    } else {
+      next.push(project)
+    }
+
+    const projectDir = this.paths.projectDir(project.id)
+    if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true })
+
+    return this.writeSettings({ ...settings, projects: next })
   }
 
   remove(projectId: string): void {
+    const settings = this.readSettings()
+    const next = settings.projects.filter((p) => p.id !== projectId)
+    this.writeSettings({ ...settings, projects: next })
+
     rmSync(this.paths.projectDir(projectId), { recursive: true, force: true })
   }
 
@@ -184,6 +190,23 @@ export class LeucoProjectStore {
     })
   }
 
+  private readSettings(): z.infer<typeof globalSettingsSchema> {
+    const path = this.paths.settingsPath()
+    if (!existsSync(path)) return globalSettingsSchema.parse(undefined)
+
+    const raw = readFileSync(path, "utf8")
+    const json: unknown = JSON.parse(raw)
+    return globalSettingsSchema.parse(json)
+  }
+
+  private writeSettings(settings: z.infer<typeof globalSettingsSchema>): string {
+    return atomicWriteJson({
+      path: this.paths.settingsPath(),
+      data: settings,
+      mode: 0o600,
+    })
+  }
+
   private mutateScheduleChannel(
     input: { projectId: string; channelName: string },
     transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable,
@@ -208,13 +231,48 @@ export class LeucoProjectStore {
     return this.save({ ...project, channels: nextChannels })
   }
 
+  // ---------------------------------------------------------------------------
+  // Migration: per-project settings.json → unified file
+  // ---------------------------------------------------------------------------
+
   /**
-   * Load `settings.json` and run in-place migrations:
+   * Scan `~/.leuco/projects/` for legacy per-project `settings.json` files.
+   * Returns the merged array if any were found (caller must persist), or null
+   * if nothing to migrate.
+   */
+  private migratePerProjectFiles(existing: Project[]): Project[] | null {
+    const root = this.paths.projectsRoot()
+    if (!existsSync(root)) return null
+
+    const entries = readdirSync(root, { withFileTypes: true })
+    const existingIds = new Set(existing.map((p) => p.id))
+    let migrated: Project[] | null = null
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const legacyPath = this.paths.projectSettingsPath(entry.name)
+      if (!existsSync(legacyPath)) continue
+
+      if (migrated === null) migrated = existing.slice()
+
+      for (const project of this.loadOrMigrate(entry.name)) {
+        if (!existingIds.has(project.id)) {
+          migrated.push(project)
+          existingIds.add(project.id)
+        }
+      }
+
+      rmSync(legacyPath, { force: true })
+    }
+
+    return migrated
+  }
+
+  /**
+   * Load a legacy `settings.json` and run in-place migrations:
    *
    *   v0 → v1: legacy `name`-keyed directory → UUID id.
-   *   v1 → v2: flatten `agents[]` into the project. Each agent becomes its
-   *            own project when there are 2+. The on-disk `agents/` tree is
-   *            consolidated into `projects/<id>/.codex/`.
+   *   v1 → v2: flatten `agents[]` into the project.
    *
    * Returns an array because a multi-agent project splits into N projects.
    */
@@ -224,7 +282,6 @@ export class LeucoProjectStore {
     const json = migrationShape.parse(raw)
 
     let id: string
-    let mutated = false
     if (typeof json.id === "string") {
       id = json.id
       if (id !== dirName) {
@@ -233,25 +290,7 @@ export class LeucoProjectStore {
     } else {
       id = crypto.randomUUID()
       json.id = id
-      mutated = true
     }
-
-    const currentVersion = json.version ?? 1
-
-    if (currentVersion >= CURRENT_SCHEMA_VERSION) {
-      if (id !== dirName) {
-        if (existsSync(this.paths.projectDir(id))) {
-          throw new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
-        }
-        renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
-      }
-      if (mutated) {
-        atomicWriteJson({ path: this.paths.projectSettingsPath(id), data: json, mode: 0o600 })
-      }
-      return [projectSchema.parse(json)]
-    }
-
-    // --- v1 → v2: flatten agents[] into project ---
 
     if (id !== dirName) {
       if (existsSync(this.paths.projectDir(id))) {
@@ -260,31 +299,40 @@ export class LeucoProjectStore {
       renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
     }
 
+    const currentVersion = json.version ?? 1
+
+    if (currentVersion >= CURRENT_SCHEMA_VERSION) {
+      return [projectSchema.parse(json)]
+    }
+
+    // --- v1 → v2: flatten agents[] into project ---
+
     const agents = json.agents ?? []
     if (agents.length === 0) {
-      return [this.writeV2Project(id, json, null)]
+      return [this.buildV2Project(id, json, null)]
     }
 
     if (agents.length === 1) {
-      return [this.writeV2Project(id, json, agents[0]!)]
+      return [this.buildV2Project(id, json, agents[0]!)]
     }
 
-    // Multi-agent: first agent stays in the original project dir, rest get new project dirs.
     const results: Project[] = []
-    results.push(this.writeV2Project(id, json, agents[0]!))
+    results.push(this.buildV2Project(id, json, agents[0]!))
 
     for (let i = 1; i < agents.length; i++) {
       const agent = agents[i]!
       const newId = crypto.randomUUID()
-      const newName = typeof agent.name === "string" ? `${json.name}-${agent.name}` : json.name
       const newDir = this.paths.projectDir(newId)
       mkdirSync(newDir, { recursive: true })
-
-      const newJson = { ...json, id: newId, name: newName, agents: undefined }
-      results.push(this.writeV2Project(newId, newJson, agent))
+      const newJson = {
+        ...json,
+        id: newId,
+        name: `${json.name}-${agent.name ?? i}`,
+        agents: undefined,
+      }
+      results.push(this.buildV2Project(newId, newJson, agent))
     }
 
-    // Clean up empty agents/ dir if all homes have been moved.
     const legacyAgentsRoot = this.paths.legacyAgentsRoot(id)
     if (existsSync(legacyAgentsRoot)) {
       try {
@@ -298,10 +346,10 @@ export class LeucoProjectStore {
   }
 
   /**
-   * Write a single v2 project from a v1 JSON + one optional agent.
+   * Build a single v2 Project from a v1 JSON + one optional agent.
    * Migrates agent's `.codex/` or `home/` into `projects/<id>/.codex/`.
    */
-  private writeV2Project(
+  private buildV2Project(
     projectId: string,
     baseJson: Record<string, unknown>,
     agent: Record<string, unknown> | null,
@@ -322,13 +370,10 @@ export class LeucoProjectStore {
       if (agent.mcpServers !== undefined) flat.mcpServers = agent.mcpServers
     }
 
-    // Delete the flattened agents key completely.
     delete flat.agents
 
     const parsed = projectSchema.parse(flat)
-    atomicWriteJson({ path: this.paths.projectSettingsPath(projectId), data: parsed, mode: 0o600 })
 
-    // Migrate the agent's CODEX_HOME to project level.
     if (agent !== null && typeof agent.name === "string") {
       this.migrateAgentHome(projectId, agent.name)
       this.migrateAgentState(projectId, agent.name)
@@ -337,7 +382,6 @@ export class LeucoProjectStore {
     return parsed
   }
 
-  /** Move `agents/<name>/.codex/` or `agents/<name>/home/` → `projects/<id>/.codex/`. */
   private migrateAgentHome(projectId: string, agentName: string): void {
     const target = this.paths.projectHome(projectId)
     if (existsSync(target)) return
@@ -354,7 +398,6 @@ export class LeucoProjectStore {
     }
   }
 
-  /** Move `agents/<name>/state.json` → `projects/<id>/state.json`. */
   private migrateAgentState(projectId: string, agentName: string): void {
     const target = this.paths.projectStatePath(projectId)
     if (existsSync(target)) return

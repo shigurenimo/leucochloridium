@@ -16,6 +16,8 @@ export const configGetHandler = factory.createHandlers(async (c) => {
 
   const key = body.args[0]
   if (!key) throw new HTTPException(400, { message: "usage: leuco config get <key>" })
+  if (key === "projects")
+    throw new HTTPException(400, { message: "use `leuco projects` to list projects" })
 
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()

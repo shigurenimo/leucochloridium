@@ -127,11 +127,11 @@ export class LeucoEngine {
       return
     }
 
-    const targetByKey = new Map<string, { project: Project; pluginSig: string }>()
+    const targetById = new Map<string, { project: Project; pluginSig: string }>()
     for (const project of projects) {
       if (!project.enabled) continue
       const sig = enabledChannelSignature(project)
-      targetByKey.set(project.name, { project, pluginSig: sig })
+      targetById.set(project.id, { project, pluginSig: sig })
     }
 
     const removed: string[] = []
@@ -139,7 +139,7 @@ export class LeucoEngine {
     const keep: LeucoTenant[] = []
 
     for (const tenant of this.tenants) {
-      const target = targetByKey.get(tenant.key)
+      const target = targetById.get(tenant.projectId)
       if (target === undefined) {
         this.log(`[leuco] reconcile: stopping ${tenant.key}`)
         await this.safeStop(tenant)
@@ -148,38 +148,40 @@ export class LeucoEngine {
       }
 
       const currentSig = tenant.listPlugins().slice().sort().join(",")
-      if (currentSig === target.pluginSig) {
+      const nameChanged = tenant.key !== target.project.name
+      if (currentSig === target.pluginSig && !nameChanged) {
         keep.push(tenant)
         continue
       }
 
-      this.log(
-        `[leuco] reconcile: channel set changed for ${tenant.key} (was [${currentSig}] now [${target.pluginSig}]); rebuilding`,
-      )
+      const reason = nameChanged
+        ? `renamed ${tenant.key} → ${target.project.name}`
+        : `channel set changed (was [${currentSig}] now [${target.pluginSig}])`
+      this.log(`[leuco] reconcile: ${reason}; rebuilding`)
       await this.safeStop(tenant)
 
-      const rebuilt = await this.tryBuildAndStart(target.project, tenant.key)
+      const rebuilt = await this.tryBuildAndStart(target.project, target.project.name)
       if (rebuilt === null) {
         removed.push(tenant.key)
         continue
       }
       keep.push(rebuilt)
-      added.push(`${tenant.key} (rebuilt)`)
+      added.push(`${target.project.name} (rebuilt)`)
     }
     this.tenants = keep
 
-    const runningKeys = new Set(this.tenants.map((t) => t.key))
-    for (const entry of targetByKey) {
-      const key = entry[0]
+    const runningIds = new Set(this.tenants.map((t) => t.projectId))
+    for (const entry of targetById) {
+      const id = entry[0]
       const target = entry[1]
-      if (runningKeys.has(key)) continue
+      if (runningIds.has(id)) continue
 
-      this.log(`[leuco] reconcile: starting ${key}`)
-      const started = await this.tryBuildAndStart(target.project, key)
+      this.log(`[leuco] reconcile: starting ${target.project.name}`)
+      const started = await this.tryBuildAndStart(target.project, target.project.name)
       if (started === null) continue
 
       this.tenants.push(started)
-      added.push(key)
+      added.push(target.project.name)
     }
 
     this.bus.emit({ ts: Date.now(), type: "engine.reconcile", added, removed })
@@ -224,12 +226,12 @@ export class LeucoEngine {
       return []
     }
 
-    const runningKeys = new Set(this.tenants.map((t) => t.key))
+    const runningIds = new Set(this.tenants.map((t) => t.projectId))
     return projects.map((project) => ({
       name: project.name,
       path: project.path,
       enabled: project.enabled,
-      tenantRunning: runningKeys.has(project.name),
+      tenantRunning: runningIds.has(project.id),
     }))
   }
 

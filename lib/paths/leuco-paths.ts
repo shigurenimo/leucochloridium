@@ -6,26 +6,20 @@ type Props = {
 }
 
 /**
- * Single source of truth for every path under `~/.leuco/`. The directory tree
- * mirrors the URL tree the CLI walks (`projects/<id>/...`); a project's full
- * state — including its channels, channel tokens, and codex home — lives in
- * `<projectDir>/settings.json` (chmod 600) + `<projectDir>/.codex/`, so adding
- * a bot involves one write rather than two. Cross-project (machine-wide)
- * settings live in `~/.leuco/settings.json`; per-project settings live in
- * `~/.leuco/projects/<id>/settings.json`.
+ * Single source of truth for every path under `~/.leuco/`.
  *
- * Project directories are keyed by UUID (`Project.id`) rather than `name`, so
- * the on-disk layout never moves when a user renames a project and same-name
- * projects pointing at different repos can coexist.
+ * All project registrations (including per-channel Slack tokens) live in the
+ * unified `~/.leuco/settings.json` (chmod 600). Per-project runtime state
+ * and codex home stay in UUID-keyed directories so renames are free and
+ * same-name projects can coexist.
  *
  *   ~/.leuco/
- *   ├── settings.json                                ← global settings
+ *   ├── settings.json           ← global config + projects array (chmod 600)
  *   ├── daemon/{pid,log}
  *   └── projects/
  *       └── <projectId>/
- *           ├── settings.json                        ← project config + secrets
- *           ├── state.json                           ← runtime state (codexThreadId)
- *           └── .codex/                              ← CODEX_HOME
+ *           ├── state.json      ← runtime state (codexThreadId)
+ *           └── .codex/         ← CODEX_HOME
  */
 export class LeucoPaths {
   private readonly home: string
@@ -76,6 +70,7 @@ export class LeucoPaths {
     return join(this.projectsRoot(), projectId)
   }
 
+  /** @deprecated Used only by migration from per-project settings.json. */
   projectSettingsPath(projectId: string): string {
     return join(this.projectDir(projectId), "settings.json")
   }

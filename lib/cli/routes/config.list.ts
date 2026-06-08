@@ -25,5 +25,8 @@ export const configListHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(500, { message: `failed to load settings: ${settings.message}` })
   }
 
-  return c.text(renderYaml(settings))
+  const scalarSettings = Object.fromEntries(
+    Object.entries(settings).filter((entry) => entry[0] !== "projects"),
+  )
+  return c.text(renderYaml(scalarSettings))
 })

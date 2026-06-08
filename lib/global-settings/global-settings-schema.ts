@@ -1,11 +1,13 @@
 import { z } from "zod"
+import { projectSchema } from "@/config/config-schema"
 
 /**
  * Machine-wide leuco settings that live in `~/.leuco/settings.json`.
+ * The `projects` array holds every registered project — including
+ * per-channel secrets (Slack tokens), so the file is chmod 600.
  *
- * Per-project settings live in `~/.leuco/projects/<p>/settings.json` and are
- * unrelated. Keep this surface small and explicitly typed so `leuco config
- * set` can coerce CLI strings against it without surprises.
+ * `leuco config set/get` operates only on the scalar keys (keepAwake
+ * etc.); the projects array is managed exclusively by LeucoProjectStore.
  */
 export const globalSettingsSchema = z
   .object({
@@ -16,8 +18,9 @@ export const globalSettingsSchema = z
      * Ignored on non-darwin.
      */
     keepAwake: z.boolean().default(true),
+    projects: z.array(projectSchema).default([]),
   })
-  .default({ keepAwake: true })
+  .default({ keepAwake: true, projects: [] })
 
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>
 

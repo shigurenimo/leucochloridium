@@ -42,6 +42,7 @@ export class LeucoGlobalSettingsStore {
       return atomicWriteJson({
         path: this.paths.settingsPath(),
         data: settings,
+        mode: 0o600,
       })
     } catch (err) {
       if (err instanceof Error) return err
@@ -50,6 +51,10 @@ export class LeucoGlobalSettingsStore {
   }
 
   set(key: string, rawValue: string): GlobalSettings | Error {
+    if (key === "projects") {
+      return new Error("use `leuco projects` to manage projects")
+    }
+
     const current = this.load()
     if (current instanceof Error) return current
 

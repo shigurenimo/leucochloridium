@@ -34,5 +34,7 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
 
   store.save({ ...project, name: newName })
 
-  return c.text(`renamed project "${oldName}" to "${newName}"`)
+  const reload = c.var.daemon.reload()
+  const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
+  return c.text(`renamed project "${oldName}" to "${newName}" ${reloadMsg}`)
 })

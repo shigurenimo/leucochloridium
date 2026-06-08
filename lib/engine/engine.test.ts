@@ -15,9 +15,16 @@ const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort =>
   ...overrides,
 })
 
-const buildTenant = (projectName: string, codex: CodexClientPort = fakeCodex()) =>
+const idFromName = (name: string): string =>
+  `00000000-0000-4000-8000-${name.padStart(12, "0").slice(0, 12)}`
+
+const buildTenant = (
+  projectName: string,
+  codex: CodexClientPort = fakeCodex(),
+  projectId?: string,
+) =>
   new LeucoTenant({
-    projectId: `00000000-0000-4000-8000-${projectName.padStart(12, "0").slice(0, 12)}`,
+    projectId: projectId ?? idFromName(projectName),
     projectName,
     projectPath: `/tmp/${projectName}`,
     codex,
@@ -260,6 +267,42 @@ describe("LeucoEngine.reconcile", () => {
 
     expect(starts).toEqual(["demo"])
     expect(buildCalls).toBe(1)
+  })
+
+  it("rebuilds tenant when the project is renamed", async () => {
+    const stops: string[] = []
+    const starts: string[] = []
+    const old = buildTenant(
+      "demo",
+      fakeCodex({
+        stop: async () => {
+          stops.push("demo")
+        },
+      }),
+    )
+
+    const renamedProject = { ...makeProject("demo", true), name: "renamed" }
+    const rebuilt = buildTenant(
+      "renamed",
+      fakeCodex({
+        start: async () => {
+          starts.push("renamed")
+        },
+      }),
+      idFromName("demo"),
+    )
+
+    const engine = new LeucoEngine({
+      tenants: [old],
+      projectStore: fakeStore([renamedProject]),
+      buildTenant: () => rebuilt,
+      onLog: () => {},
+    })
+
+    await engine.reconcile()
+    expect(stops).toEqual(["demo"])
+    expect(starts).toEqual(["renamed"])
+    expect(engine.listProjects()[0]?.tenantRunning).toBe(true)
   })
 
   it("keeps tenants that are still enabled and present", async () => {
