@@ -4,12 +4,24 @@ import { existsSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 
-const help = `leuco logs / print the daemon log file
+const help = `leuco logs / print the daemon diagnostic log
 
 usage / leuco logs [-f|--follow]
 
 options:
-  -f, --follow / tail -F the log`
+  -f, --follow / tail -F the log (streams until Ctrl-C)
+
+This is the daemon's plain-text diagnostic stream (startup, shutdown, errors).
+It does NOT contain structured events. For structured events, use:
+  leuco events                     last 20 events
+  leuco events --preset errors     turn errors + reconcile failures
+
+examples:
+  leuco logs
+  leuco logs -f
+  leuco logs -f | grep -i error
+
+see also: leuco events, leuco status`
 
 export const logsHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

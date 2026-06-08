@@ -5,20 +5,60 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
-const help = `leuco events / query daemon event log
+const PRESETS: Record<string, { types: string[]; description: string }> = {
+  turns: {
+    types: ["turn.start", "turn.complete", "turn.error"],
+    description: "codex turn lifecycle (start / complete / error)",
+  },
+  errors: {
+    types: ["turn.error", "engine.reconcile.failed"],
+    description: "turn errors and reconcile failures",
+  },
+  lifecycle: {
+    types: ["tenant.started", "tenant.stopped", "engine.reconcile"],
+    description: "tenant start/stop and engine reconcile",
+  },
+  schedule: {
+    types: ["schedule.fired"],
+    description: "cron and one-shot schedule firings",
+  },
+}
 
-usage / leuco events [--type <type>] [--project <name>] [--limit <N>] [--json]
+const presetList = Object.entries(PRESETS)
+  .map(([name, preset]) => `  ${name.padEnd(12)} ${preset.description}`)
+  .join("\n")
+
+const help = `leuco events / query the daemon structured event log
+
+usage / leuco events [--preset <name>] [--type <type>] [--project <name>]
+                     [--limit <N>] [--json]
 
 options:
+  --preset <name>   run a named preset (see below)
   --type <type>     filter by event type (e.g. turn.complete, log)
   --project <name>  filter by project name
   --limit <N>       number of entries (default: 20, newest first)
   --json            output raw JSON lines instead of formatted text
 
+presets (--preset <name>):
+${presetList}
+
 event types:
   log  tenant.started  tenant.stopped  engine.reconcile
   engine.reconcile.failed  slack.event  turn.start  turn.complete
-  turn.error  codex.notification  schedule.fired`
+  turn.error  codex.notification  schedule.fired
+
+output / one line per event, newest first. --json outputs raw JSON objects.
+
+examples:
+  leuco events                              last 20 events
+  leuco events --preset turns               recent codex turns
+  leuco events --preset errors              turn errors + reconcile failures
+  leuco events --preset errors --json       same, as JSON (pipe to jq)
+  leuco events --type turn.complete         filter by specific type
+  leuco events --project myapp --limit 50   project-scoped, more rows
+
+see also: leuco status, leuco logs -f`
 
 const formatEvent = (event: LeucoEvent): string => {
   const date = new Date(event.ts)
@@ -48,11 +88,23 @@ const formatEvent = (event: LeucoEvent): string => {
     return `${time}  engine.reconcile     added=[${event.added.join(",")}] removed=[${event.removed.join(",")}]`
   }
 
+  if (event.type === "engine.reconcile.failed") {
+    return `${time}  engine.reconcile.failed  ${event.reason}`
+  }
+
   if (event.type === "schedule.fired") {
     return `${time}  schedule.fired       ${event.project}  ${event.entryName}  ${event.kind}`
   }
 
-  return `${time}  ${event.type}`
+  if (event.type === "codex.notification") {
+    return `${time}  codex.notification   ${event.project}  ${event.method}`
+  }
+
+  if (event.type === "slack.event") {
+    return `${time}  slack.event          ${event.project}  ${event.channel}`
+  }
+
+  return `${time}  unknown`
 }
 
 export const eventsHandler = factory.createHandlers(async (c) => {
@@ -74,28 +126,47 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   })
 
   const limit = typeof body.flags.limit === "string" ? Math.max(1, Number(body.flags.limit)) : 20
-  const typeFilter = typeof body.flags.type === "string" ? body.flags.type : undefined
   const projectFilter = typeof body.flags.project === "string" ? body.flags.project : undefined
   const asJson = flagBool(body.flags.json)
 
-  const entries = sink.query({
-    type: typeFilter,
-    where: projectFilter ? { project: projectFilter } : undefined,
-    limit,
-    order: "desc",
-  })
+  const presetName = typeof body.flags.preset === "string" ? body.flags.preset : null
+  const typeFlag = typeof body.flags.type === "string" ? body.flags.type : null
+
+  if (presetName !== null && !(presetName in PRESETS)) {
+    throw new HTTPException(400, { message: `unknown preset: ${presetName}\n\navailable: ${Object.keys(PRESETS).join(", ")}` })
+  }
+
+  const presetTypes = presetName !== null ? PRESETS[presetName]!.types : null
+  const filterTypes = typeFlag !== null ? [typeFlag] : presetTypes
+
+  const allEntries = filterTypes !== null
+    ? filterTypes.flatMap((type) =>
+        sink.query({
+          type,
+          where: projectFilter ? { project: projectFilter } : undefined,
+          limit,
+          order: "desc",
+        }),
+      )
+    : sink.query({
+        where: projectFilter ? { project: projectFilter } : undefined,
+        limit,
+        order: "desc",
+      })
 
   sink.close()
 
-  if (entries.length === 0) {
+  const sorted = allEntries.sort((a, b) => b.seq - a.seq).slice(0, limit)
+
+  if (sorted.length === 0) {
     return c.text("no events")
   }
 
   if (asJson) {
-    const lines = entries.map((entry) => JSON.stringify(entry.event))
+    const lines = sorted.map((entry) => JSON.stringify(entry.event))
     return c.text(lines.join("\n"))
   }
 
-  const lines = entries.map((entry) => formatEvent(entry.event))
+  const lines = sorted.map((entry) => formatEvent(entry.event))
   return c.text(lines.join("\n"))
 })

@@ -22,7 +22,7 @@ lib/
 ├── config/               projects/channels の zod schemas
 ├── projects/             プロジェクトレジストリ + scaffolder
 ├── daemon/leuco-daemon.ts  pid/log/spawn supervisor（1 マシン 1 daemon）
-├── events/               typed event bus + events.jsonl writer
+├── events/               typed event bus (FunnelLogSqliteSink → events.db)
 ├── gateway/              IPC 用 HTTP gateway + `/mcp/:project` streamable HTTP MCP
 ├── mcp/build-mcp-server  Server 組み立て（stdio/HTTP 共通）+ start-mcp-server stdio 後方互換
 ├── paths/leuco-paths.ts  ~/.leuco/* のパスは全てここ。inline 禁止
@@ -32,7 +32,7 @@ lib/
 
 ## リクエストの流れ
 
-Slack message → `slack-listener` → `slack-event-processor` → `LeucoTenant` → `LeucoCodexClient`（codex stdio、JSON-RPC）→ tool 呼び出しは codex が daemon の `/mcp/:project` を streamable HTTP で叩く → 応答は `slack-adapter` で post。並行して `LeucoEventBus` が `events.jsonl` に書き、TUI は `useEvents` で同じログを tail する。MCP は 1 daemon = 1 gateway = N テナントを path で振り分ける構成で、bearer token を daemon 起動毎に発行し、各 codex 子の `LEUCO_MCP_TOKEN` env に注入する。
+Slack message → `slack-listener` → `slack-event-processor` → `LeucoTenant` → `LeucoCodexClient`（codex stdio、JSON-RPC）→ tool 呼び出しは codex が daemon の `/mcp/:project` を streamable HTTP で叩く → 応答は `slack-adapter` で post。並行して `LeucoEventBus` が SQLite（`events.db`）に書き、TUI は `useEvents` で同じログを tail する。MCP は 1 daemon = 1 gateway = N テナントを path で振り分ける構成で、bearer token を daemon 起動毎に発行し、各 codex 子の `LEUCO_MCP_TOKEN` env に注入する。
 
 ## 合成ルート
 

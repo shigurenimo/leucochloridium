@@ -44,6 +44,7 @@ leuco stop                stop daemon
 leuco restart             stop + start
 leuco status              daemon + project state
 leuco logs [-f]           print daemon log (-f to follow)
+leuco events              query event log (--type, --project, --limit, --json)
 leuco update [--check]    install latest version
 ```
 
@@ -130,7 +131,7 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
   daemon/
     pid
     log
-    events.jsonl                         newline-delimited LeucoEvent stream
+    events.db                            SQLite event log (WAL mode)
   projects/
     <uuid>/
       .codex/                            CODEX_HOME for this tenant
@@ -157,20 +158,28 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 process env wins over the files.
 
 Per-channel Slack tokens (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) are stored in
-`~/.leuco/projects/<id>/settings.json` and are entered via
+`~/.leuco/settings.json` and are entered via
 `leuco projects <p> channels add slack` -- no env vars required at runtime.
 
 ## Event log
 
-The daemon writes a newline-delimited JSON stream to
-`~/.leuco/daemon/events.jsonl`. Any consumer can tail this file directly.
+The daemon persists structured events to `~/.leuco/daemon/events.db` (SQLite,
+WAL mode). Query with:
+
+```bash
+leuco events                              # latest 20 events
+leuco events --type turn.complete         # filter by type
+leuco events --project myapp --limit 50   # filter by project
+leuco events --json                       # raw JSON lines
+```
 
 `leuco logs -f` tails the daemon diagnostic log (`~/.leuco/daemon/log`), not
-the event stream.
+the event log.
 
 Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
-`slack.event`, `turn.start`, `turn.complete`, `turn.error`,
-`codex.notification`, `log`. See `lib/events/leuco-event-types.ts`.
+`engine.reconcile.failed`, `slack.event`, `turn.start`, `turn.complete`,
+`turn.error`, `codex.notification`, `schedule.fired`, `log`.
+See `lib/events/leuco-event-schema.ts`.
 
 ## Library usage
 
@@ -178,10 +187,7 @@ Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
 import { LeucoRuntime } from "leuco"
 
 const runtime = LeucoRuntime.build({ env: process.env })
-if (runtime instanceof Error) throw runtime
-
-const start = await runtime.start()
-if (start instanceof Error) throw start
+await runtime.start()
 ```
 
 Lower-level building blocks (`LeucoEngine`, `LeucoTenant`,
