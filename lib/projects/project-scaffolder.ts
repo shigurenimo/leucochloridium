@@ -95,7 +95,12 @@ const registerInStore = (
     id: crypto.randomUUID(),
     name: createProps.name,
     path: target,
-    agents: [],
+    version: 2,
+    enabled: true,
+    useCommonInstructions: true,
+    prompts: ["friendly"],
+    channels: [],
+    mcpServers: {},
   }
   const saved = store.save(project)
 

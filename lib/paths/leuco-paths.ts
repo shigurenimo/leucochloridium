@@ -7,11 +7,11 @@ type Props = {
 
 /**
  * Single source of truth for every path under `~/.leuco/`. The directory tree
- * mirrors the URL tree the CLI walks (`projects/<id>/agents/<a>/...`); a
- * project's full state — including its agents, channels, and channel tokens —
- * lives in `<projectDir>/settings.json` (chmod 600), so adding a bot involves
- * one write rather than two. Cross-project (machine-wide) settings live in
- * `~/.leuco/settings.json`; per-project settings live in
+ * mirrors the URL tree the CLI walks (`projects/<id>/...`); a project's full
+ * state — including its channels, channel tokens, and codex home — lives in
+ * `<projectDir>/settings.json` (chmod 600) + `<projectDir>/.codex/`, so adding
+ * a bot involves one write rather than two. Cross-project (machine-wide)
+ * settings live in `~/.leuco/settings.json`; per-project settings live in
  * `~/.leuco/projects/<id>/settings.json`.
  *
  * Project directories are keyed by UUID (`Project.id`) rather than `name`, so
@@ -24,9 +24,8 @@ type Props = {
  *   └── projects/
  *       └── <projectId>/
  *           ├── settings.json                        ← project config + secrets
- *           └── agents/
- *               └── <agentName>/
- *                   └── .codex/                      ← CODEX_HOME
+ *           ├── state.json                           ← runtime state (codexThreadId)
+ *           └── .codex/                              ← CODEX_HOME
  */
 export class LeucoPaths {
   private readonly home: string
@@ -81,32 +80,34 @@ export class LeucoPaths {
     return join(this.projectDir(projectId), "settings.json")
   }
 
-  agentsRoot(projectId: string): string {
+  /** CODEX_HOME for the project's single tenant. */
+  projectHome(projectId: string): string {
+    return join(this.projectDir(projectId), ".codex")
+  }
+
+  /** Mutable per-project runtime state (codex thread id, schedule lastFiredAt). */
+  projectStatePath(projectId: string): string {
+    return join(this.projectDir(projectId), "state.json")
+  }
+
+  /** @deprecated Pre-0.9 agents root. Used only by migration. */
+  legacyAgentsRoot(projectId: string): string {
     return join(this.projectDir(projectId), "agents")
   }
 
-  agentDir(projectId: string, agentName: string): string {
-    return join(this.agentsRoot(projectId), agentName)
-  }
-
-  /** CODEX_HOME for one tenant. */
-  agentHome(projectId: string, agentName: string): string {
-    return join(this.agentDir(projectId, agentName), ".codex")
-  }
-
-  /** @deprecated Pre-0.9 path. Used only by the auto-migration in runtime. */
+  /** @deprecated Pre-0.9 agent home (home/ variant). Used only by migration. */
   legacyAgentHome(projectId: string, agentName: string): string {
-    return join(this.agentDir(projectId, agentName), "home")
+    return join(this.legacyAgentsRoot(projectId), agentName, "home")
   }
 
-  /**
-   * Mutable per-agent runtime state (codex thread id, future per-entry
-   * lastFiredAt, etc). Kept out of `settings.json` so the settings file
-   * remains an idempotent, human-editable config surface — the daemon
-   * writes here on every persisted thread without touching settings.
-   */
-  agentStatePath(projectId: string, agentName: string): string {
-    return join(this.agentDir(projectId, agentName), "state.json")
+  /** @deprecated Pre-0.9 agent home (.codex/ variant). Used only by migration. */
+  legacyAgentCodex(projectId: string, agentName: string): string {
+    return join(this.legacyAgentsRoot(projectId), agentName, ".codex")
+  }
+
+  /** @deprecated Pre-0.9 agent state. Used only by migration. */
+  legacyAgentStatePath(projectId: string, agentName: string): string {
+    return join(this.legacyAgentsRoot(projectId), agentName, "state.json")
   }
 
   /** macOS LaunchAgents directory under the user's Library. */
@@ -120,8 +121,8 @@ export class LeucoPaths {
   }
 
   /**
-   * The shared codex login lives at `~/.codex/auth.json`. Per-tenant
-   * `CODEX_HOME` directories symlink to it so tenants share auth without
+   * The shared codex login lives at `~/.codex/auth.json`. Per-project
+   * `CODEX_HOME` directories symlink to it so projects share auth without
    * paying for a separate `codex login`. Routed through `LeucoPaths` so a
    * test-injected `home` overrides it the same way it overrides everything
    * else under `.leuco/`.

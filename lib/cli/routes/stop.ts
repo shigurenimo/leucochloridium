@@ -1,9 +1,9 @@
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 
-const help = `leuco stop — stop the running daemon
+const help = `leuco stop / stop the running daemon
 
-usage: leuco stop
+usage / leuco stop
 
 Sends SIGTERM to the daemon (if alive) and clears the pid file.`
 
@@ -14,12 +14,12 @@ export const stopHandler = factory.createHandlers(async (c) => {
   const result = c.var.daemon.stop()
 
   if (result.stopped) {
-    return c.text(`stopped (pid ${result.pid})`)
+    return c.text(`leuco: stopped (pid ${result.pid})`)
   }
 
   if (result.pid !== null) {
-    return c.text(`pid ${result.pid} was not alive; cleared pid file`)
+    return c.text(`leuco: pid ${result.pid} was not alive; cleared pid file`)
   }
 
-  return c.text("not running")
+  return c.text("leuco: not running")
 })

@@ -4,16 +4,13 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-const help = `leuco boot install — install the macOS LaunchAgent
+const help = `leuco boot install / install the macOS LaunchAgent
 
-usage: leuco boot install
+usage / leuco boot install
 
 Writes ~/Library/LaunchAgents/io.leuco.daemon.plist and loads it via
-\`launchctl bootstrap\`. Re-running is idempotent; the existing agent is
-booted out and replaced with the latest paths / env.
-
-The plist captures PATH and any LEUCO_* env vars from the current shell
-so the daemon resolves codex and other binaries at boot.`
+\`launchctl bootstrap\`. Re-running is idempotent. The plist captures PATH
+and LEUCO_* env vars from the current shell.`
 
 export const bootInstallHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -38,15 +35,7 @@ export const bootInstallHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(500, { message: result.message })
   }
 
-  return c.text(
-    [
-      `[leuco] installed ${result.label}`,
-      `        plist: ${result.plistPath}`,
-      "",
-      "the daemon will start at the next login.",
-      "run `leuco status` to confirm it's running, or log out and back in.",
-    ].join("\n"),
-  )
+  return c.text(`leuco boot: installed "${result.label}"\nplist: ${result.plistPath}`)
 })
 
 const pickEnvVars = (env: NodeJS.ProcessEnv): Record<string, string> => {

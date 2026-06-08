@@ -1,41 +1,33 @@
 import type { LeucoDaemon } from "@/daemon/leuco-daemon"
+import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-export type StatusLines = {
-  lines: string[]
+export type StatusResult = {
+  text: string
   isRunning: boolean
 }
 
-/**
- * Build the multiline status output shared by `leuco status` and bare `leuco`.
- * Clears a stale pid file as a side-effect when one is found.
- */
-export const formatStatus = (daemon: LeucoDaemon): StatusLines => {
+export const formatStatus = (daemon: LeucoDaemon): StatusResult => {
   const status = daemon.status()
-  const lines: string[] = []
 
-  if (status.isRunning) {
-    lines.push(`running (pid ${status.pid})`)
-  } else if (status.pid !== null) {
+  if (!status.isRunning && status.pid !== null) {
     daemon.clearStalePid()
-    lines.push(`not running (stale pid file: ${status.pid}, cleared)`)
-  } else {
-    lines.push("not running")
   }
-  lines.push(`  log: ${status.logPath}`)
 
   const store = new LeucoProjectStore()
   const projects = store.list()
-  if (projects.length === 0) {
-    lines.push("", "projects: (none registered)")
-  } else {
-    lines.push("", "projects:")
-    for (const project of projects) {
-      const enabledAgents = project.agents.filter((a) => a.enabled).length
-      const totalAgents = project.agents.length
-      lines.push(`  ${project.name}\tagents=${enabledAgents}/${totalAgents}\t${project.path}`)
-    }
+
+  const report = {
+    running: status.isRunning,
+    ...(status.isRunning ? { pid: status.pid } : {}),
+    log: status.logPath,
+    projects: projects.map((p) => ({
+      name: p.name,
+      enabled: p.enabled,
+      channels: p.channels.filter((c) => c.enabled).length,
+      path: p.path,
+    })),
   }
 
-  return { lines, isRunning: status.isRunning }
+  return { text: renderYaml(report), isRunning: status.isRunning }
 }

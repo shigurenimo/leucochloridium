@@ -31,8 +31,8 @@ if (args[0] === "--version" || args[0] === "-v") {
 }
 
 // stdio MCP entry. Spawned by codex via `[mcp_servers.leuco]` in each tenant's
-// CODEX_HOME config.toml; takes the (project, agent) pair from flags so the
-// server is locked to that tenant's Slack tokens.
+// CODEX_HOME config.toml; takes the project from flags so the server is locked
+// to that project's Slack tokens.
 if (args[0] === "mcp") {
   const flag = (name: string): string | null => {
     const idx = args.indexOf(`--${name}`)
@@ -41,13 +41,11 @@ if (args[0] === "mcp") {
     return typeof value === "string" ? value : null
   }
   const projectName = flag("project")
-  const agentName = flag("agent")
-  if (!projectName || !agentName) {
-    process.stderr.write("usage: leuco mcp --project <name> --agent <name>\n")
+  if (!projectName) {
+    process.stderr.write("usage: leuco mcp --project <name>\n")
     process.exit(2)
   }
-  await startMcpServer({ projectName, agentName })
-  // server keeps the process alive via stdio
+  await startMcpServer({ projectName })
   await new Promise<void>(() => {})
 }
 

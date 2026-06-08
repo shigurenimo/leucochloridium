@@ -7,38 +7,30 @@ import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
 import { configGetHandler } from "@/cli/routes/config.get"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
-import { help as groupHelp } from "@/cli/routes/group.help"
 import { logsHandler } from "@/cli/routes/logs"
 import { projectsAddHandler } from "@/cli/routes/projects.add"
 import { projectsCreateHandler } from "@/cli/routes/projects.create"
 import { projectsListHandler } from "@/cli/routes/projects.list"
-import { agentsAddHandler } from "@/cli/routes/projects.$project.agents.add"
-import { agentsListHandler } from "@/cli/routes/projects.$project.agents.list"
-import { help as agentsNamedHelp } from "@/cli/routes/projects.$project.agents.$agent.help"
-import { channelsAddHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.add"
-import { channelsListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.list"
-import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.help"
-import { channelsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.remove"
-import { agentsMoveToHandler } from "@/cli/routes/projects.$project.agents.$agent.move-to"
-import { agentsRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.remove"
-import { agentsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.rename"
-import { agentsResetHandler } from "@/cli/routes/projects.$project.agents.$agent.reset"
-import { agentsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.restart"
-import { agentsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.start"
-import { agentsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.stop"
-import { channelsRenameHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.rename"
-import { channelsRestartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.restart"
-import { schedulesAddHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.add"
-import { schedulesListHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.list"
-import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.remove"
-import { channelsSetTokensHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.set-tokens"
-import { channelsStartHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.start"
-import { channelsStopHandler } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.stop"
+import { channelsAddHandler } from "@/cli/routes/projects.$project.channels.add"
+import { channelsListHandler } from "@/cli/routes/projects.$project.channels.list"
+import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.channels.$channel.help"
+import { channelsRemoveHandler } from "@/cli/routes/projects.$project.channels.$channel.remove"
+import { channelsRenameHandler } from "@/cli/routes/projects.$project.channels.$channel.rename"
+import { channelsRestartHandler } from "@/cli/routes/projects.$project.channels.$channel.restart"
+import { channelsSetTokensHandler } from "@/cli/routes/projects.$project.channels.$channel.set-tokens"
+import { channelsStartHandler } from "@/cli/routes/projects.$project.channels.$channel.start"
+import { channelsStopHandler } from "@/cli/routes/projects.$project.channels.$channel.stop"
+import { schedulesAddHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.add"
+import { schedulesListHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.list"
+import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.remove"
 import { help as projectsNamedHelp } from "@/cli/routes/projects.$project.help"
-import { projectsMergeIntoHandler } from "@/cli/routes/projects.$project.merge-into"
 import { projectsRelocateHandler } from "@/cli/routes/projects.$project.relocate"
 import { projectsRemoveHandler } from "@/cli/routes/projects.$project.remove"
 import { projectsRenameHandler } from "@/cli/routes/projects.$project.rename"
+import { projectsRestartHandler } from "@/cli/routes/projects.$project.restart"
+import { projectsResetHandler } from "@/cli/routes/projects.$project.reset"
+import { projectsStartHandler } from "@/cli/routes/projects.$project.start"
+import { projectsStopHandler } from "@/cli/routes/projects.$project.stop"
 import { restartHandler } from "@/cli/routes/restart"
 import { rootHandler } from "@/cli/routes/root"
 import { runHandler } from "@/cli/routes/run"
@@ -62,7 +54,7 @@ base.onError((error, c) => {
 
 base.notFound((c) => {
   const cmd = c.req.path.replace(/^\//, "").replace(/\//g, " ")
-  return c.text(`unknown command: ${cmd}\n\n${groupHelp}`, 404)
+  return c.text(`unknown command: ${cmd}\n\nrun \`leuco --help\` for available commands`, 404)
 })
 
 /**
@@ -84,7 +76,7 @@ export const app = base
   .post("/logs", ...logsHandler)
   .post("/update", ...updateHandler)
 
-  // Collection URLs (`/projects`, `/projects/:p/agents`, etc) return the list
+  // Collection URLs (`/projects`, `/projects/:p/channels`, etc) return the list
   // directly so `leuco projects` is enough to see what's registered. The
   // explicit `/list` aliases stay for backwards-compat scripts. Each leaf
   // handler honours `--help` itself so `leuco projects --help` keeps working.
@@ -96,46 +88,25 @@ export const app = base
   .post("/projects/:project/remove", ...projectsRemoveHandler)
   .post("/projects/:project/rename", ...projectsRenameHandler)
   .post("/projects/:project/relocate", ...projectsRelocateHandler)
-  .post("/projects/:project/merge-into", ...projectsMergeIntoHandler)
+  .post("/projects/:project/start", ...projectsStartHandler)
+  .post("/projects/:project/stop", ...projectsStopHandler)
+  .post("/projects/:project/restart", ...projectsRestartHandler)
+  .post("/projects/:project/reset", ...projectsResetHandler)
 
-  .post("/projects/:project/agents", ...agentsListHandler)
-  .post("/projects/:project/agents/list", ...agentsListHandler)
-  .post("/projects/:project/agents/add", ...agentsAddHandler)
-  .post("/projects/:project/agents/:agent", ...groupHelpHandler(agentsNamedHelp))
-  .post("/projects/:project/agents/:agent/remove", ...agentsRemoveHandler)
-  .post("/projects/:project/agents/:agent/rename", ...agentsRenameHandler)
-  .post("/projects/:project/agents/:agent/move-to", ...agentsMoveToHandler)
-  .post("/projects/:project/agents/:agent/start", ...agentsStartHandler)
-  .post("/projects/:project/agents/:agent/stop", ...agentsStopHandler)
-  .post("/projects/:project/agents/:agent/restart", ...agentsRestartHandler)
-  .post("/projects/:project/agents/:agent/reset", ...agentsResetHandler)
-
-  .post("/projects/:project/agents/:agent/channels", ...channelsListHandler)
-  .post("/projects/:project/agents/:agent/channels/list", ...channelsListHandler)
-  .post("/projects/:project/agents/:agent/channels/add", ...channelsAddHandler)
-  .post(
-    "/projects/:project/agents/:agent/channels/:channel",
-    ...groupHelpHandler(channelsNamedHelp),
-  )
-  .post("/projects/:project/agents/:agent/channels/:channel/remove", ...channelsRemoveHandler)
-  .post("/projects/:project/agents/:agent/channels/:channel/rename", ...channelsRenameHandler)
-  .post("/projects/:project/agents/:agent/channels/:channel/start", ...channelsStartHandler)
-  .post("/projects/:project/agents/:agent/channels/:channel/stop", ...channelsStopHandler)
-  .post("/projects/:project/agents/:agent/channels/:channel/restart", ...channelsRestartHandler)
-  .post(
-    "/projects/:project/agents/:agent/channels/:channel/set-tokens",
-    ...channelsSetTokensHandler,
-  )
-  .post("/projects/:project/agents/:agent/channels/:channel/schedules", ...schedulesListHandler)
-  .post("/projects/:project/agents/:agent/channels/:channel/schedules/add", ...schedulesAddHandler)
-  .post(
-    "/projects/:project/agents/:agent/channels/:channel/schedules/list",
-    ...schedulesListHandler,
-  )
-  .post(
-    "/projects/:project/agents/:agent/channels/:channel/schedules/remove",
-    ...schedulesRemoveHandler,
-  )
+  .post("/projects/:project/channels", ...channelsListHandler)
+  .post("/projects/:project/channels/list", ...channelsListHandler)
+  .post("/projects/:project/channels/add", ...channelsAddHandler)
+  .post("/projects/:project/channels/:channel", ...groupHelpHandler(channelsNamedHelp))
+  .post("/projects/:project/channels/:channel/remove", ...channelsRemoveHandler)
+  .post("/projects/:project/channels/:channel/rename", ...channelsRenameHandler)
+  .post("/projects/:project/channels/:channel/start", ...channelsStartHandler)
+  .post("/projects/:project/channels/:channel/stop", ...channelsStopHandler)
+  .post("/projects/:project/channels/:channel/restart", ...channelsRestartHandler)
+  .post("/projects/:project/channels/:channel/set-tokens", ...channelsSetTokensHandler)
+  .post("/projects/:project/channels/:channel/schedules", ...schedulesListHandler)
+  .post("/projects/:project/channels/:channel/schedules/add", ...schedulesAddHandler)
+  .post("/projects/:project/channels/:channel/schedules/list", ...schedulesListHandler)
+  .post("/projects/:project/channels/:channel/schedules/remove", ...schedulesRemoveHandler)
 
   .post("/slack", ...groupHelpHandler(slackHelp))
   .post("/slack/call", ...slackCallHandler)

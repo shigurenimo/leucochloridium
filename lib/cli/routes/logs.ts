@@ -4,13 +4,12 @@ import { existsSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 
-const help = `leuco logs — print the daemon log file
+const help = `leuco logs / print the daemon log file
 
-usage: leuco logs [-f|--follow]
+usage / leuco logs [-f|--follow]
 
-  -f, --follow    follow the log (tail -F)
-
-The log lives at ~/.leuco/daemon/log.`
+options:
+  -f, --follow / tail -F the log`
 
 export const logsHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

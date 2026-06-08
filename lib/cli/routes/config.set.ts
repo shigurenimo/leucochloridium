@@ -3,20 +3,16 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 
-const help = `leuco config set — write one key to ~/.leuco/settings.json
+const help = `leuco config set / write one key to ~/.leuco/settings.json
 
-usage: leuco config set <key> <value>
+usage / leuco config set <key> <value>
 
-Values are coerced to the schema's type:
-  - "true" / "false"    → boolean
-  - numeric strings     → number
-  - everything else     → string
+Values are coerced to the schema's type ("true"/"false" -> boolean, numeric -> number).
+Restart the daemon for changes that affect the spawn (e.g. keepAwake).
 
-Examples:
+examples:
   leuco config set keepAwake true
-  leuco config set keepAwake false
-
-Restart the daemon (\`leuco restart\`) for changes that affect the spawn (e.g. keepAwake).`
+  leuco config set keepAwake false`
 
 export const configSetHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

@@ -5,21 +5,16 @@ import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { LeucoProjectScaffolder, type ProjectScaffoldResult } from "@/projects/project-scaffolder"
 
-const help = `leuco projects create — scaffold a new leuco-ready repository
+const help = `leuco projects create / scaffold a new leuco-ready repository
 
-usage: leuco projects create <path> [--name <name>]
+usage / leuco projects create <path> [--name <name>]
 
-  <path>          absolute or cwd-relative path of the new repository
-  --name <name>   project identifier (default: basename of <path>); must match [a-z][a-z0-9_-]*
+options:
+  <path> / absolute or cwd-relative path of the new repository
+  --name <name> / project identifier (default: basename of <path>)
 
-Steps performed (each is idempotent):
-  - mkdir -p <path>
-  - git init in <path> (skipped if already a repo)
-  - register the project in ~/.leuco/config.json
-
-Tokens, agent personas, and channel secrets are added separately:
-  leuco projects <p> agents add <agent>
-  leuco projects <p> agents <agent> channels add slack`
+Steps: mkdir -p, git init (if not a repo), register in ~/.leuco/projects/.
+Add channels afterwards with \`leuco projects <p> channels add slack\`.`
 
 export const projectsCreateHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -43,7 +38,10 @@ export const projectsCreateHandler = factory.createHandlers(async (c) => {
 })
 
 const formatResult = (result: ProjectScaffoldResult, name: string): string => {
-  const header = result.steps.dir === "created" ? `created ${result.path}` : `ready ${result.path}`
+  const header =
+    result.steps.dir === "created"
+      ? `created "${name}" at ${result.path}`
+      : `ready "${name}" at ${result.path}`
 
   const lines = [
     header,
@@ -52,7 +50,7 @@ const formatResult = (result: ProjectScaffoldResult, name: string): string => {
     `  project   ${result.steps.project}`,
     `  config    ${result.configPath}`,
     "",
-    `next: leuco projects ${name} agents add <agent>`,
+    `next: leuco projects ${name} channels add slack`,
   ]
 
   return lines.join("\n")

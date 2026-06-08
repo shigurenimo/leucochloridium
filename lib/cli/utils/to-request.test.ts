@@ -26,31 +26,25 @@ describe("toRequest", () => {
     )
   })
 
-  it("expands /projects/<name>/agents/<leaf>", () => {
-    expect(toRequest(["projects", "leuco-debug", "agents", "list"]).path).toBe(
-      "/projects/leuco-debug/agents/list",
+  it("expands /projects/<name>/channels/<leaf>", () => {
+    expect(toRequest(["projects", "leuco-debug", "channels", "list"]).path).toBe(
+      "/projects/leuco-debug/channels/list",
     )
-    expect(toRequest(["projects", "leuco-debug", "agents", "add"]).path).toBe(
-      "/projects/leuco-debug/agents/add",
-    )
-  })
-
-  it("expands /projects/<name>/agents/<name>/<leaf>", () => {
-    expect(toRequest(["projects", "p", "agents", "reviewer", "remove"]).path).toBe(
-      "/projects/p/agents/reviewer/remove",
+    expect(toRequest(["projects", "leuco-debug", "channels", "add"]).path).toBe(
+      "/projects/leuco-debug/channels/add",
     )
   })
 
-  it("expands the full /projects/<p>/agents/<a>/channels/<leaf>", () => {
-    const r = toRequest(["projects", "p", "agents", "reviewer", "channels", "add", "slack"])
-    expect(r.path).toBe("/projects/p/agents/reviewer/channels/add")
+  it("expands /projects/<name>/channels/<name>/<leaf>", () => {
+    expect(toRequest(["projects", "p", "channels", "main", "remove"]).path).toBe(
+      "/projects/p/channels/main/remove",
+    )
+  })
+
+  it("expands the full /projects/<p>/channels/<leaf> with positional", () => {
+    const r = toRequest(["projects", "p", "channels", "add", "slack"])
+    expect(r.path).toBe("/projects/p/channels/add")
     expect(r.parsed.args).toEqual(["slack"])
-  })
-
-  it("expands the full /projects/<p>/agents/<a>/channels/<name>/<leaf>", () => {
-    const r = toRequest(["projects", "p", "agents", "reviewer", "channels", "main", "remove"])
-    expect(r.path).toBe("/projects/p/agents/reviewer/channels/main/remove")
-    expect(r.parsed.args).toEqual([])
   })
 
   it("treats `rename` as a named-leaf and trailing args as positional", () => {
@@ -59,19 +53,10 @@ describe("toRequest", () => {
     expect(r.parsed.args).toEqual(["new"])
   })
 
-  it("threads `rename` through the agents and channels levels", () => {
-    expect(toRequest(["projects", "p", "agents", "old", "rename", "new"]).path).toBe(
-      "/projects/p/agents/old/rename",
+  it("threads `rename` through the channels level", () => {
+    expect(toRequest(["projects", "p", "channels", "old", "rename", "new"]).path).toBe(
+      "/projects/p/channels/old/rename",
     )
-    expect(
-      toRequest(["projects", "p", "agents", "a", "channels", "old", "rename", "new"]).path,
-    ).toBe("/projects/p/agents/a/channels/old/rename")
-  })
-
-  it("treats `move-to` as a named-leaf with the destination as positional", () => {
-    const r = toRequest(["projects", "src", "agents", "a", "move-to", "dst"])
-    expect(r.path).toBe("/projects/src/agents/a/move-to")
-    expect(r.parsed.args).toEqual(["dst"])
   })
 
   it("treats `relocate` as a named-leaf with the new path as positional", () => {
@@ -132,22 +117,19 @@ describe("toRequest", () => {
   })
 
   it("expands schedules under a named channel", () => {
-    expect(
-      toRequest(["projects", "p", "agents", "a", "channels", "c", "schedules", "list"]).path,
-    ).toBe("/projects/p/agents/a/channels/c/schedules/list")
+    expect(toRequest(["projects", "p", "channels", "c", "schedules", "list"]).path).toBe(
+      "/projects/p/channels/c/schedules/list",
+    )
 
-    const remove = toRequest([
-      "projects",
-      "p",
-      "agents",
-      "a",
-      "channels",
-      "c",
-      "schedules",
-      "remove",
-      "morning",
-    ])
-    expect(remove.path).toBe("/projects/p/agents/a/channels/c/schedules/remove")
+    const remove = toRequest(["projects", "p", "channels", "c", "schedules", "remove", "morning"])
+    expect(remove.path).toBe("/projects/p/channels/c/schedules/remove")
     expect(remove.parsed.args).toEqual(["morning"])
+  })
+
+  it("expands project-level start/stop/restart/reset", () => {
+    expect(toRequest(["projects", "p", "start"]).path).toBe("/projects/p/start")
+    expect(toRequest(["projects", "p", "stop"]).path).toBe("/projects/p/stop")
+    expect(toRequest(["projects", "p", "restart"]).path).toBe("/projects/p/restart")
+    expect(toRequest(["projects", "p", "reset"]).path).toBe("/projects/p/reset")
   })
 })

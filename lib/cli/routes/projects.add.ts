@@ -6,16 +6,15 @@ import { validateLeucoName } from "@/cli/utils/validate-name"
 import type { Project } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects add — register an existing repository with leuco
+const help = `leuco projects add / register an existing repository
 
-usage: leuco projects add [<path>] [--name <name>]
+usage / leuco projects add [<path>] [--name <name>]
 
-  <path>          absolute or cwd-relative path to the repository root
-                  (default: current working directory)
-  --name <name>   project identifier (default: basename of <path>)
+options:
+  <path> / absolute or cwd-relative path to the repository root (default: cwd)
+  --name <name> / project identifier (default: basename of <path>)
 
-Persists into ~/.leuco/config.json under "projects". The path itself is left
-untouched. Use \`leuco projects create\` to scaffold a new repository instead.`
+The path itself is left untouched. Use \`leuco projects create\` to scaffold instead.`
 
 export const projectsAddHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -35,8 +34,18 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
     })
   }
 
-  const project: Project = { id: crypto.randomUUID(), name, path, agents: [] }
+  const project: Project = {
+    id: crypto.randomUUID(),
+    name,
+    path,
+    version: 2,
+    enabled: true,
+    useCommonInstructions: true,
+    prompts: ["friendly"],
+    channels: [],
+    mcpServers: {},
+  }
   store.save(project)
 
-  return c.text(`added project ${name} → ${path}`)
+  return c.text(`added project "${name}" (path: ${path})`)
 })

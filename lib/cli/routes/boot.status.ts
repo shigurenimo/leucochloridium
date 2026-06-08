@@ -2,26 +2,22 @@ import { HTTPException } from "hono/http-exception"
 import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { renderYaml } from "@/cli/utils/render-yaml"
 
-const help = `leuco boot — auto-start the daemon at login (macOS only)
+const help = `leuco boot / auto-start the daemon at login (macOS only)
 
-usage:
-  leuco boot                          print LaunchAgent install + load state
-  leuco boot install                  install the LaunchAgent and load it
-  leuco boot uninstall                unload and delete the LaunchAgent plist
+usage / leuco boot [subcommand]
 
-The LaunchAgent runs \`bun <leuco-bin> run\` in the foreground; launchd
-supervises it and restarts on crash. The current PATH and any LEUCO_*
-env vars from the invoking shell are captured into the plist so codex
-and friends resolve at boot.
+subcommands:
+  (none) / print LaunchAgent install + load state
+  install / install the LaunchAgent and load it
+  uninstall / unload and delete the LaunchAgent plist
 
-Re-running \`install\` is safe: the existing agent is booted out, the
-plist is rewritten with the latest paths / env, and bootstrapped again.
+Re-running \`install\` is safe: the existing agent is replaced with the latest
+paths / env. The LaunchAgent runs \`bun <leuco-bin> run\` in foreground; launchd
+supervises it and restarts on crash.
 
-Bare \`leuco boot\` prints whether the plist exists on disk and whether
-launchctl currently has it loaded. Read-only.
-
-Run \`leuco boot <subcommand> -h\` for details on a specific subcommand.`
+output / valid YAML`
 
 export const bootStatusHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -39,11 +35,11 @@ export const bootStatusHandler = factory.createHandlers(async (c) => {
   }
 
   return c.text(
-    [
-      `label:     ${status.label}`,
-      `plist:     ${status.plistPath}`,
-      `installed: ${status.isInstalled ? "yes" : "no"}`,
-      `loaded:    ${status.isLoaded ? "yes" : "no"}`,
-    ].join("\n"),
+    renderYaml({
+      label: status.label,
+      plist: status.plistPath,
+      installed: status.isInstalled,
+      loaded: status.isLoaded,
+    }),
   )
 })

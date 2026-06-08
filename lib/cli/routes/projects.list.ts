@@ -1,21 +1,22 @@
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects — list registered projects
+const help = `leuco projects / list registered projects
 
-usage:
-  leuco projects                                   list registered projects
-  leuco projects create <path>                     scaffold a new repository
-  leuco projects add [<path>]                      register an existing repository
-  leuco projects <p> remove [--cascade]            unregister a project
-  leuco projects <p> rename <new>                  rename a project
-  leuco projects <p> relocate <new-path>           move the repo dir + update path
-  leuco projects <p> agents ...                    manage agents under a project
+usage / leuco projects [subcommand]
 
-Each row prints \`<name> <tab> <path> [agents=<count>]\`.
+subcommands:
+  (none) / list every project
+  create <path> / scaffold a new repository
+  add [<path>] / register an existing repo
+  <p> remove [--cascade] / unregister a project
+  <p> rename <new> / rename a project
+  <p> relocate <new-path> / move the repo dir + update path
+  <p> channels / manage channels under a project
 
-Run \`leuco projects <subcommand> -h\` for details on a specific subcommand.`
+output / valid YAML`
 
 export const projectsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -24,12 +25,14 @@ export const projectsListHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore()
   const list = store.list()
 
-  if (list.length === 0) return c.text("(no projects)")
-
-  const lines = list.map((p) => {
-    const agents = p.agents.length > 0 ? ` agents=${p.agents.length}` : ""
-    return `${p.name}\t${p.path}${agents}`
-  })
-
-  return c.text(lines.join("\n"))
+  return c.text(
+    renderYaml({
+      projects: list.map((p) => ({
+        name: p.name,
+        enabled: p.enabled,
+        path: p.path,
+        channels: p.channels.length,
+      })),
+    }),
+  )
 })

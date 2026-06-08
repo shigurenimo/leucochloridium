@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { z } from "zod"
 import {
+  CURRENT_SCHEMA_VERSION,
   type Channel,
   type Project,
   type ScheduleEntry,
@@ -13,17 +14,22 @@ import { LeucoPaths } from "@/paths/leuco-paths"
 /**
  * Loose shape used only by `loadOrMigrate` to walk a legacy settings.json
  * before strict `projectSchema.parse` runs. `passthrough()` keeps every
- * unknown field so the post-migration shape still validates, and the agent
- * subschema is also `passthrough()` so per-channel data survives.
+ * unknown field so the post-migration shape still validates.
  */
 const migrationShape = z
   .object({
     id: z.string().optional(),
+    version: z.number().optional(),
     agents: z
       .array(
         z
           .object({
             name: z.string().optional(),
+            enabled: z.boolean().optional(),
+            useCommonInstructions: z.boolean().optional(),
+            prompts: z.array(z.string()).optional(),
+            channels: z.array(z.unknown()).optional(),
+            mcpServers: z.record(z.string(), z.unknown()).optional(),
             codexThreadId: z.string().optional(),
           })
           .passthrough(),
@@ -36,21 +42,18 @@ type Props = {
   paths?: LeucoPaths
 }
 
+type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
+
 /**
  * Per-project JSON store. Each registered project owns a directory at
  * `~/.leuco/projects/<id>/` keyed by UUID, whose `settings.json` (chmod 600)
- * holds the full registration tree — name, agents, channels, and per-channel
- * secrets — in one place. The set of projects is just the contents of the
- * directory; cross-project settings live in `~/.leuco/settings.json`.
+ * holds the full registration tree — name, channels, and per-channel secrets
+ * — in one place. The set of projects is just the contents of the directory;
+ * cross-project settings live in `~/.leuco/settings.json`.
  *
- * Legacy installs whose directories were keyed by `name` (pre-id) are
- * migrated transparently on `list()`: a UUID is generated, written into
- * `settings.json`, and the directory is renamed to match. After migration the
- * id is stable and rename / move become metadata edits.
- *
- * Errors are thrown, never returned. Handlers catch nothing — the Hono
- * `onError` in `lib/cli/routes/index.ts` formats `HTTPException`s and any
- * other throws as `error: <message>`.
+ * On first load, legacy settings (pre-0.9 agents array, name-keyed dirs,
+ * inline codexThreadId) are migrated transparently by `loadOrMigrate`. The
+ * `version` field in settings.json tracks schema revision.
  */
 export class LeucoProjectStore {
   private readonly paths: LeucoPaths
@@ -74,7 +77,7 @@ export class LeucoProjectStore {
       if (!entry.isDirectory()) continue
       const settingsPath = this.paths.projectSettingsPath(entry.name)
       if (!existsSync(settingsPath)) continue
-      projects.push(this.loadOrMigrate(entry.name))
+      projects.push(...this.loadOrMigrate(entry.name))
     }
     return projects
   }
@@ -88,13 +91,6 @@ export class LeucoProjectStore {
     return projectSchema.parse(json)
   }
 
-  /**
-   * Resolve a user-supplied project `name` to a `Project`. The CLI always
-   * receives a name (the URL segment is human-typed), but the on-disk store
-   * is keyed by `id`. Same-name projects are allowed when their `path`
-   * differs; the caller can disambiguate via `cwd` by passing the optional
-   * `preferCwd` so the project whose `path` matches `cwd` wins.
-   */
   resolveByName(name: string, opts: { preferCwd?: string } = {}): Project {
     const list = this.list()
     const matches = list.filter((p) => p.name === name)
@@ -113,11 +109,6 @@ export class LeucoProjectStore {
     )
   }
 
-  /**
-   * Write `settings.json` atomically (temp+rename) with chmod 600. Without
-   * the atomic write, `move-to` / `merge-into` could destroy an agent's
-   * tokens if the second of two `save()` calls dies mid-flight.
-   */
   save(project: Project): string {
     return atomicWriteJson({
       path: this.paths.projectSettingsPath(project.id),
@@ -142,15 +133,8 @@ export class LeucoProjectStore {
     return match
   }
 
-  /**
-   * Append a `ScheduleEntry` to the named schedule channel. The entry id and
-   * name must both be unique within the channel — duplicate ids are a bug
-   * (caller generates UUIDs); duplicate names would make CLI/MCP delete-by-name
-   * ambiguous.
-   */
   addScheduleEntry(input: {
     projectId: string
-    agentName: string
     channelName: string
     entry: ScheduleEntry
   }): string {
@@ -165,14 +149,8 @@ export class LeucoProjectStore {
     })
   }
 
-  /**
-   * Remove a single schedule entry from the named channel. The entry is
-   * matched by id first, then by name — codex always knows the id but the
-   * CLI usually only has the name.
-   */
   removeScheduleEntry(input: {
     projectId: string
-    agentName: string
     channelName: string
     entryIdOrName: string
   }): string {
@@ -188,15 +166,8 @@ export class LeucoProjectStore {
     })
   }
 
-  /**
-   * Update one entry in place (matched by id). Used by the schedule plugin
-   * to flip `enabled = false` on a one-shot after firing — kept as a generic
-   * mutator so future per-entry state (lastFiredAt, fail count) can land
-   * here without another helper.
-   */
   updateScheduleEntry(input: {
     projectId: string
-    agentName: string
     channelName: string
     entryId: string
     patch: Partial<ScheduleEntry>
@@ -214,57 +185,40 @@ export class LeucoProjectStore {
   }
 
   private mutateScheduleChannel(
-    input: { projectId: string; agentName: string; channelName: string },
+    input: { projectId: string; channelName: string },
     transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable,
   ): string {
     const project = this.load(input.projectId)
 
-    const agentIndex = project.agents.findIndex((a) => a.name === input.agentName)
-    if (agentIndex < 0) {
-      throw new Error(`agent '${input.agentName}' not found in project '${project.name}'`)
-    }
-
-    const agent = project.agents[agentIndex]!
-    const channelIndex = agent.channels.findIndex((c) => c.name === input.channelName)
+    const channelIndex = project.channels.findIndex((c) => c.name === input.channelName)
     if (channelIndex < 0) {
-      throw new Error(
-        `channel '${input.channelName}' not found in ${project.name}/${input.agentName}`,
-      )
+      throw new Error(`channel '${input.channelName}' not found in ${project.name}`)
     }
 
-    const channel = agent.channels[channelIndex]!
+    const channel = project.channels[channelIndex]!
     if (channel.type !== "schedule") {
       throw new Error(`channel '${input.channelName}' is not a schedule channel`)
     }
 
     const updated = transform(channel)
 
-    const nextChannels: Channel[] = agent.channels.slice()
+    const nextChannels: Channel[] = project.channels.slice()
     nextChannels[channelIndex] = updated
 
-    const nextAgents = project.agents.slice()
-    nextAgents[agentIndex] = { ...agent, channels: nextChannels }
-
-    return this.save({ ...project, agents: nextAgents })
+    return this.save({ ...project, channels: nextChannels })
   }
 
   /**
-   * Load `settings.json` and run any in-place migrations. Two are folded in
-   * here so a daemon start picks up legacy installs without an extra command:
+   * Load `settings.json` and run in-place migrations:
    *
-   *   1. legacy `name`-keyed directory → UUID id. Mints `id`, writes it into
-   *      `settings.json`, and renames the directory so the id becomes the
-   *      key going forward.
-   *   2. legacy `agents[i].codexThreadId` → `agents/<a>/state.json`. The
-   *      thread id was carried inside `settings.json` until 0.7.x; it now
-   *      lives in a separate state file so the settings surface stays
-   *      idempotent. Each migrated thread is dropped from `settings.json`
-   *      and written into the corresponding `state.json`.
+   *   v0 → v1: legacy `name`-keyed directory → UUID id.
+   *   v1 → v2: flatten `agents[]` into the project. Each agent becomes its
+   *            own project when there are 2+. The on-disk `agents/` tree is
+   *            consolidated into `projects/<id>/.codex/`.
    *
-   * After both migrations the directory name equals `id` and no
-   * `codexThreadId` remains anywhere in `settings.json`.
+   * Returns an array because a multi-agent project splits into N projects.
    */
-  private loadOrMigrate(dirName: string): Project {
+  private loadOrMigrate(dirName: string): Project[] {
     const path = this.paths.projectSettingsPath(dirName)
     const raw: unknown = JSON.parse(readFileSync(path, "utf8"))
     const json = migrationShape.parse(raw)
@@ -282,19 +236,22 @@ export class LeucoProjectStore {
       mutated = true
     }
 
-    const threadMigrations: Array<{ agentName: string; threadId: string }> = []
-    if (Array.isArray(json.agents)) {
-      for (const agent of json.agents) {
-        if (agent === null || typeof agent !== "object") continue
-        if (typeof agent.codexThreadId !== "string" || agent.codexThreadId.length === 0) continue
-        if (typeof agent.name !== "string") continue
-        threadMigrations.push({ agentName: agent.name, threadId: agent.codexThreadId })
-        delete agent.codexThreadId
-        mutated = true
+    const currentVersion = json.version ?? 1
+
+    if (currentVersion >= CURRENT_SCHEMA_VERSION) {
+      if (id !== dirName) {
+        if (existsSync(this.paths.projectDir(id))) {
+          throw new Error(`migration target already exists: ${this.paths.projectDir(id)}`)
+        }
+        renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
       }
+      if (mutated) {
+        atomicWriteJson({ path: this.paths.projectSettingsPath(id), data: json, mode: 0o600 })
+      }
+      return [projectSchema.parse(json)]
     }
 
-    const parsed = projectSchema.parse(json)
+    // --- v1 → v2: flatten agents[] into project ---
 
     if (id !== dirName) {
       if (existsSync(this.paths.projectDir(id))) {
@@ -303,25 +260,108 @@ export class LeucoProjectStore {
       renameSync(this.paths.projectDir(dirName), this.paths.projectDir(id))
     }
 
-    if (mutated) {
-      atomicWriteJson({
-        path: this.paths.projectSettingsPath(id),
-        data: parsed,
-        mode: 0o600,
-      })
+    const agents = json.agents ?? []
+    if (agents.length === 0) {
+      return [this.writeV2Project(id, json, null)]
     }
 
-    for (const migration of threadMigrations) {
-      const statePath = this.paths.agentStatePath(id, migration.agentName)
-      if (existsSync(statePath)) continue
-      atomicWriteJson({
-        path: statePath,
-        data: { codexThreadId: migration.threadId },
-      })
+    if (agents.length === 1) {
+      return [this.writeV2Project(id, json, agents[0]!)]
+    }
+
+    // Multi-agent: first agent stays in the original project dir, rest get new project dirs.
+    const results: Project[] = []
+    results.push(this.writeV2Project(id, json, agents[0]!))
+
+    for (let i = 1; i < agents.length; i++) {
+      const agent = agents[i]!
+      const newId = crypto.randomUUID()
+      const newName = typeof agent.name === "string" ? `${json.name}-${agent.name}` : json.name
+      const newDir = this.paths.projectDir(newId)
+      mkdirSync(newDir, { recursive: true })
+
+      const newJson = { ...json, id: newId, name: newName, agents: undefined }
+      results.push(this.writeV2Project(newId, newJson, agent))
+    }
+
+    // Clean up empty agents/ dir if all homes have been moved.
+    const legacyAgentsRoot = this.paths.legacyAgentsRoot(id)
+    if (existsSync(legacyAgentsRoot)) {
+      try {
+        rmSync(legacyAgentsRoot, { recursive: true, force: true })
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Write a single v2 project from a v1 JSON + one optional agent.
+   * Migrates agent's `.codex/` or `home/` into `projects/<id>/.codex/`.
+   */
+  private writeV2Project(
+    projectId: string,
+    baseJson: Record<string, unknown>,
+    agent: Record<string, unknown> | null,
+  ): Project {
+    const flat: Record<string, unknown> = {
+      ...baseJson,
+      version: CURRENT_SCHEMA_VERSION,
+      agents: undefined,
+    }
+
+    if (agent !== null) {
+      if (agent.enabled !== undefined) flat.enabled = agent.enabled
+      if (agent.useCommonInstructions !== undefined) {
+        flat.useCommonInstructions = agent.useCommonInstructions
+      }
+      if (agent.prompts !== undefined) flat.prompts = agent.prompts
+      if (agent.channels !== undefined) flat.channels = agent.channels
+      if (agent.mcpServers !== undefined) flat.mcpServers = agent.mcpServers
+    }
+
+    // Delete the flattened agents key completely.
+    delete flat.agents
+
+    const parsed = projectSchema.parse(flat)
+    atomicWriteJson({ path: this.paths.projectSettingsPath(projectId), data: parsed, mode: 0o600 })
+
+    // Migrate the agent's CODEX_HOME to project level.
+    if (agent !== null && typeof agent.name === "string") {
+      this.migrateAgentHome(projectId, agent.name)
+      this.migrateAgentState(projectId, agent.name)
     }
 
     return parsed
   }
-}
 
-type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
+  /** Move `agents/<name>/.codex/` or `agents/<name>/home/` → `projects/<id>/.codex/`. */
+  private migrateAgentHome(projectId: string, agentName: string): void {
+    const target = this.paths.projectHome(projectId)
+    if (existsSync(target)) return
+
+    const codexVariant = this.paths.legacyAgentCodex(projectId, agentName)
+    if (existsSync(codexVariant)) {
+      renameSync(codexVariant, target)
+      return
+    }
+
+    const homeVariant = this.paths.legacyAgentHome(projectId, agentName)
+    if (existsSync(homeVariant)) {
+      renameSync(homeVariant, target)
+    }
+  }
+
+  /** Move `agents/<name>/state.json` → `projects/<id>/state.json`. */
+  private migrateAgentState(projectId: string, agentName: string): void {
+    const target = this.paths.projectStatePath(projectId)
+    if (existsSync(target)) return
+
+    const legacy = this.paths.legacyAgentStatePath(projectId, agentName)
+    if (existsSync(legacy)) {
+      renameSync(legacy, target)
+    }
+  }
+}

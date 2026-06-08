@@ -211,7 +211,6 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
       ts: Date.now(),
       type: "schedule.fired",
       project: ctx.projectName,
-      agent: ctx.agentName,
       channel: this.name,
       entryId: entry.id,
       entryName: entry.name,

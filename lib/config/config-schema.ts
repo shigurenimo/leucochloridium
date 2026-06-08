@@ -63,10 +63,10 @@ const scheduleChannelSchema = z.object({
 const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, scheduleChannelSchema])
 
 /**
- * One extra stdio MCP server to attach to this agent's codex, on top of the
+ * One extra stdio MCP server to attach to this project's codex, on top of the
  * built-in `leuco` server. leuco stays agnostic about what the server does:
  * it only forwards `command`/`args`/`env` verbatim into the tenant's
- * CODEX_HOME `config.toml` as a `[mcp_servers.<key>]` block. Per-agent `env`
+ * CODEX_HOME `config.toml` as a `[mcp_servers.<key>]` block. Per-project `env`
  * is how callers scope a shared MCP binary to a specific identity (e.g. a
  * token-vault MCP keyed by the owner's email), without leuco needing to model
  * that identity itself.
@@ -77,34 +77,14 @@ const mcpServerSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
 })
 
-const agentSchema = z.object({
-  name: safeName,
-  enabled: z.boolean().default(true),
-  /**
-   * When true (default) leuco prepends a built-in dynamic preamble to the
-   * agent's `developer_instructions` covering the bot's own Slack identity,
-   * loop avoidance, sub-agent paths, and self-edit guidance. Set to false to
-   * pass the per-agent TOML instructions through verbatim.
-   */
-  useCommonInstructions: z.boolean().default(true),
-  /**
-   * Named system-prompt presets to splice in between the dynamic preamble and
-   * the per-agent TOML text. Names are validated against the registered set
-   * in `lib/engine/prompt-presets.ts`. Defaults to `["friendly"]` so a fresh
-   * agent has a usable Slack persona without extra configuration; pass an
-   * empty array to opt out.
-   */
-  prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
-  channels: z.array(channelSchema).default([]),
-  /**
-   * Extra stdio MCP servers to wire into this agent's codex, keyed by the
-   * `[mcp_servers.<key>]` name written to `config.toml`. The reserved key
-   * `leuco` is owned by the runtime and must not appear here. Empty by default.
-   */
-  mcpServers: z.record(safeName, mcpServerSchema).default({}),
-})
+/**
+ * Schema version for forward-compatible migration. Absent in pre-0.9
+ * installs; `loadOrMigrate` treats missing version as v1 and upgrades.
+ */
+const CURRENT_SCHEMA_VERSION = 2
 
 export const projectSchema = z.object({
+  version: z.number().int().default(CURRENT_SCHEMA_VERSION),
   /**
    * Stable per-project identifier. The on-disk directory at
    * `~/.leuco/projects/<id>/` is keyed by this id, not by `name`, so renames
@@ -121,13 +101,18 @@ export const projectSchema = z.object({
   // be path-dependent and surprising. CLI handlers already `resolve()` user
   // input; this guard catches hand-edited settings.json.
   path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
-  agents: z.array(agentSchema).default([]),
+  enabled: z.boolean().default(true),
+  useCommonInstructions: z.boolean().default(true),
+  prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
+  channels: z.array(channelSchema).default([]),
+  mcpServers: z.record(safeName, mcpServerSchema).default({}),
 })
+
+export { CURRENT_SCHEMA_VERSION }
 
 export type Channel = z.infer<typeof channelSchema>
 export type SlackChannel = z.infer<typeof slackChannelSchema>
 export type ScheduleChannel = z.infer<typeof scheduleChannelSchema>
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
 export type McpServer = z.infer<typeof mcpServerSchema>
-export type Agent = z.infer<typeof agentSchema>
 export type Project = z.infer<typeof projectSchema>

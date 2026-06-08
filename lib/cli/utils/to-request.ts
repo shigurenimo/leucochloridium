@@ -6,14 +6,11 @@ const SHORT_FLAGS: Record<string, string> = {
 
 const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "update"])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
-const AGENT_LEAFS = new Set(["list", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
 const NAMED_LEAFS = new Set([
   "remove",
   "show",
   "rename",
-  "move-to",
-  "merge-into",
   "relocate",
   "start",
   "stop",
@@ -30,8 +27,6 @@ type Stage =
   | "top"
   | "projects"
   | "named-project"
-  | "agents"
-  | "named-agent"
   | "channels"
   | "named-channel"
   | "schedules"
@@ -60,16 +55,16 @@ export type CliRequest = {
  *   leuco <top-leaf>                                          → /<leaf>
  *   leuco projects <project-leaf>                             → /projects/<leaf>
  *   leuco projects <name> <named-leaf>                        → /projects/<name>/<leaf>
- *   leuco projects <name> agents <agent-leaf>                 → /projects/<name>/agents/<leaf>
- *   leuco projects <name> agents <name> <named-leaf>          → /projects/<name>/agents/<name>/<leaf>
- *   leuco projects <name> agents <name> channels <chan-leaf>  → /projects/<name>/agents/<name>/channels/<leaf>
- *   leuco projects <name> agents <name> channels <name> <named-leaf>
+ *   leuco projects <name> channels <chan-leaf>                 → /projects/<name>/channels/<leaf>
+ *   leuco projects <name> channels <name> <named-leaf>        → /projects/<name>/channels/<name>/<leaf>
+ *   leuco projects <name> channels <name> schedules <leaf>    → /projects/<name>/channels/<name>/schedules/<leaf>
  *
  * `top-leafs`: run | start | stop | restart | status | logs | update
- * `project-leafs` / `agent-leafs` / `channel-leafs`: list | create | add
+ * `project-leafs`: list | create | add
+ * `channel-leafs`: list | add
  * `config-leafs`: list | get | set
  * `boot-leafs`: install | uninstall | status
- * `named-leafs` (after a name): remove | show | rename | move-to | relocate | start | stop | restart | reset | set-tokens
+ * `named-leafs` (after a name): remove | show | rename | relocate | start | stop | restart | reset | set-tokens
  *
  * Anything past the recognised leaf becomes positional `args`. `--key value`
  * and bare `--flag` populate `flags`; single-letter `-x` expands via SHORT_FLAGS.
@@ -171,17 +166,6 @@ const step = (stage: Stage, arg: string): StepDecision => {
   }
 
   if (stage === "named-project") {
-    if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
-    if (arg === "agents") return { kind: "segment", next: "agents" }
-    return { kind: "positional" }
-  }
-
-  if (stage === "agents") {
-    if (AGENT_LEAFS.has(arg)) return { kind: "segment", next: "done" }
-    return { kind: "segment", next: "named-agent" }
-  }
-
-  if (stage === "named-agent") {
     if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     if (arg === "channels") return { kind: "segment", next: "channels" }
     return { kind: "positional" }

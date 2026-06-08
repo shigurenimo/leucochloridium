@@ -4,7 +4,6 @@ import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-pr
 const baseProps = {
   projectName: "demo",
   projectPath: "/tmp/demo",
-  agentName: "default",
   identities: [],
   subagents: [] as SubagentEntry[],
   presets: [] as string[],
@@ -12,12 +11,11 @@ const baseProps = {
 }
 
 describe("LeucoSystemPromptBuilder", () => {
-  it("renders the static skeleton with project / agent header", () => {
+  it("renders the static skeleton with project header", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
 
     expect(out).toContain("# leuco built-in instructions")
     expect(out).toContain("Project: `demo`")
-    expect(out).toContain("Agent: `default`")
     expect(out).toContain("/tmp/demo")
   })
 
@@ -72,14 +70,6 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("/tmp/demo/.codex/agents/reviewer.toml")
     expect(out).toContain("`planner`")
     expect(out).toContain("edit any of these TOML files freely")
-  })
-
-  it("always points at the agent's own definition file", () => {
-    const out = new LeucoSystemPromptBuilder({
-      ...baseProps,
-      agentName: "mochi",
-    }).build()
-    expect(out).toContain("Your own definition file is `/tmp/demo/.codex/agents/mochi.toml`")
   })
 
   it("appends per-agent instructions after a separator", () => {

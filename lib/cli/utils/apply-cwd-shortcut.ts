@@ -1,17 +1,12 @@
 import type { LeucoProjectStore } from "@/projects/project-store"
 
-const SHORTCUT_PREFIXES = new Set(["agents", "channels"])
+const SHORTCUT_PREFIXES = new Set(["channels"])
 
 /**
- * If the first argv token is `agents` or `channels` and the user's cwd
- * matches a registered project's path, inject `projects <projectName>` before
- * the rest of the args. Lets users type `leuco agents list` from inside the
- * repo instead of `leuco projects <p> agents list`.
- *
- * No-ops when:
- *  - the first token is not one of the shortcut prefixes
- *  - the user already typed `projects` themselves
- *  - cwd does not match any registered project
+ * If the first argv token is `channels` and the user's cwd matches a
+ * registered project's path, inject `projects <projectName>` before the rest
+ * of the args. Lets users type `leuco channels list` from inside the repo
+ * instead of `leuco projects <p> channels list`.
  */
 export const applyCwdShortcut = (
   args: string[],

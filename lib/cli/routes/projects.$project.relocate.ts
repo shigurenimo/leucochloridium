@@ -8,23 +8,16 @@ import { validateLeucoName } from "@/cli/utils/validate-name"
 import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> relocate — move the repository directory
+const help = `leuco projects <p> relocate / move the repository directory
 
-usage: leuco projects <p> relocate <new-path> [--rename false]
+usage / leuco projects <p> relocate <new-path> [--rename false]
 
-  <new-path>        absolute or cwd-relative path the repo will live at
-  --rename false    keep the current project name; default also renames
-                    the project to basename(<new-path>)
+options:
+  <new-path> / absolute or cwd-relative path the repo will live at
+  --rename false / keep the current project name (default: also rename to basename)
 
-Moves the on-disk repository (\`mv <old> <new>\`) and updates the project's
-\`path\` field in settings.json. The daemon is automatically stopped before
-the move and restarted afterwards, so codex children pick up the new path
-(written into each tenant's CODEX_HOME config.toml as
-\`[projects.<path>] trust_level = "trusted"\`).
-
-The target directory must not already exist; if it does, run the move
-manually and use \`leuco projects add\` to re-register. To rename without
-relocating, use \`leuco projects <p> rename\` instead.`
+Moves the on-disk repository and updates settings.json. The daemon is stopped
+before the move and restarted afterwards. The target must not already exist.`
 
 export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -104,8 +97,8 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
 
     const lines = [
       newName === project.name
-        ? `relocated project ${oldName}: ${project.path} → ${newPath}`
-        : `relocated project ${oldName} → ${newName}: ${project.path} → ${newPath}`,
+        ? `relocated project "${oldName}": ${project.path} -> ${newPath}`
+        : `relocated project "${oldName}" to "${newName}": ${project.path} -> ${newPath}`,
     ]
     if (wasRunning) {
       const result = daemon.start({ binPath: c.var.binPath, env: process.env })

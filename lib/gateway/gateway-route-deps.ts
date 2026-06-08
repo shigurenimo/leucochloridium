@@ -4,7 +4,7 @@ export type GatewayRouteDeps = {
   selfPid: number
   engine: LeucoEngine
   /**
-   * Bearer token required on every `/mcp/:project/:agent` request. Generated
+   * Bearer token required on every `/mcp/:project` request. Generated
    * once per daemon start, mirrored into each tenant's codex child env so
    * codex can present it. `null` disables MCP routing entirely.
    */

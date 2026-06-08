@@ -26,10 +26,10 @@ export const updateHandler = factory.createHandlers(async (c) => {
   }
 
   if (flagBool(body.flags.check)) {
-    return c.text(`leuco ${current} → ${latest} available — run \`leuco update\``)
+    return c.text(`leuco ${current} -> ${latest} available`)
   }
 
-  process.stdout.write(`[leuco] updating ${current} → ${latest}\n`)
+  process.stdout.write(`leuco: updating ${current} -> ${latest}\n`)
   const proc = Bun.spawn([process.execPath, "add", "-g", `leuco@${latest}`], {
     stdio: ["inherit", "inherit", "inherit"],
   })
@@ -43,18 +43,15 @@ export const updateHandler = factory.createHandlers(async (c) => {
   const daemon = c.var.daemon
   const wasRunning = daemon.status().pid !== null
   if (!wasRunning) {
-    return c.text(`[leuco] updated to ${latest} (daemon not running)`)
+    return c.text(`leuco: updated to ${latest} (daemon not running)`)
   }
 
   daemon.stop()
   const started = daemon.start({ binPath: c.var.binPath, env: process.env })
   if (started instanceof Error) {
-    return c.text(
-      `[leuco] updated to ${latest}, but daemon restart failed: ${started.message}`,
-      500,
-    )
+    return c.text(`leuco: updated to ${latest}, but daemon restart failed: ${started.message}`, 500)
   }
-  return c.text(`[leuco] updated to ${latest} — daemon restarted (pid ${started.pid})`)
+  return c.text(`leuco: updated to ${latest}, daemon restarted (pid ${started.pid})`)
 })
 
 const fetchLatestVersion = async (): Promise<string | Error> => {

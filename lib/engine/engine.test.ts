@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { Agent, Project } from "@/config/config-schema"
+import type { Project } from "@/config/config-schema"
 import { LeucoEngine } from "@/engine/engine"
 import { LeucoTenant } from "@/engine/tenant"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
@@ -15,16 +15,11 @@ const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort =>
   ...overrides,
 })
 
-const buildTenant = (
-  projectName: string,
-  agentName: string,
-  codex: CodexClientPort = fakeCodex(),
-) =>
+const buildTenant = (projectName: string, codex: CodexClientPort = fakeCodex()) =>
   new LeucoTenant({
     projectId: `00000000-0000-4000-8000-${projectName.padStart(12, "0").slice(0, 12)}`,
     projectName,
     projectPath: `/tmp/${projectName}`,
-    agentName,
     codex,
     plugins: [],
     onLog: () => {},
@@ -47,12 +42,23 @@ const noBuild = (): LeucoTenant => {
   throw new Error("buildTenant not configured")
 }
 
+const makeProject = (name: string, enabled = true): Project => ({
+  version: 2,
+  id: `00000000-0000-4000-8000-${name.padStart(12, "0").slice(0, 12)}`,
+  name,
+  path: `/tmp/${name}`,
+  enabled,
+  useCommonInstructions: true,
+  prompts: ["friendly"],
+  channels: [],
+  mcpServers: {},
+})
+
 describe("LeucoEngine.start / stop", () => {
   it("starts each tenant in order", async () => {
     const calls: string[] = []
     const a = buildTenant(
-      "demo",
-      "a",
+      "alpha",
       fakeCodex({
         start: async () => {
           calls.push("a.start")
@@ -60,8 +66,7 @@ describe("LeucoEngine.start / stop", () => {
       }),
     )
     const b = buildTenant(
-      "demo",
-      "b",
+      "bravo",
       fakeCodex({
         start: async () => {
           calls.push("b.start")
@@ -83,8 +88,7 @@ describe("LeucoEngine.start / stop", () => {
   it("stops each tenant on engine.stop()", async () => {
     const stops: string[] = []
     const a = buildTenant(
-      "demo",
-      "a",
+      "alpha",
       fakeCodex({
         stop: async () => {
           stops.push("a")
@@ -106,8 +110,7 @@ describe("LeucoEngine.start / stop", () => {
   it("rolls back already-started tenants when a later start fails", async () => {
     const events: string[] = []
     const a = buildTenant(
-      "demo",
-      "a",
+      "alpha",
       fakeCodex({
         start: async () => {
           events.push("a.start")
@@ -118,8 +121,7 @@ describe("LeucoEngine.start / stop", () => {
       }),
     )
     const b = buildTenant(
-      "demo",
-      "b",
+      "bravo",
       fakeCodex({
         start: async () => {
           events.push("b.start")
@@ -135,15 +137,13 @@ describe("LeucoEngine.start / stop", () => {
     })
 
     await expect(engine.start()).rejects.toThrow("b failed")
-    // a was started, b threw mid-start; rollback should stop a in reverse.
     expect(events).toEqual(["a.start", "b.start", "a.stop"])
   })
 
   it("keeps draining tenants even when one fails to stop", async () => {
     const stops: string[] = []
     const a = buildTenant(
-      "demo",
-      "a",
+      "alpha",
       fakeCodex({
         stop: async () => {
           stops.push("a")
@@ -152,8 +152,7 @@ describe("LeucoEngine.start / stop", () => {
       }),
     )
     const b = buildTenant(
-      "demo",
-      "b",
+      "bravo",
       fakeCodex({
         stop: async () => {
           stops.push("b")
@@ -169,39 +168,22 @@ describe("LeucoEngine.start / stop", () => {
     await engine.start()
     await engine.stop()
 
-    // b is reached even though a throws.
     expect(stops).toEqual(["a", "b"])
   })
 })
 
 describe("LeucoEngine.reconcile", () => {
-  const project = (name: string, agents: Agent[]): Project => ({
-    id: `00000000-0000-4000-8000-${name.padStart(12, "0").slice(0, 12)}`,
-    name,
-    path: `/tmp/${name}`,
-    agents,
-  })
-  const agent = (name: string, enabled = true): Agent => ({
-    name,
-    enabled,
-    useCommonInstructions: true,
-    prompts: ["friendly"],
-    channels: [],
-    mcpServers: {},
-  })
-
-  it("stops tenants whose agent has been disabled", async () => {
+  it("stops tenants whose project has been disabled", async () => {
     const stops: string[] = []
     const a = buildTenant(
       "demo",
-      "a",
       fakeCodex({
         stop: async () => {
-          stops.push("a")
+          stops.push("demo")
         },
       }),
     )
-    const projects = [project("demo", [agent("a", false)])]
+    const projects = [makeProject("demo", false)]
     const engine = new LeucoEngine({
       tenants: [a],
       projectStore: fakeStore(projects),
@@ -210,22 +192,21 @@ describe("LeucoEngine.reconcile", () => {
     })
 
     await engine.reconcile()
-    expect(stops).toEqual(["a"])
-    expect(engine.listProjects()[0]?.agents[0]?.tenantRunning).toBe(false)
+    expect(stops).toEqual(["demo"])
+    expect(engine.listProjects()[0]?.tenantRunning).toBe(false)
   })
 
-  it("starts tenants whose agent is newly enabled", async () => {
+  it("starts tenants whose project is newly enabled", async () => {
     const starts: string[] = []
     const built = buildTenant(
       "demo",
-      "b",
       fakeCodex({
         start: async () => {
-          starts.push("b")
+          starts.push("demo")
         },
       }),
     )
-    const projects = [project("demo", [agent("b", true)])]
+    const projects = [makeProject("demo", true)]
     const engine = new LeucoEngine({
       tenants: [],
       projectStore: fakeStore(projects),
@@ -234,8 +215,8 @@ describe("LeucoEngine.reconcile", () => {
     })
 
     await engine.reconcile()
-    expect(starts).toEqual(["b"])
-    expect(engine.listProjects()[0]?.agents[0]?.tenantRunning).toBe(true)
+    expect(starts).toEqual(["demo"])
+    expect(engine.listProjects()[0]?.tenantRunning).toBe(true)
   })
 
   it("serializes concurrent reconcile() calls so a tenant is not double-started", async () => {
@@ -248,16 +229,15 @@ describe("LeucoEngine.reconcile", () => {
     let buildCalls = 0
     const built = buildTenant(
       "demo",
-      "b",
       fakeCodex({
         start: async () => {
-          starts.push("b")
+          starts.push("demo")
           if (starts.length === 1) await firstStartGate
         },
       }),
     )
 
-    const projects = [project("demo", [agent("b", true)])]
+    const projects = [makeProject("demo", true)]
     const engine = new LeucoEngine({
       tenants: [],
       projectStore: fakeStore(projects),
@@ -271,16 +251,14 @@ describe("LeucoEngine.reconcile", () => {
     const first = engine.reconcile()
     const second = engine.reconcile()
 
-    // Give the second call a chance to enter; if it's not queued behind
-    // the first, it would already be calling start() against the same tenant.
     await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(starts).toEqual(["b"])
+    expect(starts).toEqual(["demo"])
 
     releaseFirstStart()
     await first
     await second
 
-    expect(starts).toEqual(["b"])
+    expect(starts).toEqual(["demo"])
     expect(buildCalls).toBe(1)
   })
 
@@ -288,14 +266,13 @@ describe("LeucoEngine.reconcile", () => {
     const stops: string[] = []
     const a = buildTenant(
       "demo",
-      "a",
       fakeCodex({
         stop: async () => {
-          stops.push("a")
+          stops.push("demo")
         },
       }),
     )
-    const projects = [project("demo", [agent("a", true)])]
+    const projects = [makeProject("demo", true)]
     const engine = new LeucoEngine({
       tenants: [a],
       projectStore: fakeStore(projects),
@@ -309,10 +286,9 @@ describe("LeucoEngine.reconcile", () => {
 })
 
 describe("LeucoEngine introspection", () => {
-  it("listThreads exposes the agent's single codex thread once a turn has run", async () => {
+  it("listThreads exposes the project's single codex thread once a turn has run", async () => {
     const a = buildTenant(
       "demo",
-      "a",
       fakeCodex({ startThread: async () => ({ thread: { id: "tA" } }) }),
     )
     await a.runTextTurn("k1", "x")
@@ -323,38 +299,12 @@ describe("LeucoEngine introspection", () => {
       buildTenant: noBuild,
       onLog: () => {},
     })
-    expect(engine.listThreads()).toEqual([
-      { tenantKey: "demo:a", threadKey: "demo:a", threadId: "tA" },
-    ])
+    expect(engine.listThreads()).toEqual([{ tenantKey: "demo", threadKey: "demo", threadId: "tA" }])
   })
 
-  it("listProjects returns enabled state plus running flag for each agent", () => {
-    const projects = [
-      {
-        id: "00000000-0000-4000-8000-000000000000",
-        name: "demo",
-        path: "/tmp/demo",
-        agents: [
-          {
-            name: "a",
-            enabled: true,
-            useCommonInstructions: true,
-            prompts: ["friendly" as const],
-            channels: [],
-            mcpServers: {},
-          },
-          {
-            name: "b",
-            enabled: false,
-            useCommonInstructions: true,
-            prompts: ["friendly" as const],
-            channels: [],
-            mcpServers: {},
-          },
-        ],
-      },
-    ]
-    const a = buildTenant("demo", "a")
+  it("listProjects returns enabled state plus running flag for each project", () => {
+    const projects = [makeProject("alpha", true), makeProject("bravo", false)]
+    const a = buildTenant("alpha")
     const engine = new LeucoEngine({
       tenants: [a],
       projectStore: fakeStore(projects),
@@ -363,15 +313,15 @@ describe("LeucoEngine introspection", () => {
     })
 
     const summary = engine.listProjects()
-    expect(summary[0]?.agents).toEqual([
-      { name: "a", enabled: true, tenantRunning: true },
-      { name: "b", enabled: false, tenantRunning: false },
+    expect(summary).toEqual([
+      { name: "alpha", path: "/tmp/alpha", enabled: true, tenantRunning: true },
+      { name: "bravo", path: "/tmp/bravo", enabled: false, tenantRunning: false },
     ])
   })
 
   it("isCodexRunning is true when any tenant is running", () => {
-    const a = buildTenant("demo", "a", fakeCodex({ isRunning: () => false }))
-    const b = buildTenant("demo", "b", fakeCodex({ isRunning: () => true }))
+    const a = buildTenant("alpha", fakeCodex({ isRunning: () => false }))
+    const b = buildTenant("bravo", fakeCodex({ isRunning: () => true }))
     const engine = new LeucoEngine({
       tenants: [a, b],
       projectStore: fakeStore(),

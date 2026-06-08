@@ -3,7 +3,6 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import pkg from "../../package.json" with { type: "json" }
 import { validateRunAt } from "@/channels/schedule/validate-run-at"
-import { findAgent } from "@/cli/utils/lookup-config"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import type { ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
@@ -19,7 +18,6 @@ import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
   projectId: string
-  agentName: string
   store?: LeucoProjectStore
 }
 
@@ -32,8 +30,8 @@ const SLACK_CALL_DESCRIPTION = [
   "Forward a Slack Web API call (e.g. chat.postMessage, conversations.replies,",
   "reactions.add, files.upload). The body is the API method's JSON body — see",
   "https://api.slack.com/methods for parameters. Tokens are scoped to this",
-  "agent's enabled Slack channel; passing `channel_name` selects between",
-  "multiple channels owned by the same agent.",
+  "project's enabled Slack channel; passing `channel_name` selects between",
+  "multiple channels owned by the same project.",
 ].join(" ")
 
 const SLACK_CALL_INPUT_SCHEMA = {
@@ -52,17 +50,17 @@ const SLACK_CALL_INPUT_SCHEMA = {
     channel_name: {
       type: "string",
       description:
-        "Optional leuco-side channel identifier when the agent has multiple slack channels. Defaults to the first enabled one.",
+        "Optional leuco-side channel identifier when the project has multiple slack channels. Defaults to the first enabled one.",
     },
   },
 }
 
 const SCHEDULE_CREATE_DESCRIPTION = [
-  "Register a scheduled prompt that the daemon will deliver back to this agent",
+  "Register a scheduled prompt that the daemon will deliver back to this project",
   "at the specified time. `run_at` is either an ISO 8601 timestamp (one-shot,",
   "deleted after fire) or a 5-field cron expression (recurring). The daemon",
   "picks up new entries on the next minute tick — no restart needed. If the",
-  "agent owns multiple schedule channels, pass `channel_name` to disambiguate.",
+  "project owns multiple schedule channels, pass `channel_name` to disambiguate.",
 ].join(" ")
 
 const SCHEDULE_CREATE_INPUT_SCHEMA = {
@@ -81,17 +79,17 @@ const SCHEDULE_CREATE_INPUT_SCHEMA = {
     },
     prompt: {
       type: "string",
-      description: "Prompt text the daemon will deliver back to this agent when the entry fires.",
+      description: "Prompt text the daemon will deliver back to this project when the entry fires.",
     },
     channel_name: {
       type: "string",
-      description: "Optional schedule channel name when the agent owns more than one.",
+      description: "Optional schedule channel name when the project owns more than one.",
     },
   },
 }
 
 const SCHEDULE_LIST_DESCRIPTION =
-  "List schedule entries owned by the current agent. If `channel_name` is omitted and the agent has multiple schedule channels, every channel's entries are returned."
+  "List schedule entries owned by the current project. If `channel_name` is omitted and the project has multiple schedule channels, every channel's entries are returned."
 
 const SCHEDULE_LIST_INPUT_SCHEMA = {
   type: "object",
@@ -104,7 +102,7 @@ const SCHEDULE_LIST_INPUT_SCHEMA = {
 }
 
 const SCHEDULE_DELETE_DESCRIPTION =
-  "Delete a schedule entry by id or by name. If the agent owns multiple schedule channels, pass `channel_name` to disambiguate."
+  "Delete a schedule entry by id or by name. If the project owns multiple schedule channels, pass `channel_name` to disambiguate."
 
 const SCHEDULE_DELETE_INPUT_SCHEMA = {
   type: "object",
@@ -116,30 +114,20 @@ const SCHEDULE_DELETE_INPUT_SCHEMA = {
     },
     channel_name: {
       type: "string",
-      description: "Optional schedule channel name when the agent owns more than one.",
+      description: "Optional schedule channel name when the project owns more than one.",
     },
   },
 }
 
-/**
- * Build an MCP `Server` bound to one (project, agent) pair. Shared by the
- * stdio entry (`startMcpServer`) and the gateway's streamable HTTP route, so
- * tool definitions and handlers stay in one place.
- *
- * The (project, agent) identity is locked in at build time: this server only
- * ever acts on behalf of that tenant's Slack tokens, so a leaked tool call
- * cannot reach another tenant's surface.
- */
 export const buildMcpServer = (props: Props): Server => {
   const store = props.store ?? new LeucoProjectStore()
   const handlerProps: HandlerProps = {
     projectId: props.projectId,
-    agentName: props.agentName,
     store,
   }
 
   const server = new Server(
-    { name: `leuco/${props.projectId}/${props.agentName}`, version: pkg.version },
+    { name: `leuco/${props.projectId}`, version: pkg.version },
     { capabilities: { tools: {} } },
   )
 
@@ -176,9 +164,6 @@ export const buildMcpServer = (props: Props): Server => {
     const name = request.params.name
     const args: unknown = request.params.arguments ?? {}
 
-    // Each tool handler throws on user-facing failure (store errors, validation,
-    // Slack API errors). MCP transport wants those as `isError: true` body
-    // responses rather than rejections, so we catch once at the dispatch layer.
     try {
       if (name === TOOL_SLACK_CALL) return await handleSlackCall(handlerProps, args)
       if (name === TOOL_SCHEDULE_CREATE) return await handleScheduleCreate(handlerProps, args)
@@ -195,7 +180,6 @@ export const buildMcpServer = (props: Props): Server => {
 
 type HandlerProps = {
   projectId: string
-  agentName: string
   store: LeucoProjectStore
 }
 
@@ -206,7 +190,6 @@ const handleSlackCall = async (props: HandlerProps, args: unknown) => {
   const tokens = resolveTenantTokens({
     store: props.store,
     projectId: props.projectId,
-    agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
 
@@ -228,7 +211,6 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
   const channel = resolveScheduleChannel({
     store: props.store,
     projectId: props.projectId,
-    agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
 
@@ -242,7 +224,6 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
 
   props.store.addScheduleEntry({
     projectId: props.projectId,
-    agentName: props.agentName,
     channelName: channel.name,
     entry,
   })
@@ -263,9 +244,8 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   const channelNameArg = parsed.data.channel_name
 
   const project = props.store.load(props.projectId)
-  const agent = findAgent(project, props.agentName)
 
-  const channels = agent.channels.filter(
+  const channels = project.channels.filter(
     (c): c is ScheduleChannel =>
       c.type === "schedule" && (!channelNameArg || c.name === channelNameArg),
   )
@@ -273,8 +253,8 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   if (channels.length === 0) {
     throw new Error(
       channelNameArg
-        ? `schedule channel '${channelNameArg}' not found in ${project.name}/${props.agentName}`
-        : `${project.name}/${props.agentName} has no schedule channel`,
+        ? `schedule channel '${channelNameArg}' not found in ${project.name}`
+        : `${project.name} has no schedule channel`,
     )
   }
 
@@ -299,13 +279,11 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
   const channel = resolveScheduleChannel({
     store: props.store,
     projectId: props.projectId,
-    agentName: props.agentName,
     channelName: parsed.data.channel_name,
   })
 
   props.store.removeScheduleEntry({
     projectId: props.projectId,
-    agentName: props.agentName,
     channelName: channel.name,
     entryIdOrName: parsed.data.id_or_name,
   })
@@ -323,16 +301,10 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
 const resolveScheduleChannel = (input: {
   store: LeucoProjectStore
   projectId: string
-  agentName: string
   channelName?: string
 }): ScheduleChannel => {
   const project = input.store.load(input.projectId)
-  const agent = findAgent(project, input.agentName)
-  // Only enabled schedule channels are considered. A disabled channel won't
-  // be built by the channel host, so accepting writes against it stores
-  // entries that silently accumulate and then fire en-masse the moment the
-  // channel is re-enabled (catch-up walks every past `runAt`).
-  const channels = agent.channels.filter(
+  const channels = project.channels.filter(
     (c): c is ScheduleChannel => c.type === "schedule" && c.enabled,
   )
 
@@ -340,14 +312,14 @@ const resolveScheduleChannel = (input: {
     const match = channels.find((c) => c.name === input.channelName)
     if (!match) {
       throw new Error(
-        `schedule channel '${input.channelName}' not found (or disabled) in ${project.name}/${input.agentName}`,
+        `schedule channel '${input.channelName}' not found (or disabled) in ${project.name}`,
       )
     }
     return match
   }
 
   if (channels.length === 0) {
-    throw new Error(`${project.name}/${input.agentName} has no enabled schedule channel`)
+    throw new Error(`${project.name} has no enabled schedule channel`)
   }
   if (channels.length > 1) {
     const names = channels.map((c) => c.name).join(", ")
@@ -361,12 +333,10 @@ const resolveScheduleChannel = (input: {
 const resolveTenantTokens = (input: {
   store: LeucoProjectStore
   projectId: string
-  agentName: string
   channelName?: string
 }): { botToken: string; channelName: string } => {
   const project = input.store.load(input.projectId)
-  const agent = findAgent(project, input.agentName)
-  const tokens = resolveSlackTokens({ project, agent, channelName: input.channelName })
+  const tokens = resolveSlackTokens({ project, channelName: input.channelName })
   return { botToken: tokens.botToken, channelName: tokens.channelName }
 }
 

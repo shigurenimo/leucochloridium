@@ -12,5 +12,5 @@ export const gatewayRoutes = factory
   .createApp()
   .get("/health", ...healthHandler)
   .get("/status", ...statusHandler)
-  .all("/mcp/:project/:agent", ...mcpHandler)
+  .all("/mcp/:project", ...mcpHandler)
   .route("/", threadsRoutes)

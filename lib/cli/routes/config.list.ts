@@ -1,24 +1,19 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 
-const help = `leuco config — read and write machine-wide settings
+const help = `leuco config / read and write machine-wide settings
 
-usage:
-  leuco config                          print every key in ~/.leuco/settings.json
-  leuco config get <key>                print one key
-  leuco config set <key> <value>        write one key (validated against the schema)
+usage / leuco config [subcommand]
 
-Recognised keys:
-  keepAwake (boolean)    macOS: keep the system awake while leuco runs
-                         (wraps the daemon launch with \`caffeinate -is\`,
-                         blocking idle sleep + system/clamshell sleep on AC).
-                         Defaults to true. Restart the daemon to pick up
-                         changes (\`leuco restart\`); for the LaunchAgent
-                         path, re-run \`leuco boot install\`.
+subcommands:
+  (none) / print every key in ~/.leuco/settings.json
+  get <key> / print one key
+  set <key> <value> / write one key (validated against the schema)
 
-Output of bare \`leuco config\` is JSON. Missing file prints the schema defaults.`
+output / valid YAML`
 
 export const configListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -27,10 +22,8 @@ export const configListHandler = factory.createHandlers(async (c) => {
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()
   if (settings instanceof Error) {
-    // Without this guard a corrupted ~/.leuco/settings.json would be silently
-    // rendered as `{}` and the user would think they wiped their config.
     throw new HTTPException(500, { message: `failed to load settings: ${settings.message}` })
   }
 
-  return c.text(JSON.stringify(settings, null, 2))
+  return c.text(renderYaml(settings))
 })

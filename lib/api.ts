@@ -21,7 +21,7 @@ export type { WebClientPort } from "@/channels/slack/web-client-port"
 
 // Configuration (per-project JSON files)
 export { projectSchema } from "@/config/config-schema"
-export type { Agent, Channel, Project } from "@/config/config-schema"
+export type { Channel, Project } from "@/config/config-schema"
 export { LeucoProjectStore } from "@/projects/project-store"
 
 // Daemon (process supervision)

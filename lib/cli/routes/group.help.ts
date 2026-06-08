@@ -1,68 +1,48 @@
-export const help = `leuco — Self-hosted gateway bridging chat channels to codex app-server.
+export const help = `leuco / self-hosted gateway bridging chat channels to codex app-server
 
-usage:
-  leuco                            print status when running, otherwise start the daemon in background
-  leuco start                      start the daemon; reads every ~/.leuco/projects/<p>/settings.json
-  leuco run                        run in foreground (debug; logs to stdout)
-  leuco stop                       stop the daemon
-  leuco restart                    stop + start
-  leuco status                     show daemon + per-project state
-  leuco logs [-f]                  print log file (-f to follow)
-  leuco update [--check]           install the latest published leuco (or just check the registry)
+usage / leuco [subcommand]
 
-  leuco projects list                                 list registered projects
-  leuco projects create <path>                        scaffold a new repository (mkdir + git init + register)
-  leuco projects add [<path>]                         register an existing repository
-  leuco projects <p> remove [--cascade]               unregister a project
-  leuco projects <p> rename <new>                     rename a project (also moves ~/.leuco/projects/<p>/)
+subcommands:
+  (none) / start daemon or show TUI if already running
+  start / start the daemon in background
+  run / run in foreground (debug; logs to stdout)
+  stop / stop the daemon
+  restart / stop + start
+  status / show daemon + per-project state
+  logs [-f] / print log file (-f to follow)
+  update [--check] / install the latest published leuco
 
-  leuco projects <p> agents list                      list agents in <p>
-  leuco projects <p> agents add <a>                   create .codex/agents/<a>.toml + register
-  leuco projects <p> agents <a> remove [--cascade]    remove an agent
-  leuco projects <p> agents <a> rename <new>          rename agent + TOML + codex-home (memories survive)
-  leuco projects <p> agents <a> start                 enable an agent (daemon reload)
-  leuco projects <p> agents <a> stop                  disable an agent (daemon reload, memories preserved)
-  leuco projects <p> agents <a> restart               rebuild this agent's tenant to pick up persona / token / ack changes
-  leuco projects <p> agents <a> reset                  drop the codex thread id (codex memories preserved)
+  projects / list registered projects
+  projects create <path> / scaffold a new repository
+  projects add [<path>] / register an existing repo
+  projects <p> remove [--cascade] / unregister a project
+  projects <p> rename <new> / rename a project
+  projects <p> start / enable a project
+  projects <p> stop / disable a project
+  projects <p> restart / rebuild the tenant
+  projects <p> reset / drop the codex thread
 
-  leuco projects <p> agents <a> channels list                          list channels under <a>
-  leuco projects <p> agents <a> channels add slack                     register a slack channel under <a>
-  leuco projects <p> agents <a> channels <c> remove                    remove a channel
-  leuco projects <p> agents <a> channels <c> rename <new>              rename a channel
-  leuco projects <p> agents <a> channels <c> start                     enable a channel
-  leuco projects <p> agents <a> channels <c> stop                      disable a channel
-  leuco projects <p> agents <a> channels <c> restart                   rebuild the parent tenant
-  leuco projects <p> agents <a> channels <c> set-tokens                update Slack bot / app tokens (\`-\` reads one from stdin)
+  projects <p> channels / list channels
+  projects <p> channels add (slack|schedule) / add a channel
+  projects <p> channels <c> remove / remove a channel
+  projects <p> channels <c> start / enable a channel
+  projects <p> channels <c> stop / disable a channel
 
-  leuco config list                                            print every key in ~/.leuco/settings.json
-  leuco config get <key>                                       print one key
-  leuco config set <key> <value>                               write one key
+  config / print machine-wide settings
+  config get <key> / print one key
+  config set <key> <value> / write one key
 
-  leuco boot install                                           macOS only: install LaunchAgent so the daemon starts at login
-  leuco boot uninstall                                         remove the LaunchAgent
-  leuco boot status                                            show LaunchAgent install + load state
+  boot install / macOS: install LaunchAgent
+  boot uninstall / remove the LaunchAgent
+  boot status / show LaunchAgent state
 
-  leuco slack call <method> --project <p> --agent <a> [--body '<json>'] [--channel <c>]
-                                                              forward a Slack Web API call (same surface as the MCP slack_call tool)
-  leuco mcp --project <p> --agent <a>                          stdio MCP server (spawned by codex; not for direct use)
+  slack call <method> --project <p> [--body '<json>'] [--channel <c>] / forward a Slack Web API call
+  mcp --project <p> / stdio MCP server (spawned by codex)
 
-cwd shortcut: when invoked from inside a registered project's path, you can drop the
-\`projects <p>\` prefix — \`leuco agents list\` works as \`leuco projects <p> agents list\`.
+cwd shortcut: inside a registered project's path, drop the \`projects <p>\` prefix.
 
-Layout:
-  daemon:   ~/.leuco/daemon/{pid,log}                     (machine-wide, single process)
-  global:   ~/.leuco/settings.json                        (machine-wide; \`leuco config set\`)
-  project:  ~/.leuco/projects/<p>/settings.json           (chmod 600, registration + tokens)
-  codex:    ~/.leuco/projects/<p>/agents/<a>/.codex/      (CODEX_HOME, memories)
-
-env (optional):
-  LEUCO_CODEX_BIN                  codex binary path (default: "codex")
-  LEUCO_PORT                       HTTP gateway port (default: 7331)
-
-env files (read from cwd at CLI invocation, not overriding existing env):
-  .env.local                       developer-local LEUCO_* overrides
-  .env                             committed defaults
+output / valid YAML (structured commands) or plain text (actions)
 
 options:
-  --help, -h                       show help
-  --version, -v                    show version`
+  --help, -h / show help
+  --version, -v / show version`

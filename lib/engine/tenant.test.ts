@@ -46,7 +46,6 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     projectId: "00000000-0000-4000-8000-000000000000",
     projectName: "demo",
     projectPath: "/tmp/demo",
-    agentName: "default",
     codex: overrides.codex ?? fakeCodex(),
     plugins: overrides.plugins ?? [],
     agentSpec: overrides.agentSpec,
@@ -248,17 +247,16 @@ describe("LeucoTenant introspection", () => {
     expect(tenant.listPlugins()).toEqual(["one", "two"])
   })
 
-  it("key combines projectName and agentName", () => {
+  it("key returns the project name", () => {
     const tenant = new LeucoTenant({
       projectId: "00000000-0000-4000-8000-000000000000",
       projectName: "p",
       projectPath: "/tmp/p",
-      agentName: "a",
       codex: fakeCodex(),
       plugins: [],
       onLog: () => {},
     })
-    expect(tenant.key).toBe("p:a")
+    expect(tenant.key).toBe("p")
   })
 
   it("listThreads exposes the agent's single codex thread once a turn has run", async () => {

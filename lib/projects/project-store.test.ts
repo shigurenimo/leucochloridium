@@ -9,34 +9,30 @@ import { LeucoProjectStore } from "@/projects/project-store"
 const DEMO_ID = "00000000-0000-4000-8000-000000000000"
 
 const sampleProject = (overrides: Partial<Project> = {}): Project => ({
+  version: 2,
   id: DEMO_ID,
   name: "demo",
   path: "/tmp/demo",
-  agents: [
+  enabled: true,
+  useCommonInstructions: true,
+  prompts: ["friendly"],
+  channels: [
     {
-      name: "reviewer",
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "slack",
+      type: "slack",
       enabled: true,
-      useCommonInstructions: true,
-      prompts: ["friendly" as const],
-      channels: [
-        {
-          id: "11111111-1111-4111-8111-111111111111",
-          name: "slack",
-          type: "slack",
-          enabled: true,
-          botToken: "",
-          appToken: "",
-          ackMode: "mention" as const,
-          ackIcons: {
-            progress: "hourglass_flowing_sand",
-            success: "white_check_mark",
-            error: "x",
-          },
-        },
-      ],
-      mcpServers: {},
+      botToken: "",
+      appToken: "",
+      ackMode: "mention",
+      ackIcons: {
+        progress: "hourglass_flowing_sand",
+        success: "white_check_mark",
+        error: "x",
+      },
     },
   ],
+  mcpServers: {},
   ...overrides,
 })
 
@@ -71,31 +67,22 @@ describe("LeucoProjectStore", () => {
     expect(mode).toBe(0o600)
   })
 
-  it("round-trips data through save → load by id", () => {
+  it("round-trips data through save -> load by id", () => {
     const project = sampleProject({
-      agents: [
+      channels: [
         {
-          name: "reviewer",
+          id: "22222222-2222-4222-8222-222222222222",
+          name: "slack",
+          type: "slack",
           enabled: true,
-          useCommonInstructions: true,
-          prompts: ["friendly" as const],
-          channels: [
-            {
-              id: "22222222-2222-4222-8222-222222222222",
-              name: "slack",
-              type: "slack",
-              enabled: true,
-              botToken: "xoxb-secret",
-              appToken: "xapp-secret",
-              ackMode: "mention" as const,
-              ackIcons: {
-                progress: "hourglass_flowing_sand",
-                success: "white_check_mark",
-                error: "x",
-              },
-            },
-          ],
-          mcpServers: {},
+          botToken: "xoxb-secret",
+          appToken: "xapp-secret",
+          ackMode: "mention",
+          ackIcons: {
+            progress: "hourglass_flowing_sand",
+            success: "white_check_mark",
+            error: "x",
+          },
         },
       ],
     })
@@ -165,7 +152,7 @@ describe("LeucoProjectStore", () => {
   it("throws when zod validation fails", () => {
     const path = store.getPaths().projectSettingsPath(DEMO_ID)
     mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, JSON.stringify({ id: DEMO_ID, name: "", path: "p", agents: [] }))
+    writeFileSync(path, JSON.stringify({ id: DEMO_ID, name: "", path: "p" }))
     expect(() => store.load(DEMO_ID)).toThrow()
   })
 
@@ -202,22 +189,13 @@ describe("LeucoProjectStore", () => {
   describe("schedule entries", () => {
     const projectWithScheduleChannel = (): Project =>
       sampleProject({
-        agents: [
+        channels: [
           {
-            name: "reviewer",
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "cron",
+            type: "schedule",
             enabled: true,
-            useCommonInstructions: true,
-            prompts: ["friendly" as const],
-            channels: [
-              {
-                id: "33333333-3333-4333-8333-333333333333",
-                name: "cron",
-                type: "schedule",
-                enabled: true,
-                entries: [],
-              },
-            ],
-            mcpServers: {},
+            entries: [],
           },
         ],
       })
@@ -238,13 +216,12 @@ describe("LeucoProjectStore", () => {
     it("addScheduleEntry appends a new entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.agents[0]!.channels[0]!
+      const channel = project.channels.find((c) => c.name === "cron")!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries.map((e) => e.name)).toEqual(["morning-standup"])
     })
@@ -252,14 +229,12 @@ describe("LeucoProjectStore", () => {
     it("addScheduleEntry rejects duplicate name", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          agentName: "reviewer",
           channelName: "cron",
           entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
         }),
@@ -271,7 +246,6 @@ describe("LeucoProjectStore", () => {
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          agentName: "reviewer",
           channelName: "slack",
           entry: sampleEntry(),
         }),
@@ -281,19 +255,17 @@ describe("LeucoProjectStore", () => {
     it("removeScheduleEntry by id removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entryIdOrName: "44444444-4444-4444-8444-444444444444",
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.agents[0]!.channels[0]!
+      const channel = project.channels.find((c) => c.name === "cron")!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries).toEqual([])
     })
@@ -301,13 +273,11 @@ describe("LeucoProjectStore", () => {
     it("removeScheduleEntry by name removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entryIdOrName: "morning-standup",
       })
@@ -317,7 +287,6 @@ describe("LeucoProjectStore", () => {
       expect(() =>
         store.removeScheduleEntry({
           projectId: DEMO_ID,
-          agentName: "reviewer",
           channelName: "cron",
           entryIdOrName: "nope",
         }),
@@ -327,20 +296,18 @@ describe("LeucoProjectStore", () => {
     it("updateScheduleEntry patches one entry by id", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { enabled: false },
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.agents[0]!.channels[0]!
+      const channel = project.channels.find((c) => c.name === "cron")!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries[0]!.enabled).toBe(false)
     })
@@ -348,19 +315,17 @@ describe("LeucoProjectStore", () => {
     it("updateScheduleEntry preserves id even if patch tries to override", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        agentName: "reviewer",
         channelName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { id: "evil" } as Partial<ScheduleEntry>,
       })
       const project = store.load(DEMO_ID)
-      const channel = project.agents[0]!.channels[0]!
+      const channel = project.channels.find((c) => c.name === "cron")!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
     })

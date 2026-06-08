@@ -1,12 +1,15 @@
-export const help = `leuco projects <p> — operations on a registered project
+export const help = `leuco projects <p> / operations on a registered project
 
-usage:
-  leuco projects <p> remove [--cascade]            unregister this project
-  leuco projects <p> rename <new>                  rename this project
-  leuco projects <p> relocate <new-path>           move the repo dir + update path
-  leuco projects <p> merge-into <dst>              move every agent to <dst>, drop <p>
-  leuco projects <p> agents                        list agents in this project
-  leuco projects <p> agents add <a>                add an agent to this project
-  leuco projects <p> agents <a> ...                operate on a specific agent
+usage / leuco projects <p> [subcommand]
 
-Run \`leuco projects <p> <subcommand> -h\` for details on a specific subcommand.`
+subcommands:
+  remove [--cascade] / unregister this project
+  rename <new> / rename this project
+  relocate <new-path> / move the repo dir + update path
+  start / enable this project
+  stop / disable this project
+  restart / rebuild the tenant
+  reset / drop codex thread (memories preserved)
+  channels / list channels in this project
+  channels add (slack|schedule) / add a channel
+  channels <c> ... / operate on a specific channel`

@@ -17,7 +17,6 @@ describe("leucoEventSchema", () => {
       ts: 1700000000000,
       type: "turn.complete",
       project: "p",
-      agent: "a",
       threadKey: "t",
       reply: "ok",
     })
@@ -29,7 +28,6 @@ describe("leucoEventSchema", () => {
       ts: 1700000000000,
       type: "slack.event",
       project: "p",
-      agent: "a",
       channel: "c",
       event: {
         kind: "message",
@@ -58,7 +56,7 @@ describe("leucoEventSchema", () => {
   it("rejects events missing required fields", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
-      type: "tenant.started",
+      type: "turn.complete",
       project: "p",
     })
     expect(parsed.success).toBe(false)

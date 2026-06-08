@@ -5,18 +5,11 @@ import { LeucoEnv } from "@/env/leuco-env"
 import { errorMessage } from "@/error-message"
 import { LeucoRuntime } from "@/runtime/runtime"
 
-const help = `leuco run — run in foreground (debug)
+const help = `leuco run / run in foreground (debug)
 
-usage: leuco run
+usage / leuco run
 
-Logs stream to stdout instead of being written to the daemon log file.
-Use this to diagnose Slack/codex issues; SIGINT (Ctrl-C) stops cleanly.
-
-Tokens for each channel are read from
-~/.leuco/projects/<p>/agents/<a>/channels/<c>/{bot,app}.token at startup.
-
-optional env:
-  LEUCO_PORT            HTTP gateway port (default: 7331)`
+Logs stream to stdout. SIGINT (Ctrl-C) stops cleanly.`
 
 export const runHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

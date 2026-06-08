@@ -14,14 +14,12 @@ const tenantStartedSchema = z.object({
   ...baseTs,
   type: z.literal("tenant.started"),
   project: z.string(),
-  agent: z.string(),
 })
 
 const tenantStoppedSchema = z.object({
   ...baseTs,
   type: z.literal("tenant.stopped"),
   project: z.string(),
-  agent: z.string(),
 })
 
 const engineReconcileSchema = z.object({
@@ -41,7 +39,6 @@ const slackEventEnvelopeSchema = z.object({
   ...baseTs,
   type: z.literal("slack.event"),
   project: z.string(),
-  agent: z.string(),
   channel: z.string(),
   event: slackEventSchema,
 })
@@ -50,7 +47,6 @@ const turnStartSchema = z.object({
   ...baseTs,
   type: z.literal("turn.start"),
   project: z.string(),
-  agent: z.string(),
   threadKey: z.string(),
   input: z.string(),
 })
@@ -59,7 +55,6 @@ const turnCompleteSchema = z.object({
   ...baseTs,
   type: z.literal("turn.complete"),
   project: z.string(),
-  agent: z.string(),
   threadKey: z.string(),
   reply: z.string(),
 })
@@ -68,7 +63,6 @@ const turnErrorSchema = z.object({
   ...baseTs,
   type: z.literal("turn.error"),
   project: z.string(),
-  agent: z.string(),
   threadKey: z.string(),
   error: z.string(),
 })
@@ -77,7 +71,6 @@ const codexNotificationSchema = z.object({
   ...baseTs,
   type: z.literal("codex.notification"),
   project: z.string(),
-  agent: z.string(),
   method: z.string(),
   params: z.unknown(),
 })
@@ -86,7 +79,6 @@ const scheduleFiredSchema = z.object({
   ...baseTs,
   type: z.literal("schedule.fired"),
   project: z.string(),
-  agent: z.string(),
   channel: z.string(),
   entryId: z.string(),
   entryName: z.string(),

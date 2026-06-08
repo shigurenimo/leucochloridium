@@ -1,6 +1,6 @@
 /**
  * Wait between the disable-then-enable SIGHUPs that drive
- * "agent restart" / "channel restart" / "agent reset" CLI flows.
+ * "channel restart" and similar CLI flows.
  *
  * The CLI has no observable handshake to know when the daemon's reconcile
  * pass has settled, so we sleep long enough for the previous SIGHUP to

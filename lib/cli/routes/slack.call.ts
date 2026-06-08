@@ -2,23 +2,22 @@ import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
-import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
+import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco slack call — forward a Slack Web API call
+const help = `leuco slack call / forward a Slack Web API call
 
-usage: leuco slack call <method> [--body '<json>'] --project <p> --agent <a> [--channel <c>]
+usage / leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
 
-  <method>            Slack Web API method, e.g. chat.postMessage, conversations.replies
-  --body '<json>'     JSON body for the method (default: {})
-  --project <p>       project name registered in ~/.leuco/projects/
-  --agent <a>         agent name within that project
-  --channel <c>       leuco channel name (only needed if the agent has multiple)
+options:
+  <method> / Slack Web API method (e.g. chat.postMessage)
+  --body '<json>' / JSON body for the method (default: {})
+  --project <p> / project whose stored bot token is used
+  --channel <c> / pick a specific channel when the project has multiple
 
-Outputs the raw Slack JSON response on stdout. See the slack_call MCP tool
-for the codex-side equivalent.`
+output / raw Slack JSON response`
 
 export const slackCallHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -27,15 +26,13 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
   const method = body.args[0]
   if (!method) {
     throw new HTTPException(400, {
-      message:
-        "usage: leuco slack call <method> [--body '<json>'] --project <p> --agent <a> [--channel <c>]",
+      message: "usage: leuco slack call <method> [--body '<json>'] --project <p> [--channel <c>]",
     })
   }
 
   const projectName = flagString(body.flags.project)
-  const agentName = flagString(body.flags.agent)
-  if (!projectName || !agentName) {
-    throw new HTTPException(400, { message: "--project and --agent are required" })
+  if (!projectName) {
+    throw new HTTPException(400, { message: "--project is required" })
   }
 
   const channelName = flagString(body.flags.channel) ?? undefined
@@ -44,8 +41,7 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
-  const agent = findAgent(project, agentName)
-  const tokens = resolveSlackTokens({ project, agent, channelName })
+  const tokens = resolveSlackTokens({ project, channelName })
   const result = await slackCall({ botToken: tokens.botToken, method, body: parsedBody })
 
   return c.text(JSON.stringify(result, null, 2))

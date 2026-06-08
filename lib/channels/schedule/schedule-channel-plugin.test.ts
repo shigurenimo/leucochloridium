@@ -27,7 +27,6 @@ const makeCtx = (): { ctx: ChannelPluginContext; captured: Captured } => {
     },
     bus: captured.bus,
     projectName: "demo",
-    agentName: "default",
   }
   return { ctx, captured }
 }

@@ -1,52 +1,40 @@
 import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
-import type { Agent, Channel, ScheduleEntry } from "@/config/config-schema"
+import type { Channel, ScheduleEntry } from "@/config/config-schema"
 import type { ChannelPlugin } from "@/engine/channel-plugin"
-import type { LeucoAgentStateStore } from "@/projects/agent-state-store"
+import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
 type ProjectRef = { id: string; name: string }
 
 type BuildProps = {
   project: ProjectRef
-  agent: Agent
-  /**
-   * Required only when the agent has at least one schedule channel — the
-   * plugin needs to re-read entries every tick and delete fired one-shots.
-   * Slack-only agents pass nothing.
-   */
+  channels: Channel[]
   projectStore?: LeucoProjectStore
-  /**
-   * Sibling of `projectStore` for schedule channels: holds per-entry
-   * `lastFiredAt` (the cron catch-up bound) in `agents/<a>/state.json`.
-   */
-  agentStateStore?: LeucoAgentStateStore
+  projectStateStore?: LeucoProjectStateStore
 }
 
 /**
- * Resolves an agent's `channels[]` entries into runtime `ChannelPlugin`
+ * Resolves a project's `channels[]` entries into runtime `ChannelPlugin`
  * instances. Tokens live inline on each channel object (loaded from
  * `<projectDir>/settings.json`), so building plugins is a pure transform with
  * no extra IO.
- *
- * Throws on the first channel with empty tokens or unsupported type.
  */
 export class LeucoChannelHost {
   private constructor() {
     Object.freeze(this)
   }
 
-  static buildForAgent(props: BuildProps): ChannelPlugin[] {
+  static buildForProject(props: BuildProps): ChannelPlugin[] {
     const plugins: ChannelPlugin[] = []
-    for (const channel of props.agent.channels) {
+    for (const channel of props.channels) {
       plugins.push(
         LeucoChannelHost.toPlugin({
           project: props.project,
-          agentName: props.agent.name,
           channel,
           projectStore: props.projectStore,
-          agentStateStore: props.agentStateStore,
+          projectStateStore: props.projectStateStore,
         }),
       )
     }
@@ -55,12 +43,11 @@ export class LeucoChannelHost {
 
   private static toPlugin(props: {
     project: ProjectRef
-    agentName: string
     channel: Channel
     projectStore?: LeucoProjectStore
-    agentStateStore?: LeucoAgentStateStore
+    projectStateStore?: LeucoProjectStateStore
   }): ChannelPlugin {
-    const label = `${props.project.name}/${props.agentName}/${props.channel.name}`
+    const label = `${props.project.name}/${props.channel.name}`
 
     if (props.channel.type === "slack") {
       if (props.channel.botToken.length === 0) {
@@ -82,14 +69,13 @@ export class LeucoChannelHost {
       if (!props.projectStore) {
         throw new Error(`channel ${label}: schedule channels require a projectStore`)
       }
-      if (!props.agentStateStore) {
-        throw new Error(`channel ${label}: schedule channels require an agentStateStore`)
+      if (!props.projectStateStore) {
+        throw new Error(`channel ${label}: schedule channels require a projectStateStore`)
       }
       const store = buildScheduleStore({
         projectStore: props.projectStore,
-        agentStateStore: props.agentStateStore,
+        projectStateStore: props.projectStateStore,
         projectId: props.project.id,
-        agentName: props.agentName,
         channelName: props.channel.name,
       })
       return new LeucoScheduleChannelPlugin({ name: props.channel.name, store })
@@ -101,17 +87,14 @@ export class LeucoChannelHost {
 
 const buildScheduleStore = (input: {
   projectStore: LeucoProjectStore
-  agentStateStore: LeucoAgentStateStore
+  projectStateStore: LeucoProjectStateStore
   projectId: string
-  agentName: string
   channelName: string
 }): ScheduleStorePort => {
   return {
     listEntries(): ScheduleEntry[] {
       const project = input.projectStore.load(input.projectId)
-      const agent = project.agents.find((a) => a.name === input.agentName)
-      if (!agent) throw new Error(`agent '${input.agentName}' not found`)
-      const channel = agent.channels.find((c) => c.name === input.channelName)
+      const channel = project.channels.find((c) => c.name === input.channelName)
       if (!channel) throw new Error(`channel '${input.channelName}' not found`)
       if (channel.type !== "schedule") {
         throw new Error(`channel '${input.channelName}' is not a schedule channel`)
@@ -121,22 +104,16 @@ const buildScheduleStore = (input: {
     removeEntry(entryId: string): void {
       input.projectStore.removeScheduleEntry({
         projectId: input.projectId,
-        agentName: input.agentName,
         channelName: input.channelName,
         entryIdOrName: entryId,
       })
     },
     getLastFiredAt(entryId: string): number | null {
-      const state = input.agentStateStore.load(input.projectId, input.agentName)
+      const state = input.projectStateStore.load(input.projectId)
       return state.scheduleLastFiredAt[entryId] ?? null
     },
     markFired(entryId: string, firedAt: number): void {
-      input.agentStateStore.markScheduleEntryFired(
-        input.projectId,
-        input.agentName,
-        entryId,
-        firedAt,
-      )
+      input.projectStateStore.markScheduleEntryFired(input.projectId, entryId, firedAt)
     },
   }
 }

@@ -2,8 +2,8 @@
 
 Self-hosted gateway that bridges chat channels (Slack today) to the
 [Codex](https://github.com/openai/codex) `app-server`. One machine-wide
-daemon supervises every registered project and runs each `(project, agent)`
-pair as an isolated tenant with its own `CODEX_HOME`.
+daemon supervises every registered project, each running as an isolated
+tenant with its own `CODEX_HOME`.
 
 ## Install
 
@@ -33,87 +33,106 @@ and otherwise spawns the daemon in the background.
 
 ## Commands
 
-| command                  | what it does                                                             |
-| ------------------------ | ------------------------------------------------------------------------ |
-| `leuco`                  | print status when running, otherwise start the daemon                    |
-| `leuco start`            | start the daemon in background                                           |
-| `leuco run`              | run in foreground (debug; logs to stdout)                                |
-| `leuco stop`             | stop the daemon                                                          |
-| `leuco restart`          | stop + start                                                             |
-| `leuco status`           | daemon + per-project state                                               |
-| `leuco logs [-f]`        | print daemon log (`-f` to follow)                                        |
-| `leuco update [--check]` | install the latest published leuco (`--check` only reports the registry) |
+Daemon:
 
-Project / agent / channel management:
+```
+leuco                     print status when running, otherwise start the daemon
+leuco start               start the daemon in background
+leuco run                 run in foreground (debug; logs to stdout)
+leuco stop                stop the daemon
+leuco restart             stop + start
+leuco status              daemon + per-project state
+leuco logs [-f]           print daemon log (-f to follow)
+leuco update [--check]    install the latest published leuco (--check only reports the registry)
+```
+
+Project management:
 
 ```
 leuco projects list
-leuco projects create <path>            # mkdir + git init + register
-leuco projects add [<path>]             # register an existing repo
+leuco projects create <path>            mkdir + git init + register
+leuco projects add [<path>]             register an existing repo
 leuco projects <p> remove [--cascade]
 leuco projects <p> rename <new>
+leuco projects <p> relocate <new-path>
+leuco projects <p> start
+leuco projects <p> stop
+leuco projects <p> restart
+leuco projects <p> reset               clear codex thread + restart
+```
 
-leuco projects <p> agents list
-leuco projects <p> agents add <a>
-leuco projects <p> agents <a> {remove,rename,start,stop,restart}
+Channel management:
 
-leuco projects <p> agents <a> channels list
-leuco projects <p> agents <a> channels add slack
-leuco projects <p> agents <a> channels <c> {remove,rename,start,stop,restart}
+```
+leuco projects <p> channels list
+leuco projects <p> channels add slack
+leuco projects <p> channels add schedule
+leuco projects <p> channels <c> remove
+leuco projects <p> channels <c> rename <new>
+leuco projects <p> channels <c> start
+leuco projects <p> channels <c> stop
+leuco projects <p> channels <c> restart
+leuco projects <p> channels <c> set-tokens
+```
+
+Schedule entries (schedule channels only):
+
+```
+leuco projects <p> channels <c> schedules list
+leuco projects <p> channels <c> schedules add <name> --run-at '<cron>' --prompt '<text>'
+leuco projects <p> channels <c> schedules remove <name>
 ```
 
 Cwd shortcut: when invoked from inside a registered project's path you can
-drop the `projects <p>` prefix — `leuco agents list` resolves to
-`leuco projects <p> agents list`.
+drop the `projects <p>` prefix -- `leuco channels list` resolves to
+`leuco projects <p> channels list`.
 
 Other entry points:
 
 ```
-leuco slack call <method> --project <p> --agent <a> [--body '<json>'] [--channel <c>]
-leuco mcp --project <p> --agent <a>     # stdio MCP server (spawned by codex)
+leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
+leuco mcp --project <p>     # stdio MCP server (spawned by codex)
 ```
 
 ## How it works
 
 ```
-Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per tenant)
-                            │                    │
-                            │   thread/start { cwd: <project.path> }
-                            │   turn/start  { input: [{type:"text", text}] }
-                            ▼
+Slack (Socket Mode) --> leuco daemon --> codex app-server (one process per project)
+                            |                    |
+                            |   thread/start { cwd: <project.path> }
+                            |   turn/start  { input: [{type:"text", text}] }
+                            v
                        chat.postMessage (in thread)
 ```
 
-- One daemon per machine; the daemon supervises every enabled
-  `(project, agent)` tenant.
+- One daemon per machine; the daemon supervises every enabled project as a
+  tenant.
 - Each tenant has a dedicated `CODEX_HOME` under
-  `~/.leuco/projects/<p>/agents/<a>/.codex/`. `auth.json` is symlinked from
+  `~/.leuco/projects/<id>/.codex/`. `auth.json` is symlinked from
   `~/.codex/auth.json` so all tenants share the user's codex login while
   keeping memories isolated.
 - One Slack thread maps to one Codex thread. Turns within a thread serialise;
   separate threads run in parallel.
 - Mention gating, ack reactions, and bot-message filtering are configurable
   per channel (`ackMode: off | mention | always`, custom `ackIcons`).
-- Codex picks up the project's `AGENTS.md` / `AGENTS.override.md` and any
-  files listed in `~/.codex/config.toml`'s `project_doc_fallback_filenames`.
+- Codex subagents (`.codex/agents/*.toml`) are managed by codex, not leuco.
 
 ## Filesystem layout
 
 ```
 ~/.leuco/
-├── settings.json                          machine-wide settings
-├── daemon/
-│   ├── pid
-│   ├── log
-│   └── events.jsonl                       newline-delimited LeucoEvent stream
-└── projects/
-    └── <projectName>/
-        ├── settings.json                  project config + per-channel tokens (chmod 600)
-        └── agents/
-            └── <agentName>/
-                └── .codex/                CODEX_HOME for this tenant
-                    ├── auth.json          symlink → ~/.codex/auth.json
-                    └── config.toml        project trust + mcp_servers.leuco
+  settings.json                          machine-wide settings
+  daemon/
+    pid
+    log
+    events.jsonl                         newline-delimited LeucoEvent stream
+  projects/
+    <uuid>/
+      settings.json                      project config + per-channel tokens (chmod 600)
+      state.json                         runtime state (codex thread id etc.)
+      .codex/                            CODEX_HOME for this tenant
+        auth.json                        symlink -> ~/.codex/auth.json
+        config.toml                      project trust + mcp_servers.leuco
 ```
 
 ## Requirements
@@ -127,19 +146,16 @@ Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per
 
 ## Environment variables
 
-| Variable          | Purpose                                                  |
-| ----------------- | -------------------------------------------------------- |
-| `LEUCO_CODEX_BIN` | Codex binary path (default: `codex`)                     |
-| `LEUCO_PORT`      | HTTP gateway port for IPC (default: off; e.g. `9743`)    |
-| `LEUCO_CWD`       | Override Codex working directory (default: project path) |
+- `LEUCO_CODEX_BIN` -- Codex binary path (default: `codex`)
+- `LEUCO_PORT` -- HTTP gateway port for IPC (default: off; e.g. `9743`)
+- `LEUCO_CWD` -- Override Codex working directory (default: project path)
 
 `.env.local` and `.env` are read from the cwd at CLI invocation. Existing
 process env wins over the files.
 
 Per-channel Slack tokens (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) are stored in
-`~/.leuco/projects/<p>/settings.json` and are entered via
-`leuco projects <p> agents <a> channels add slack` — no env vars required at
-runtime.
+`~/.leuco/projects/<id>/settings.json` and are entered via
+`leuco projects <p> channels add slack` -- no env vars required at runtime.
 
 ## Event log
 
@@ -165,7 +181,7 @@ if (start instanceof Error) throw start
 
 Lower-level building blocks (`LeucoEngine`, `LeucoTenant`,
 `LeucoCodexClient`, `LeucoSlackChannelPlugin`, `LeucoChannelHost`,
-`LeucoEventBus`, `LeucoProjectStore`, …) are exported from the package
+`LeucoEventBus`, `LeucoProjectStore`, ...) are exported from the package
 entry point. Every IO boundary is a port type so tests can substitute fakes.
 
 ## Troubleshooting
@@ -180,7 +196,7 @@ Common causes when nothing happens on mention:
 - Slack App is missing the `app_mention` event subscription
 - Bot is not invited to the channel (`/invite @yourbot`)
 - App-level token is missing `connections:write`
-- Channel has `ackMode: "off"` and the agent returned empty text
+- Channel has `ackMode: "off"` and the bot returned empty text
 
 ## License
 

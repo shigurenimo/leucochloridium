@@ -13,7 +13,7 @@ type Props = {
 /**
  * In-process HTTP gateway: runs `Bun.serve` against the Hono app built by
  * `buildGatewayApp`. Started by the engine on every run — the MCP route at
- * `/mcp/:project/:agent` depends on it.
+ * `/mcp/:project` depends on it.
  */
 export class LeucoGatewayServer {
   private readonly engine: LeucoEngine

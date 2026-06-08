@@ -9,38 +9,18 @@ export type SubagentEntry = {
 type Props = {
   projectName: string
   projectPath: string
-  agentName: string
   identities: ChannelIdentity[]
   subagents: SubagentEntry[]
-  /**
-   * Pre-resolved preset bodies (already looked up from
-   * `LeucoPromptPresets`). Each entry is spliced in between the dynamic
-   * preamble and the per-agent TOML text, separated by `---` blocks.
-   */
   presets: string[]
   perAgentInstructions: string | null
-  /**
-   * When false, the dynamic preamble (project / agent header, Slack
-   * identities, response policy, sub-agent paths) is omitted and only the
-   * presets + per-agent text are emitted. Defaults to true at the call site.
-   */
   usePreamble?: boolean
 }
 
 /**
  * Builds the dynamic preamble that leuco prepends to every codex turn when
- * `agent.useCommonInstructions` is true. Pure: every value the prompt depends
+ * `project.useCommonInstructions` is true. Pure: every value the prompt depends
  * on must be passed in via Props so the same inputs always render the same
  * string and the class is trivially testable.
- *
- * Sections:
- *   1. project / agent header (so codex knows where it is running)
- *   2. Slack identity per channel — the bot's own user id, used by codex to
- *      filter out its own messages and avoid bot loops
- *   3. response policy — discourage replying to every event
- *   4. how to reply — turn output is monologue, Slack writes go through MCP
- *   5. loop avoidance — never reply to your own bot user id, etc.
- *   6. sub-agent paths — the agent is encouraged to edit these TOML files
  */
 export class LeucoSystemPromptBuilder {
   constructor(private readonly props: Props) {
@@ -78,7 +58,7 @@ export class LeucoSystemPromptBuilder {
     const lines = [
       "# leuco built-in instructions",
       "",
-      `You are running inside leuco, a self-hosted Slack gateway. Project: \`${this.props.projectName}\`. Agent: \`${this.props.agentName}\`. Working directory: \`${this.props.projectPath}\`.`,
+      `You are running inside leuco, a self-hosted Slack gateway. Project: \`${this.props.projectName}\`. Working directory: \`${this.props.projectPath}\`.`,
     ]
     return lines.join("\n")
   }
@@ -87,7 +67,7 @@ export class LeucoSystemPromptBuilder {
     const slackIdentities = this.props.identities.filter((i) => i.type === "slack")
     const lines = ["## Slack identity"]
     if (slackIdentities.length === 0) {
-      lines.push("", "No Slack channels are connected for this agent yet.")
+      lines.push("", "No Slack channels are connected yet.")
       return lines.join("\n")
     }
 
@@ -115,7 +95,7 @@ export class LeucoSystemPromptBuilder {
     if (scheduleIdentities.length === 0) {
       lines.push(
         "",
-        "No schedule channel is registered for this agent. Ask the operator to run `leuco projects <p> agents <a> channels add schedule` if you want to set timed reminders.",
+        "No schedule channel is registered. Ask the operator to run `leuco projects <p> channels add schedule` if you want to set timed reminders.",
       )
       return lines.join("\n")
     }
@@ -172,17 +152,14 @@ export class LeucoSystemPromptBuilder {
 
   private subagentSection(): string {
     const dir = join(this.props.projectPath, ".codex", "agents")
-    const selfPath = join(dir, `${this.props.agentName}.toml`)
     const lines = [
       "## Sub-agents",
       "",
-      `Your own definition file is \`${selfPath}\` — read it when you need to recall your own configured behavior, and edit it when you decide to change how you operate.`,
-      "",
-      `Other sub-agent definitions in this project live under \`${dir}/<name>.toml\`.`,
+      `Sub-agent definitions in this project live under \`${dir}/<name>.toml\`.`,
     ]
 
     if (this.props.subagents.length === 0) {
-      lines.push("", "No other sub-agents are registered yet.")
+      lines.push("", "No sub-agents are registered yet.")
     } else {
       lines.push("", "Currently registered:")
       for (const sub of this.props.subagents) {
@@ -192,7 +169,7 @@ export class LeucoSystemPromptBuilder {
 
     lines.push(
       "",
-      "You may edit any of these TOML files freely to refine `developer_instructions`. Treat improving these prompts — your own and your sub-agents' — as part of your normal work; when you learn something that should change behavior, persist it back into the file.",
+      "You may edit any of these TOML files freely to refine `developer_instructions`. Treat improving these prompts as part of your normal work; when you learn something that should change behavior, persist it back into the file.",
     )
     return lines.join("\n")
   }

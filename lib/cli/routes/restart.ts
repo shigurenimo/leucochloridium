@@ -3,11 +3,9 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { cliEnvSchema } from "@/env/cli-env-schema"
 
-const help = `leuco restart — stop then start
+const help = `leuco restart / stop then start
 
-usage: leuco restart
-
-Equivalent to \`leuco stop && leuco start\`.`
+usage / leuco restart`
 
 export const restartHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -33,11 +31,7 @@ export const restartHandler = factory.createHandlers(async (c) => {
 
   const result = daemon.start({ binPath: c.var.binPath, env: process.env })
 
-  lines.push(
-    `[leuco] started in background (pid ${result.pid})`,
-    `        log: ${result.logPath}`,
-    "",
-    "run `leuco logs -f` to tail logs, `leuco stop` to stop.",
-  )
+  lines.push(`leuco: started (pid ${result.pid})`)
+  lines.push(`log: ${result.logPath}`)
   return c.text(lines.join("\n"))
 })

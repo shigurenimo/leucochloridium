@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest"
 import { LeucoChannelHost } from "@/channels/channel-host"
 import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
-import type { Agent, Channel, Project } from "@/config/config-schema"
+import type { Channel, Project } from "@/config/config-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
-import { LeucoAgentStateStore } from "@/projects/agent-state-store"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const slackChannel = (name: string, botToken = "xoxb-1", appToken = "xapp-1"): Channel => ({
@@ -25,28 +25,19 @@ const slackChannel = (name: string, botToken = "xoxb-1", appToken = "xapp-1"): C
   },
 })
 
-const agent = (channels: Agent["channels"]): Agent => ({
-  name: "default",
-  enabled: true,
-  useCommonInstructions: true,
-  prompts: ["friendly"],
-  channels,
-  mcpServers: {},
-})
-
-describe("LeucoChannelHost.buildForAgent", () => {
-  it("returns no plugins for an agent with no channels", () => {
-    const plugins = LeucoChannelHost.buildForAgent({
+describe("LeucoChannelHost.buildForProject", () => {
+  it("returns no plugins for a project with no channels", () => {
+    const plugins = LeucoChannelHost.buildForProject({
       project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([]),
+      channels: [],
     })
     expect(plugins).toEqual([])
   })
 
   it("builds a LeucoSlackChannelPlugin when both tokens are present", () => {
-    const plugins = LeucoChannelHost.buildForAgent({
+    const plugins = LeucoChannelHost.buildForProject({
       project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-      agent: agent([slackChannel("main")]),
+      channels: [slackChannel("main")],
     })
     expect(plugins).toHaveLength(1)
     expect(plugins[0]).toBeInstanceOf(LeucoSlackChannelPlugin)
@@ -55,27 +46,27 @@ describe("LeucoChannelHost.buildForAgent", () => {
 
   it("throws when bot token is empty", () => {
     expect(() =>
-      LeucoChannelHost.buildForAgent({
+      LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        agent: agent([slackChannel("main", "", "xapp-1")]),
+        channels: [slackChannel("main", "", "xapp-1")],
       }),
     ).toThrow(/botToken/)
   })
 
   it("throws when app token is empty", () => {
     expect(() =>
-      LeucoChannelHost.buildForAgent({
+      LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        agent: agent([slackChannel("main", "xoxb-1", "")]),
+        channels: [slackChannel("main", "xoxb-1", "")],
       }),
     ).toThrow(/appToken/)
   })
 
   it("stops at the first failing channel", () => {
     expect(() =>
-      LeucoChannelHost.buildForAgent({
+      LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        agent: agent([slackChannel("ok"), slackChannel("missing", "", "")]),
+        channels: [slackChannel("ok"), slackChannel("missing", "", "")],
       }),
     ).toThrow(/missing/)
   })
@@ -83,38 +74,35 @@ describe("LeucoChannelHost.buildForAgent", () => {
   it("builds a LeucoScheduleChannelPlugin when projectStore is provided", () => {
     const home = mkdtempSync(join(tmpdir(), "leuco-channel-host-"))
     try {
-      const store = new LeucoProjectStore({ paths: new LeucoPaths({ home }) })
+      const paths = new LeucoPaths({ home })
+      const store = new LeucoProjectStore({ paths })
       const project: Project = {
+        version: 2,
         id: "00000000-0000-4000-8000-000000000000",
         name: "demo",
         path: "/tmp/demo",
-        agents: [
+        enabled: true,
+        useCommonInstructions: true,
+        prompts: ["friendly"],
+        channels: [
           {
-            name: "default",
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "cron",
+            type: "schedule",
             enabled: true,
-            useCommonInstructions: true,
-            prompts: ["friendly"],
-            channels: [
-              {
-                id: "33333333-3333-4333-8333-333333333333",
-                name: "cron",
-                type: "schedule",
-                enabled: true,
-                entries: [],
-              },
-            ],
-            mcpServers: {},
+            entries: [],
           },
         ],
+        mcpServers: {},
       }
       store.save(project)
 
-      const stateStore = new LeucoAgentStateStore({ paths: new LeucoPaths({ home }) })
-      const plugins = LeucoChannelHost.buildForAgent({
+      const stateStore = new LeucoProjectStateStore({ paths })
+      const plugins = LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        agent: project.agents[0]!,
+        channels: project.channels,
         projectStore: store,
-        agentStateStore: stateStore,
+        projectStateStore: stateStore,
       })
       expect(plugins).toHaveLength(1)
       expect(plugins[0]).toBeInstanceOf(LeucoScheduleChannelPlugin)
@@ -132,9 +120,9 @@ describe("LeucoChannelHost.buildForAgent", () => {
       entries: [],
     }
     expect(() =>
-      LeucoChannelHost.buildForAgent({
+      LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        agent: agent([scheduleChannel]),
+        channels: [scheduleChannel],
       }),
     ).toThrow(/projectStore/)
   })

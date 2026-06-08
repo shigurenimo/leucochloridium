@@ -3,16 +3,12 @@ import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 
-const help = `leuco boot uninstall — remove the macOS LaunchAgent
+const help = `leuco boot uninstall / remove the macOS LaunchAgent
 
-usage: leuco boot uninstall
+usage / leuco boot uninstall
 
-Calls \`launchctl bootout\` and deletes
-~/Library/LaunchAgents/io.leuco.daemon.plist. Idempotent — succeeds
-even if the agent was never installed.
-
-The currently running daemon is not stopped; run \`leuco stop\` if you
-want to take it down too.`
+Calls \`launchctl bootout\` and deletes the plist. Idempotent -- succeeds
+even if the agent was never installed. The running daemon is not stopped.`
 
 export const bootUninstallHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -33,7 +29,5 @@ export const bootUninstallHandler = factory.createHandlers(async (c) => {
     return c.text(`not installed (${result.plistPath} does not exist)`)
   }
 
-  return c.text(
-    [`[leuco] uninstalled ${result.label}`, `        removed: ${result.plistPath}`].join("\n"),
-  )
+  return c.text(`leuco boot: uninstalled "${result.label}"`)
 })

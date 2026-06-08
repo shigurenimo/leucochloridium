@@ -1,4 +1,4 @@
-import type { Agent, Project } from "@/config/config-schema"
+import type { Project } from "@/config/config-schema"
 import type { LeucoTenant } from "@/engine/tenant"
 import { errorMessage } from "@/error-message"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
@@ -8,7 +8,7 @@ import type { LeucoProjectStore } from "@/projects/project-store"
 type Props = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
-  buildTenant: (project: Project, agent: Agent) => LeucoTenant
+  buildTenant: (project: Project) => LeucoTenant
   port?: number
   onLog?: (line: string) => void
   bus?: LeucoEventBus
@@ -26,27 +26,19 @@ export type ThreadEntry = {
 export type EngineProjectSummary = {
   name: string
   path: string
-  agents: { name: string; enabled: boolean; tenantRunning: boolean }[]
+  enabled: boolean
+  tenantRunning: boolean
 }
 
-/**
- * Top-level orchestrator: starts/stops every `LeucoTenant` (one per enabled
- * (project, agent) pair across all registered projects), exposes aggregate
- * status to the optional HTTP gateway, and reconciles its tenant set against
- * the on-disk config when `reconcile()` is called (e.g. via SIGHUP).
- */
 export class LeucoEngine {
   private tenants: LeucoTenant[]
   private readonly projectStore: LeucoProjectStore
-  private readonly buildTenant: (project: Project, agent: Agent) => LeucoTenant
+  private readonly buildTenant: (project: Project) => LeucoTenant
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
   private readonly mcpToken: string | null
   private gateway: LeucoGatewayServer | null = null
-  // Serialization tail for reconcile(): every incoming call chains onto this
-  // promise so two SIGHUPs in quick succession can't interleave start/stop on
-  // `this.tenants` and accidentally double-start the same tenant.
   private reconcileQueue: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
@@ -60,9 +52,6 @@ export class LeucoEngine {
   }
 
   async start(): Promise<void> {
-    // Track which tenants have started so we can roll back if a later one
-    // throws. Without this, a partial start leaves codex children and Slack
-    // sockets running with no `LeucoRuntime` reference to stop them.
     const started: LeucoTenant[] = []
     try {
       for (const tenant of this.tenants) {
@@ -89,9 +78,6 @@ export class LeucoEngine {
       try {
         this.gateway.start()
       } catch (error) {
-        // Gateway bind failed (e.g. EADDRINUSE). Stop the tenants we already
-        // started so the process doesn't end up with codex children but no
-        // MCP endpoint to reach them.
         for (const tenant of this.tenants.slice().reverse()) {
           await tenant.stop().catch(() => undefined)
         }
@@ -109,9 +95,6 @@ export class LeucoEngine {
     this.log("[leuco] shutting down")
 
     if (this.gateway) {
-      // Drain in-flight MCP requests before tearing down tenants — otherwise
-      // a codex child's tool call mid-flight would see ECONNRESET when the
-      // tenant disappears under it.
       await this.gateway.stop()
       this.gateway = null
     }
@@ -121,22 +104,9 @@ export class LeucoEngine {
     }
     this.tenants = []
 
-    // Flush the event log so any final tenant.stopped / log events land on
-    // disk before the process exits.
     await this.bus.stop()
   }
 
-  /**
-   * Diff the engine's running tenants against the latest on-disk config and:
-   *  - stop any tenant whose (project, agent) is gone or disabled
-   *  - start any tenant whose (project, agent) is newly enabled
-   * Channel-level changes inside a still-running tenant currently require a
-   * full restart; reconcile() does not yet propagate them.
-   *
-   * Calls are serialized: a second invocation while a reconcile is in flight
-   * waits for it to finish before its own pass starts, so each pass observes
-   * a fully-settled `this.tenants`.
-   */
   async reconcile(): Promise<void> {
     const result = this.reconcileQueue.then(() => this.runReconcile())
     this.reconcileQueue = result.then(
@@ -153,20 +123,15 @@ export class LeucoEngine {
     } catch (err) {
       const reason = errorMessage(err)
       this.log(`[leuco] reconcile: failed to load projects: ${reason}`)
-      // Emit a structured event so consumers (gateway SSE, `leuco logs -f`)
-      // can see that the SIGHUP / config edit did not take effect, instead
-      // of silently dropping the reload.
       this.bus.emit({ ts: Date.now(), type: "engine.reconcile.failed", reason })
       return
     }
 
-    const targetByKey = new Map<string, { project: Project; agent: Agent; pluginSig: string }>()
+    const targetByKey = new Map<string, { project: Project; pluginSig: string }>()
     for (const project of projects) {
-      for (const agent of project.agents) {
-        if (!agent.enabled) continue
-        const sig = enabledChannelSignature(agent)
-        targetByKey.set(`${project.name}:${agent.name}`, { project, agent, pluginSig: sig })
-      }
+      if (!project.enabled) continue
+      const sig = enabledChannelSignature(project)
+      targetByKey.set(project.name, { project, pluginSig: sig })
     }
 
     const removed: string[] = []
@@ -193,7 +158,7 @@ export class LeucoEngine {
       )
       await this.safeStop(tenant)
 
-      const rebuilt = await this.tryBuildAndStart(target.project, target.agent, tenant.key)
+      const rebuilt = await this.tryBuildAndStart(target.project, tenant.key)
       if (rebuilt === null) {
         removed.push(tenant.key)
         continue
@@ -210,7 +175,7 @@ export class LeucoEngine {
       if (runningKeys.has(key)) continue
 
       this.log(`[leuco] reconcile: starting ${key}`)
-      const started = await this.tryBuildAndStart(target.project, target.agent, key)
+      const started = await this.tryBuildAndStart(target.project, key)
       if (started === null) continue
 
       this.tenants.push(started)
@@ -220,21 +185,10 @@ export class LeucoEngine {
     this.bus.emit({ ts: Date.now(), type: "engine.reconcile", added, removed })
   }
 
-  /**
-   * Build a tenant and start it. Failures (build throw or start throw) are
-   * logged with the tenant key and the function returns `null` so the
-   * surrounding reconcile loop can continue with the next tenant instead of
-   * aborting the pass mid-way and leaving `this.tenants` mismatched against
-   * `targetByKey`.
-   */
-  private async tryBuildAndStart(
-    project: Project,
-    agent: Agent,
-    keyForLog: string,
-  ): Promise<LeucoTenant | null> {
+  private async tryBuildAndStart(project: Project, keyForLog: string): Promise<LeucoTenant | null> {
     let built: LeucoTenant
     try {
-      built = this.buildTenant(project, agent)
+      built = this.buildTenant(project)
     } catch (err) {
       this.log(`[leuco] reconcile: ${keyForLog}: build failed: ${errorMessage(err)}`)
       return null
@@ -258,8 +212,6 @@ export class LeucoEngine {
   }
 
   getCwd(): string {
-    // Backwards-compat shim for the gateway. With multi-project the engine
-    // doesn't have a single cwd; return the first tenant's project path or "".
     return this.tenants[0]?.projectPath ?? ""
   }
 
@@ -276,11 +228,8 @@ export class LeucoEngine {
     return projects.map((project) => ({
       name: project.name,
       path: project.path,
-      agents: project.agents.map((agent) => ({
-        name: agent.name,
-        enabled: agent.enabled,
-        tenantRunning: runningKeys.has(`${project.name}:${agent.name}`),
-      })),
+      enabled: project.enabled,
+      tenantRunning: runningKeys.has(project.name),
     }))
   }
 
@@ -320,8 +269,8 @@ export class LeucoEngine {
   }
 }
 
-const enabledChannelSignature = (agent: Agent): string => {
-  return agent.channels
+const enabledChannelSignature = (project: Project): string => {
+  return project.channels
     .filter((c) => c.enabled)
     .map((c) => c.name)
     .slice()

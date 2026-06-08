@@ -1,6 +1,6 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
-import { help } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
+import { help } from "@/cli/routes/projects.$project.channels.$channel.schedules.help"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -10,13 +10,12 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
   if (flagBool(body.flags.help)) return c.text(help)
 
   const projectName = c.req.param("project")!
-  const agentName = c.req.param("agent")!
   const channelName = c.req.param("channel")!
   const target = body.args[0]
 
   if (!target) {
     throw new HTTPException(400, {
-      message: "usage: leuco projects <p> agents <a> channels <c> schedules remove <id-or-name>",
+      message: "usage: leuco projects <p> channels <c> schedules remove <id-or-name>",
     })
   }
 
@@ -25,10 +24,9 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
 
   store.removeScheduleEntry({
     projectId: project.id,
-    agentName,
     channelName,
     entryIdOrName: target,
   })
 
-  return c.text(`removed schedule entry ${projectName}/${agentName}/${channelName}/${target}`)
+  return c.text(`removed schedule entry "${target}"`)
 })

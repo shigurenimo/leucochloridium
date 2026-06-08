@@ -85,7 +85,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
         ts: Date.now(),
         type: "slack.event",
         project: ctx.projectName,
-        agent: ctx.agentName,
         channel: event.channel,
         event,
       })
