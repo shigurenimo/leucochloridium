@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path"
 import { z } from "zod"
 import { PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
 
@@ -114,7 +115,12 @@ export const projectSchema = z.object({
    */
   id: z.uuid(),
   name: safeName,
-  path: z.string().min(1),
+  // Project path must be absolute. It becomes codex's `cwd` and is also
+  // written into the tenant's `config.toml` as `[projects.<path>]
+  // trust_level = "trusted"` — granting "trusted" to a relative path would
+  // be path-dependent and surprising. CLI handlers already `resolve()` user
+  // input; this guard catches hand-edited settings.json.
+  path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
   agents: z.array(agentSchema).default([]),
 })
 

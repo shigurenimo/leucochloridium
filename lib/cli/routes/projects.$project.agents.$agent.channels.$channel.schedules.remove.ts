@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { help } from "@/cli/routes/projects.$project.agents.$agent.channels.$channel.schedules.help"
 import { resolveProject } from "@/cli/utils/lookup-config"
@@ -14,10 +15,9 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
   const target = body.args[0]
 
   if (!target) {
-    return c.text(
-      "usage: leuco projects <p> agents <a> channels <c> schedules remove <id-or-name>",
-      400,
-    )
+    throw new HTTPException(400, {
+      message: "usage: leuco projects <p> agents <a> channels <c> schedules remove <id-or-name>",
+    })
   }
 
   const store = new LeucoProjectStore()

@@ -12,6 +12,7 @@ export const slackAppMentionEventSchema = z
     text: z.string().optional(),
     ts: z.string(),
     thread_ts: z.string().optional(),
+    bot_id: z.string().optional(),
   })
   .passthrough()
 

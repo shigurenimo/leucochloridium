@@ -1,6 +1,7 @@
 import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
+import { errorMessage } from "@/error-message"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoAgentStateStore } from "@/projects/agent-state-store"
 
@@ -154,16 +155,33 @@ export class LeucoTenant {
     this.log(`[leuco] starting codex app-server for ${this.key}`)
     await this.codex.start()
 
-    for (const plugin of this.plugins) {
-      this.log(`[leuco] starting plugin: ${plugin.name} → ${this.key}`)
-      await plugin.start({
-        cwd: this.projectPath,
-        onLog: this.log,
-        bus: this.bus,
-        projectName: this.projectName,
-        agentName: this.agentName,
-        runTextTurn: (threadKey, text) => this.runTextTurn(threadKey, text),
+    // Roll back the codex child + any earlier plugins if a later plugin
+    // start() throws. Without this a Slack socket / schedule interval from
+    // an already-started plugin would survive the failure and leak.
+    const started: ChannelPlugin[] = []
+    try {
+      for (const plugin of this.plugins) {
+        this.log(`[leuco] starting plugin: ${plugin.name} → ${this.key}`)
+        await plugin.start({
+          cwd: this.projectPath,
+          onLog: this.log,
+          bus: this.bus,
+          projectName: this.projectName,
+          agentName: this.agentName,
+          runTextTurn: (threadKey, text) => this.runTextTurn(threadKey, text),
+        })
+        started.push(plugin)
+      }
+    } catch (error) {
+      for (const plugin of started.reverse()) {
+        await plugin.stop().catch((err: unknown) => {
+          this.log(`[leuco] start rollback: plugin ${plugin.name} stop: ${errorMessage(err)}`)
+        })
+      }
+      await this.codex.stop().catch((err: unknown) => {
+        this.log(`[leuco] start rollback: codex stop: ${errorMessage(err)}`)
       })
+      throw error
     }
 
     this.bus.emit({
@@ -177,12 +195,12 @@ export class LeucoTenant {
   async stop(): Promise<void> {
     for (const plugin of this.plugins) {
       await plugin.stop().catch((err: unknown) => {
-        this.log(`[leuco] plugin ${plugin.name} stop: ${errorText(err)}`)
+        this.log(`[leuco] plugin ${plugin.name} stop: ${errorMessage(err)}`)
       })
     }
 
     await this.codex.stop().catch((err: unknown) => {
-      this.log(`[leuco] codex stop (${this.key}): ${errorText(err)}`)
+      this.log(`[leuco] codex stop (${this.key}): ${errorMessage(err)}`)
     })
 
     this.bus.emit({
@@ -229,8 +247,7 @@ export class LeucoTenant {
 
   private async executeBatchedTurn(batch: PendingTurn[]): Promise<string | Error> {
     const primaryThreadKey = batch[0]!.threadKey
-    const combinedText =
-      batch.length === 1 ? batch[0]!.text : batch.map((t) => t.text).join("\n\n")
+    const combinedText = batch.length === 1 ? batch[0]!.text : batch.map((t) => t.text).join("\n\n")
 
     const threadIdOrError = await this.ensureAgentThread()
     if (threadIdOrError instanceof Error) {
@@ -303,13 +320,12 @@ export class LeucoTenant {
     const reply = await Promise.race([replyPromise, timeoutPromise])
     if (timer) clearTimeout(timer)
 
-    const timedOut = reply instanceof Error && reply.message.startsWith("codex turn timed out")
-    if (timedOut) {
-      this.log(`[leuco] ${this.key}: ${(reply as Error).message}; restarting codex child`)
+    if (reply instanceof Error && reply.message.startsWith("codex turn timed out")) {
+      this.log(`[leuco] ${this.key}: ${reply.message}; restarting codex child`)
       this.agentThreadLive = false
       await this.codex.stop().catch(() => undefined)
       await this.codex.start().catch((err: unknown) => {
-        this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorText(err)}`)
+        this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorMessage(err)}`)
       })
     }
 
@@ -379,13 +395,9 @@ export class LeucoTenant {
     try {
       store.setCodexThreadId(this.projectId, this.agentName, this.agentThreadId)
     } catch (err) {
-      this.log(`[leuco] failed to persist agent thread: ${errorText(err)}`)
+      this.log(`[leuco] failed to persist agent thread: ${errorMessage(err)}`)
     }
   }
-}
-
-const errorText = (err: unknown): string => {
-  return err instanceof Error ? err.message : String(err)
 }
 
 const truncate = (text: string, max: number): string => {

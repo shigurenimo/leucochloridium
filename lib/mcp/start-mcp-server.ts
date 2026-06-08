@@ -1,4 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import { errorMessage } from "@/error-message"
 import { buildMcpServer } from "@/mcp/build-mcp-server"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -19,14 +20,20 @@ type Props = {
  */
 export const startMcpServer = async (props: Props): Promise<void> => {
   const store = new LeucoProjectStore()
-  const project = store.resolveByName(props.projectName)
-  if (project instanceof Error) {
-    process.stderr.write(`leuco mcp: ${project.message}\n`)
+
+  // `resolveByName` throws — the old `instanceof Error` guard was dead and
+  // any failure (project not found, ambiguous name) crashed the stdio child
+  // with no stderr line for codex to surface.
+  let projectId: string
+  try {
+    projectId = store.resolveByName(props.projectName).id
+  } catch (error) {
+    process.stderr.write(`leuco mcp: ${errorMessage(error)}\n`)
     process.exit(2)
   }
 
   const server = buildMcpServer({
-    projectId: project.id,
+    projectId,
     agentName: props.agentName,
     store,
   })

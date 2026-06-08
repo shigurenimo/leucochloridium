@@ -23,10 +23,9 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
   const oldName = c.req.param("channel")!
   const newName = body.args[0]
   if (!newName) {
-    return c.text(
-      `usage: leuco projects ${projectName} agents ${agentName} channels ${oldName} rename <new-name>`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `usage: leuco projects ${projectName} agents ${agentName} channels ${oldName} rename <new-name>`,
+    })
   }
   if (newName === oldName) {
     throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })
@@ -59,5 +58,12 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
     ),
   })
 
-  return c.text(`renamed channel ${projectName}/${agentName}/${oldName} → ${newName}`)
+  // SIGHUP the daemon so the channel plugin set is rebuilt with the new name.
+  // The pluginSig in `enabledChannelSignature` changes, which makes reconcile
+  // tear down and restart the tenant cleanly.
+  const lines = [`renamed channel ${projectName}/${agentName}/${oldName} → ${newName}`]
+  const reloaded = c.var.daemon.reload()
+  if (reloaded.signalled) lines.push(`daemon reloaded (pid ${reloaded.pid})`)
+
+  return c.text(lines.join("\n"))
 })

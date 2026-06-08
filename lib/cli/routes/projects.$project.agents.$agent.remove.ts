@@ -4,6 +4,7 @@ import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
+import { errorMessage } from "@/error-message"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -36,15 +37,7 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
     })
   }
 
-  // The toml may already be gone — that is treated as a soft warning so config
-  // can still be reconciled.
-  const tomlStore = new LeucoCodexAgentStore({ cwd: project.path })
-  let tomlMessage: string
-  try {
-    tomlMessage = tomlStore.remove("project", agentName)
-  } catch (err) {
-    tomlMessage = `(${err instanceof Error ? err.message : String(err)})`
-  }
+  const tomlMessage = removeAgentToml(project.path, agentName)
 
   store.save({
     ...project,
@@ -58,3 +51,20 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
 
   return c.text(`removed agent ${projectName}/${agentName} ${tomlMessage}`)
 })
+
+// Remove `.codex/agents/<a>.toml`. A missing file is treated as a soft
+// warning so config can still be reconciled when the toml was already
+// cleaned up; any other failure (EACCES, EIO) is propagated so the user
+// learns the toml was NOT removed instead of getting a misleading success.
+const removeAgentToml = (projectPath: string, agentName: string): string => {
+  const store = new LeucoCodexAgentStore({ cwd: projectPath })
+  try {
+    return store.remove("project", agentName)
+  } catch (error) {
+    const message = errorMessage(error)
+    if (message.startsWith("agent not found:")) {
+      return `(${message})`
+    }
+    throw error
+  }
+}

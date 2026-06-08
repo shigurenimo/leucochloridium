@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { factory } from "@/cli/cli-factory"
@@ -9,7 +10,7 @@ usage: leuco logs [-f|--follow]
 
   -f, --follow    follow the log (tail -F)
 
-The log lives at ~/.leuco/daemons/<repo-basename>-<sha1[:6]>/log.`
+The log lives at ~/.leuco/daemon/log.`
 
 export const logsHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -18,7 +19,7 @@ export const logsHandler = factory.createHandlers(async (c) => {
   const logPath = c.var.daemon.getLogPath()
 
   if (!existsSync(logPath)) {
-    return c.text(`no log file yet: ${logPath}`, 404)
+    throw new HTTPException(404, { message: `no log file yet: ${logPath}` })
   }
 
   const follow = flagBool(body.flags.follow)

@@ -14,10 +14,27 @@ type Props = {
  * back. Used by the MCP `slack_call` tool and the `leuco slack call` CLI so
  * agents can reach the full Slack surface without leuco having to enumerate
  * every method individually. Throws on transport / Slack errors.
+ *
+ * `body.token` is stripped before forwarding. Slack's WebClient honours a
+ * body-level token as an override; allowing the agent to set it would let a
+ * leaked / guessed token from another tenant act through this tenant's
+ * channel, bypassing the per-channel token scoping the rest of the system
+ * relies on.
  */
 export const slackCall = async (props: Props): Promise<unknown> => {
   const client = new WebClient(props.botToken)
-  return await client.apiCall(props.method, props.body ?? {})
+  return await client.apiCall(props.method, sanitiseBody(props.body))
+}
+
+const sanitiseBody = (body: Record<string, unknown> | undefined): Record<string, unknown> => {
+  if (!body) return {}
+  if (!("token" in body)) return body
+  const sanitised: Record<string, unknown> = {}
+  for (const key of Object.keys(body)) {
+    if (key === "token") continue
+    sanitised[key] = body[key]
+  }
+  return sanitised
 }
 
 type ResolveProps = {

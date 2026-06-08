@@ -7,6 +7,7 @@ import { findAgent } from "@/cli/utils/lookup-config"
 import { validateLeucoName } from "@/cli/utils/validate-name"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import type { ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
+import { errorMessage } from "@/error-message"
 import {
   formatZodIssue,
   scheduleCreateArgsSchema,
@@ -185,7 +186,7 @@ export const buildMcpServer = (props: Props): Server => {
       if (name === TOOL_SCHEDULE_DELETE) return await handleScheduleDelete(handlerProps, args)
       return errorResponse(`unknown tool: ${name}`)
     } catch (err) {
-      return errorResponse(err instanceof Error ? err.message : String(err))
+      return errorResponse(errorMessage(err))
     }
   })
 
@@ -327,20 +328,26 @@ const resolveScheduleChannel = (input: {
 }): ScheduleChannel => {
   const project = input.store.load(input.projectId)
   const agent = findAgent(project, input.agentName)
-  const channels = agent.channels.filter((c): c is ScheduleChannel => c.type === "schedule")
+  // Only enabled schedule channels are considered. A disabled channel won't
+  // be built by the channel host, so accepting writes against it stores
+  // entries that silently accumulate and then fire en-masse the moment the
+  // channel is re-enabled (catch-up walks every past `runAt`).
+  const channels = agent.channels.filter(
+    (c): c is ScheduleChannel => c.type === "schedule" && c.enabled,
+  )
 
   if (input.channelName !== undefined) {
     const match = channels.find((c) => c.name === input.channelName)
     if (!match) {
       throw new Error(
-        `schedule channel '${input.channelName}' not found in ${project.name}/${input.agentName}`,
+        `schedule channel '${input.channelName}' not found (or disabled) in ${project.name}/${input.agentName}`,
       )
     }
     return match
   }
 
   if (channels.length === 0) {
-    throw new Error(`${project.name}/${input.agentName} has no schedule channel`)
+    throw new Error(`${project.name}/${input.agentName} has no enabled schedule channel`)
   }
   if (channels.length > 1) {
     const names = channels.map((c) => c.name).join(", ")

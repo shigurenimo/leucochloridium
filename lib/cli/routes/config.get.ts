@@ -15,10 +15,13 @@ export const configGetHandler = factory.createHandlers(async (c) => {
   if (flagBool(body.flags.help)) return c.text(help)
 
   const key = body.args[0]
-  if (!key) return c.text("usage: leuco config get <key>", 400)
+  if (!key) throw new HTTPException(400, { message: "usage: leuco config get <key>" })
 
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()
+  if (settings instanceof Error) {
+    throw new HTTPException(500, { message: `failed to load settings: ${settings.message}` })
+  }
 
   const found = Object.entries(settings).find((entry) => entry[0] === key)
   if (!found) throw new HTTPException(404, { message: `unknown config key: ${key}` })

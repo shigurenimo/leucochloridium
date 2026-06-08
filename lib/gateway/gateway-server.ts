@@ -40,23 +40,33 @@ export class LeucoGatewayServer {
       mcpToken: this.mcpToken,
     })
 
+    // Bind to loopback only. The MCP route is bearer-protected, but `/status`,
+    // `/health`, and `/threads` are not — exposing them on every interface
+    // would leak pid + thread ids to anyone on the LAN.
     this.server = Bun.serve({
       port: this.port,
+      hostname: "127.0.0.1",
       development: false,
       fetch: (request) => app.fetch(request),
     })
 
     if (this.onLog) {
-      this.onLog(`[leuco] gateway listening on http://localhost:${this.port}`)
+      this.onLog(`[leuco] gateway listening on http://127.0.0.1:${this.port}`)
     }
 
     return this.server
   }
 
-  stop(): void {
-    if (this.server) {
-      this.server.stop()
-      this.server = null
-    }
+  /**
+   * Gracefully drain the server before resolving. `Bun.Server.stop()` returns
+   * a Promise that settles once existing requests finish; awaiting it lets
+   * in-flight MCP tool calls complete before the engine tears down their
+   * backing tenants.
+   */
+  async stop(): Promise<void> {
+    if (!this.server) return
+    const server = this.server
+    this.server = null
+    await server.stop()
   }
 }

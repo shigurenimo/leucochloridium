@@ -46,7 +46,11 @@ export function HasciiTable(props: Props) {
       <box flexDirection="row" gap={2} paddingLeft={1} paddingRight={1} height={1}>
         {props.columns.map((column, columnIndex) => (
           <text key={column.key} fg={theme.color.mutedForeground}>
-            {padCell(column.label, widths[columnIndex] ?? column.label.length, column.align ?? "left")}
+            {padCell(
+              column.label,
+              widths[columnIndex] ?? column.label.length,
+              column.align ?? "left",
+            )}
           </text>
         ))}
       </box>

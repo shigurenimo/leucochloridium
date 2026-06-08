@@ -5,6 +5,7 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
+import { errorMessage } from "@/error-message"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -61,49 +62,65 @@ export const projectsMergeIntoHandler = factory.createHandlers(async (c) => {
   if (wasRunning) daemon.stop()
 
   const tomlMessages: string[] = []
-  for (const agent of src.agents) {
-    // Move the codex TOML between repo `.codex/agents/` dirs. Skipped when
-    // both projects share the same repo path. Missing toml is non-fatal so
-    // a partially-cleaned source can still be merged.
-    if (src.path !== dst.path) {
-      const srcToml = new LeucoCodexAgentStore({ cwd: src.path })
+  // Collect rollback closures per-agent so a failure mid-loop can reverse
+  // every completed step (each TOML moved + each codex-home renamed). Without
+  // this, a throw at agent K leaves 0..K-1 physically moved while
+  // settings.json still claims them on src, dropping their state.json on the
+  // next daemon start.
+  const undoSteps: Array<() => void> = []
+  try {
+    for (const agent of src.agents) {
+      if (src.path !== dst.path) {
+        const message = moveAgentToml({
+          srcPath: src.path,
+          dstPath: dst.path,
+          agentName: agent.name,
+        })
+        if (message !== null) {
+          tomlMessages.push(message)
+        } else {
+          // toml was actually moved (not missing) — register reverse move.
+          const moved = agent.name
+          undoSteps.push(() =>
+            moveAgentToml({ srcPath: dst.path, dstPath: src.path, agentName: moved }),
+          )
+        }
+      }
+
+      // Move codex-home so memories / state.json travel with the agent.
+      const oldHome = paths.agentDir(src.id, agent.name)
+      const newHome = paths.agentDir(dst.id, agent.name)
+      if (existsSync(oldHome)) {
+        if (existsSync(newHome)) {
+          throw new HTTPException(500, {
+            message: `target codex-home already exists: ${newHome}`,
+          })
+        }
+        const parent = dirname(newHome)
+        if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
+        renameSync(oldHome, newHome)
+        undoSteps.push(() => renameSync(newHome, oldHome))
+      }
+    }
+
+    // Append every src agent to dst, then drop src entirely. The directory
+    // under ~/.leuco/projects/<src.id>/ is deleted; the repo at src.path
+    // stays put — re-register it with `leuco projects add` if needed.
+    store.save({ ...dst, agents: [...dst.agents, ...src.agents] })
+    store.remove(src.id)
+  } catch (error) {
+    for (const undo of undoSteps.reverse()) {
       try {
-        const spec = srcToml.read({ scope: "project", name: agent.name })
-        const dstToml = new LeucoCodexAgentStore({ cwd: dst.path })
-        dstToml.add({
-          scope: "project",
-          name: agent.name,
-          description: spec.description,
-          developerInstructions: spec.developerInstructions,
-          model: spec.model,
-        })
-        srcToml.remove("project", agent.name)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        tomlMessages.push(`${agent.name}: src toml missing (${message})`)
+        undo()
+      } catch (rollbackError) {
+        process.stderr.write(`[leuco] merge-into rollback failed: ${errorMessage(rollbackError)}\n`)
       }
     }
-
-    // Move codex-home so memories / state.json travel with the agent.
-    const oldHome = paths.agentDir(src.id, agent.name)
-    const newHome = paths.agentDir(dst.id, agent.name)
-    if (existsSync(oldHome)) {
-      if (existsSync(newHome)) {
-        throw new HTTPException(500, {
-          message: `target codex-home already exists: ${newHome}`,
-        })
-      }
-      const parent = dirname(newHome)
-      if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
-      renameSync(oldHome, newHome)
+    if (wasRunning && !daemon.status().isRunning) {
+      daemon.start({ binPath: c.var.binPath, env: process.env })
     }
+    throw error
   }
-
-  // Append every src agent to dst, then drop src entirely. The directory
-  // under ~/.leuco/projects/<src.id>/ is deleted; the repo at src.path
-  // stays put — re-register it with `leuco projects add` if needed.
-  store.save({ ...dst, agents: [...dst.agents, ...src.agents] })
-  store.remove(src.id)
 
   const lines = [
     `merged ${srcName} → ${dstName} (${src.agents.length} agents): ${src.agents.map((a) => a.name).join(", ") || "(none)"}`,
@@ -117,3 +134,37 @@ export const projectsMergeIntoHandler = factory.createHandlers(async (c) => {
   }
   return c.text(lines.join("\n"))
 })
+
+// Move `.codex/agents/<a>.toml` from src to dst. Returns `null` when the move
+// succeeded and a status line when the src toml was missing (non-fatal so a
+// partially-cleaned source can still be merged).
+const moveAgentToml = (props: {
+  srcPath: string
+  dstPath: string
+  agentName: string
+}): string | null => {
+  const srcToml = new LeucoCodexAgentStore({ cwd: props.srcPath })
+  let spec
+  try {
+    spec = srcToml.read({ scope: "project", name: props.agentName })
+  } catch (error) {
+    const message = errorMessage(error)
+    // Only "not found" is treated as a soft skip — real FS / parse failures
+    // are propagated so the merge does not silently drop a tenant's spec.
+    if (message.startsWith("agent not found:")) {
+      return `${props.agentName}: src toml missing (${message})`
+    }
+    throw error
+  }
+
+  const dstToml = new LeucoCodexAgentStore({ cwd: props.dstPath })
+  dstToml.add({
+    scope: "project",
+    name: props.agentName,
+    description: spec.description,
+    developerInstructions: spec.developerInstructions,
+    model: spec.model,
+  })
+  srcToml.remove("project", props.agentName)
+  return null
+}

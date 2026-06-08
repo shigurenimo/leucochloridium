@@ -32,14 +32,22 @@ const DEFAULT_DEDUP_CAPACITY = 1024
  * using the metadata in the envelope.
  */
 export class LeucoSlackEventProcessor {
-  private readonly props: Props
   private readonly dedupCapacity: number
   private readonly seenKeys = new Set<string>()
+  private botUserId: string | null
 
   constructor(props: Props) {
-    this.props = props
+    this.botUserId = props.botUserId
     this.dedupCapacity = props.dedupCapacity ?? DEFAULT_DEDUP_CAPACITY
-    Object.freeze(this)
+  }
+
+  /**
+   * Upgrade the bot identity in place once `auth.test` resolves. Done as a
+   * mutator (rather than rebuilding the processor) so the dedup window
+   * accumulated during the `app.start()` → `auth.test` race window survives.
+   */
+  setBotUserId(botUserId: string | null): void {
+    this.botUserId = botUserId
   }
 
   processAppMention(event: unknown): ProcessResult {
@@ -47,7 +55,18 @@ export class LeucoSlackEventProcessor {
     if (!parsed.success) {
       return { skip: true, reason: `app_mention schema failed: ${parsed.error.message}` }
     }
-    return this.dispatchMessage(parsed.data, "app_mention")
+    const data = parsed.data
+
+    // Same self/bot filter the `message` path enforces. Without this, an
+    // `app_mention` from the bot's own reply (or a bot-to-bot mention chain)
+    // would dispatch a turn — and because `message` events skip BEFORE
+    // calling `consume()`, the dedup key is still fresh when the matching
+    // `app_mention` arrives, so nothing prevents the loop downstream.
+    if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
+    if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
+    if (data.user === this.botUserId) return { skip: true, reason: "self app_mention" }
+
+    return this.dispatchMessage(data, "app_mention")
   }
 
   processMessage(event: unknown): ProcessResult {
@@ -57,8 +76,8 @@ export class LeucoSlackEventProcessor {
 
     if (data.subtype !== undefined) return { skip: true, reason: `subtype=${data.subtype}` }
     if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
-    if (this.props.botUserId === null) return { skip: true, reason: "botUserId unknown" }
-    if (data.user === this.props.botUserId) return { skip: true, reason: "self message" }
+    if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
+    if (data.user === this.botUserId) return { skip: true, reason: "self message" }
 
     return this.dispatchMessage(data, "message")
   }
@@ -68,8 +87,8 @@ export class LeucoSlackEventProcessor {
     if (!parsed.success) return { skip: true, reason: "reaction schema failed" }
     const data = parsed.data
 
-    if (this.props.botUserId === null) return { skip: true, reason: "botUserId unknown" }
-    if (data.user === this.props.botUserId) {
+    if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
+    if (data.user === this.botUserId) {
       return { skip: true, reason: "self reaction" }
     }
 
@@ -102,9 +121,8 @@ export class LeucoSlackEventProcessor {
     }
 
     const rawText = data.text ?? ""
-    const mentioned =
-      this.props.botUserId !== null && rawText.includes(`<@${this.props.botUserId}>`)
-    const text = stripMention(rawText, this.props.botUserId)
+    const mentioned = this.botUserId !== null && rawText.includes(`<@${this.botUserId}>`)
+    const text = stripMention(rawText, this.botUserId)
     const threadTs = data.thread_ts ?? data.ts
 
     const message: SlackMessageEvent = {

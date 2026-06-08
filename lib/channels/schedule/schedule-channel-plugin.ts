@@ -6,6 +6,7 @@ import {
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import { errorMessage } from "@/error-message"
 
 type Props = {
   /** Channel name as configured in settings.json. */
@@ -64,6 +65,7 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
   private ctx: ChannelPluginContext | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly lastFiredMinute = new Map<string, number>()
+  private tickInFlight = false
 
   constructor(props: Props) {
     this.name = props.name
@@ -101,17 +103,29 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
 
   /**
    * Public for tests: drive the loop without spinning up a real interval.
+   * Re-entrant calls are short-circuited so a slow `runTextTurn` (up to 10
+   * minutes) inside the previous tick cannot interleave with the next
+   * interval and double-fire the same entry via the catch-up branch.
    */
   async tickOnce(): Promise<void> {
     const ctx = this.ctx
     if (!ctx) return
+    if (this.tickInFlight) return
 
+    this.tickInFlight = true
+    try {
+      await this.tickOnceInner(ctx)
+    } finally {
+      this.tickInFlight = false
+    }
+  }
+
+  private async tickOnceInner(ctx: ChannelPluginContext): Promise<void> {
     let entries: ReturnType<typeof this.props.store.listEntries>
     try {
       entries = this.props.store.listEntries()
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      ctx.onLog(`[${this.name}] failed to read entries: ${message}`)
+      ctx.onLog(`[${this.name}] failed to read entries: ${errorMessage(err)}`)
       return
     }
 
@@ -159,6 +173,16 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
     if (lastFiredAt === null) return false
 
+    // Parse once outside the minute loop — the cron string is invariant across
+    // the catch-up window so re-parsing per minute is pure overhead (up to
+    // 1440 invocations at the 24h cap).
+    let expr: ReturnType<typeof parseCronExpression>
+    try {
+      expr = parseCronExpression(entry.runAt)
+    } catch {
+      return false
+    }
+
     const cutoff = Math.max(lastFiredAt, now.getTime() - CATCHUP_MAX_LOOKBACK_MS)
     const currentMinuteStart = minuteEpoch * 60_000
 
@@ -168,12 +192,6 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     // flood the bus when the gap is long.
     let cursor = currentMinuteStart - 60_000
     while (cursor > cutoff) {
-      let expr: ReturnType<typeof parseCronExpression>
-      try {
-        expr = parseCronExpression(entry.runAt)
-      } catch {
-        return false
-      }
       if (cronMatches(expr, new Date(cursor))) {
         this.lastFiredMinute.set(entry.id, minuteEpoch)
         await this.fire(entry, ctx, "cron")
@@ -206,25 +224,35 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     ctx.onLog(`[${this.name}] firing ${entry.name} (${kind})`)
 
     const reply = await ctx.runTextTurn(threadKey, text)
-    if (reply instanceof Error) {
+    const turnFailed = reply instanceof Error
+    if (turnFailed) {
       ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
     }
 
     if (kind === "cron") {
-      try {
-        this.props.store.markFired(entry.id, Date.now())
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        ctx.onLog(`[${this.name}] entry ${entry.name} fired but failed to mark: ${message}`)
+      // Only advance `lastFiredAt` on success. If the turn failed, leaving the
+      // mark stale keeps the failure visible to the catch-up window on the
+      // next daemon start instead of silently masking a broken cron.
+      if (!turnFailed) {
+        try {
+          this.props.store.markFired(entry.id, Date.now())
+        } catch (err) {
+          ctx.onLog(
+            `[${this.name}] entry ${entry.name} fired but failed to mark: ${errorMessage(err)}`,
+          )
+        }
       }
     }
 
     if (kind === "one-shot") {
+      // Always delete one-shots — keeping them on error would re-fire every
+      // tick forever (their `ts <= now` matches indefinitely).
       try {
         this.props.store.removeEntry(entry.id)
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        ctx.onLog(`[${this.name}] entry ${entry.name} fired but failed to delete: ${message}`)
+        ctx.onLog(
+          `[${this.name}] entry ${entry.name} fired but failed to delete: ${errorMessage(err)}`,
+        )
       }
     }
   }
@@ -240,8 +268,9 @@ const decideFire = (
     try {
       expr = parseCronExpression(entry.runAt)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      ctx.onLog(`[schedule] entry ${entry.name} has bad cron '${entry.runAt}': ${message}`)
+      ctx.onLog(
+        `[schedule] entry ${entry.name} has bad cron '${entry.runAt}': ${errorMessage(err)}`,
+      )
       return "skip"
     }
     return cronMatches(expr, now) ? "cron" : "skip"

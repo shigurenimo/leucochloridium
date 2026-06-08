@@ -8,13 +8,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoChannelHost } from "@/channels/channel-host"
 import type { Agent, McpServer, Project } from "@/config/config-schema"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
+import { errorMessage } from "@/error-message"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
+import { tomlString } from "@/engine/codex/toml-string"
 import { LeucoEngine } from "@/engine/engine"
 import { LeucoPromptPresets } from "@/engine/prompt-presets"
 import { LeucoTenant, type TenantAgentSpec } from "@/engine/tenant"
@@ -187,9 +188,8 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
   try {
     spec = tomlStore.read({ scope: "project", name: props.agent.name })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
     throw new Error(
-      `${message} — run \`leuco projects ${props.project.name} agents add ${props.agent.name}\` to recreate it.`,
+      `${errorMessage(err)} — run \`leuco projects ${props.project.name} agents add ${props.agent.name}\` to recreate it.`,
     )
   }
 
@@ -205,7 +205,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
         : null,
     extraMcpServers: props.agent.mcpServers,
   })
-  ensureAuthSymlink(codexHome)
+  ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
 
   const childEnv: NodeJS.ProcessEnv = { ...props.env, CODEX_HOME: codexHome }
   if (props.mcpToken !== null) {
@@ -309,7 +309,7 @@ const ensureTenantConfigToml = (
     `approval_policy = "never"`,
     `sandbox_mode = "danger-full-access"`,
     "",
-    `[projects.${tomlKeyString(tenant.projectPath)}]`,
+    `[projects.${tomlString(tenant.projectPath)}]`,
     `trust_level = "trusted"`,
     "",
     `[mcp_servers.leuco]`,
@@ -317,14 +317,14 @@ const ensureTenantConfigToml = (
 
   if (tenant.mcpEndpoint !== null) {
     lines.push(
-      `url = ${tomlKeyString(tenant.mcpEndpoint.url)}`,
+      `url = ${tomlString(tenant.mcpEndpoint.url)}`,
       `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
       "",
     )
   } else {
     lines.push(
       `command = "leuco"`,
-      `args = ["mcp", "--project", ${tomlKeyString(tenant.projectName)}, "--agent", ${tomlKeyString(tenant.agentName)}]`,
+      `args = ["mcp", "--project", ${tomlString(tenant.projectName)}, "--agent", ${tomlString(tenant.agentName)}]`,
       "",
     )
   }
@@ -342,9 +342,7 @@ const ensureTenantConfigToml = (
     )
     const envEntries = Object.entries(server.env)
     if (envEntries.length > 0) {
-      const inline = envEntries
-        .map(([key, value]) => `${key} = ${tomlKeyString(value)}`)
-        .join(", ")
+      const inline = envEntries.map(([key, value]) => `${key} = ${tomlKeyString(value)}`).join(", ")
       lines.push(`env = { ${inline} }`)
     }
     lines.push("")
@@ -356,22 +354,26 @@ const ensureTenantConfigToml = (
 /**
  * Codex authenticates against the credentials in `<CODEX_HOME>/auth.json`.
  * Per-tenant CODEX_HOMEs would otherwise need a separate `codex login` each;
- * symlink the user's default `~/.codex/auth.json` so all tenants share the
- * same login (memories stay isolated, auth stays singular).
+ * symlink the user's `<home>/.codex/auth.json` so all tenants share the
+ * same login (memories stay isolated, auth stays singular). The source path
+ * is passed in rather than read from `homedir()` directly so tests injecting
+ * a different `LeucoPaths` home don't accidentally touch the real `~/.codex`.
  */
-const ensureAuthSymlink = (codexHome: string): void => {
-  const source = join(homedir(), ".codex", "auth.json")
+const ensureAuthSymlink = (codexHome: string, source: string): void => {
   if (!existsSync(source)) return
 
   const target = join(codexHome, "auth.json")
-  if (existsSync(target) || isBrokenSymlink(target)) {
+  // `existsSync` follows the link, so it returns false for a broken symlink —
+  // we still need to unlink that case before re-creating, hence the explicit
+  // `isSymlink` check.
+  if (existsSync(target) || isSymlink(target)) {
     if (currentSymlinkTarget(target) === source) return
     unlinkSync(target)
   }
   symlinkSync(source, target)
 }
 
-const isBrokenSymlink = (path: string): boolean => {
+const isSymlink = (path: string): boolean => {
   try {
     return lstatSync(path).isSymbolicLink()
   } catch {

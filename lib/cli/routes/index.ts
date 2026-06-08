@@ -1,5 +1,6 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
+import { errorMessage } from "@/error-message"
 import { bootInstallHandler } from "@/cli/routes/boot.install"
 import { bootStatusHandler } from "@/cli/routes/boot.status"
 import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
@@ -57,7 +58,7 @@ base.onError((error, c) => {
     return c.text(`error: ${error.message}`, error.status)
   }
 
-  return c.text(`error: ${error instanceof Error ? error.message : String(error)}`, 500)
+  return c.text(`error: ${errorMessage(error)}`, 500)
 })
 
 base.notFound((c) => {

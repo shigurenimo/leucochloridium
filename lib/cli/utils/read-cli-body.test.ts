@@ -1,37 +1,35 @@
+import { HTTPException } from "hono/http-exception"
 import { describe, expect, it } from "vitest"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 
-const fakeContext = (body: unknown) =>
+const fakeContext = (text: string) =>
   ({
     req: {
-      json: async (): Promise<unknown> => body,
+      text: async (): Promise<string> => text,
     },
   }) as Parameters<typeof readCliBody>[0]
 
 describe("readCliBody", () => {
   it("parses well-formed body", async () => {
-    const body = await readCliBody(fakeContext({ args: ["a"], flags: { x: "y" } }))
+    const body = await readCliBody(fakeContext(JSON.stringify({ args: ["a"], flags: { x: "y" } })))
     expect(body.args).toEqual(["a"])
     expect(body.flags).toEqual({ x: "y" })
   })
 
   it("falls back to defaults on missing fields", async () => {
-    const body = await readCliBody(fakeContext({}))
+    const body = await readCliBody(fakeContext("{}"))
     expect(body.args).toEqual([])
     expect(body.flags).toEqual({})
   })
 
-  it("recovers from invalid JSON via .catch", async () => {
-    const ctx = {
-      req: {
-        json: async (): Promise<unknown> => {
-          return Promise.reject(new Error("bad json"))
-        },
-      },
-    } as Parameters<typeof readCliBody>[0]
-    const body = await readCliBody(ctx)
+  it("treats an empty body as defaults (covers no-body CLI invocations)", async () => {
+    const body = await readCliBody(fakeContext(""))
     expect(body.args).toEqual([])
     expect(body.flags).toEqual({})
+  })
+
+  it("throws HTTPException 400 on malformed JSON instead of silently dropping args", async () => {
+    await expect(readCliBody(fakeContext("not-json"))).rejects.toBeInstanceOf(HTTPException)
   })
 })
 

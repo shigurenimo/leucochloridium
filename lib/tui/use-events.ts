@@ -1,38 +1,17 @@
-import { useEffect, useState } from "react"
+import { useSyncExternalStore } from "react"
 import type { LeucoEvent } from "@/events/leuco-event-types"
-import { tailEventsJsonl } from "@/tui/utils/tail-events-jsonl"
+import type { LeucoEventLogStore } from "@/tui/event-log-store"
 
 type Props = {
-  path: string
-  capacity?: number
+  store: LeucoEventLogStore
 }
 
 /**
- * React hook that tails the daemon's `events.jsonl` and exposes the most
- * recent N events as state. Capacity-bounded so memory stays flat for long
- * sessions; oldest events are dropped first.
+ * Subscribe to a `LeucoEventLogStore` from inside React. The store owns the
+ * tail subscription and the rolling buffer; this hook is a thin React adapter
+ * that re-renders whenever the buffer changes. `useEffect` is intentionally
+ * avoided so the React tree never owns IO lifecycle.
  */
-export const useEvents = (props: Props): LeucoEvent[] => {
-  const [events, setEvents] = useState<LeucoEvent[]>([])
-
-  useEffect(() => {
-    const cap = props.capacity ?? 500
-
-    const stop = tailEventsJsonl({
-      path: props.path,
-      onEvent: (event) => {
-        setEvents((prev) => {
-          const next = [...prev, event]
-          if (next.length > cap) next.splice(0, next.length - cap)
-          return next
-        })
-      },
-    })
-
-    return () => {
-      stop()
-    }
-  }, [props.path, props.capacity])
-
-  return events
+export const useEvents = (props: Props): ReadonlyArray<LeucoEvent> => {
+  return useSyncExternalStore(props.store.subscribe, props.store.getSnapshot)
 }

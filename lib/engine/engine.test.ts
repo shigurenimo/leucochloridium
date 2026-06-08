@@ -43,7 +43,9 @@ const fakeStore = (projects: Project[] = []): LeucoProjectStore => {
   } as unknown as LeucoProjectStore
 }
 
-const noBuild = (): LeucoTenant | Error => new Error("buildTenant not configured")
+const noBuild = (): LeucoTenant => {
+  throw new Error("buildTenant not configured")
+}
 
 describe("LeucoEngine.start / stop", () => {
   it("starts each tenant in order", async () => {
@@ -99,6 +101,76 @@ describe("LeucoEngine.start / stop", () => {
     await engine.stop()
 
     expect(stops).toEqual(["a"])
+  })
+
+  it("rolls back already-started tenants when a later start fails", async () => {
+    const events: string[] = []
+    const a = buildTenant(
+      "demo",
+      "a",
+      fakeCodex({
+        start: async () => {
+          events.push("a.start")
+        },
+        stop: async () => {
+          events.push("a.stop")
+        },
+      }),
+    )
+    const b = buildTenant(
+      "demo",
+      "b",
+      fakeCodex({
+        start: async () => {
+          events.push("b.start")
+          throw new Error("b failed")
+        },
+      }),
+    )
+    const engine = new LeucoEngine({
+      tenants: [a, b],
+      projectStore: fakeStore(),
+      buildTenant: noBuild,
+      onLog: () => {},
+    })
+
+    await expect(engine.start()).rejects.toThrow("b failed")
+    // a was started, b threw mid-start; rollback should stop a in reverse.
+    expect(events).toEqual(["a.start", "b.start", "a.stop"])
+  })
+
+  it("keeps draining tenants even when one fails to stop", async () => {
+    const stops: string[] = []
+    const a = buildTenant(
+      "demo",
+      "a",
+      fakeCodex({
+        stop: async () => {
+          stops.push("a")
+          throw new Error("a stop boom")
+        },
+      }),
+    )
+    const b = buildTenant(
+      "demo",
+      "b",
+      fakeCodex({
+        stop: async () => {
+          stops.push("b")
+        },
+      }),
+    )
+    const engine = new LeucoEngine({
+      tenants: [a, b],
+      projectStore: fakeStore(),
+      buildTenant: noBuild,
+      onLog: () => {},
+    })
+    await engine.start()
+    await engine.stop()
+
+    // b is reached even though a throws.
+    expect(stops).toEqual(["a", "b"])
   })
 })
 

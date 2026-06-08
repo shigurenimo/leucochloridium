@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
 import { z } from "zod"
+import { atomicWriteJson } from "@/fs/atomic-write-json"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 const agentStateSchema = z.object({
@@ -54,12 +54,17 @@ export class LeucoAgentStateStore {
     return agentStateSchema.parse(json)
   }
 
+  /**
+   * Write state.json atomically. Called every turn (codexThreadId) and on
+   * every schedule fire (lastFiredAt); a non-atomic writeFileSync risks a
+   * truncated state file from a crash mid-write, which would lose the agent's
+   * codex thread and cause every later message to start a fresh conversation.
+   */
   save(projectId: string, agentName: string, state: AgentState): string {
-    const path = this.paths.agentStatePath(projectId, agentName)
-    const dir = dirname(path)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`)
-    return path
+    return atomicWriteJson({
+      path: this.paths.agentStatePath(projectId, agentName),
+      data: state,
+    })
   }
 
   setCodexThreadId(projectId: string, agentName: string, codexThreadId: string | null): string {

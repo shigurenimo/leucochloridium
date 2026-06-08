@@ -72,7 +72,13 @@ export class LeucoLaunchAgent {
     if (!existsSync(daemonDir)) mkdirSync(daemonDir, { recursive: true })
 
     const settings = new LeucoGlobalSettingsStore({ paths: this.paths }).load()
-    const keepAwake = settings instanceof Error ? true : settings.keepAwake
+    // Refusing to install on a corrupted settings.json is safer than guessing
+    // a default — silently flipping `keepAwake` true would override the
+    // user's `caffeinate` opt-out without warning.
+    if (settings instanceof Error) {
+      return new Error(`failed to load ~/.leuco/settings.json: ${settings.message}`)
+    }
+    const keepAwake = settings.keepAwake
 
     const plist = toLaunchAgentPlist({
       label: LABEL,
@@ -91,7 +97,11 @@ export class LeucoLaunchAgent {
     }
 
     try {
-      writeFileSync(plistPath, plist)
+      // 0600 because the plist embeds every `LEUCO_*` env var via
+      // `<key>EnvironmentVariables</key>`, so any token-shaped value that
+      // ended up in the env (e.g. user-set `LEUCO_OPENAI_KEY`) would
+      // otherwise be world-readable on a multi-user mac.
+      writeFileSync(plistPath, plist, { mode: 0o600 })
     } catch (err) {
       if (err instanceof Error) return err
       return new Error(String(err))

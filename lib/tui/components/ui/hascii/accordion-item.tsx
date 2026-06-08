@@ -38,8 +38,7 @@ export function HasciiAccordionItem(props: Props) {
 
   const headerBg = pickHeaderBg(isOpen, press.isHovered, press.isPressed, theme)
 
-  const titleFg =
-    isOpen || press.isHovered ? theme.color.foreground : theme.color.mutedForeground
+  const titleFg = isOpen || press.isHovered ? theme.color.foreground : theme.color.mutedForeground
 
   const indicator = isOpen ? "▾" : "▸"
 

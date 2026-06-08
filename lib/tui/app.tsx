@@ -1,10 +1,11 @@
 /** @jsxImportSource @opentui/react */
 import { useKeyboard, useRenderer } from "@opentui/react"
+import type { LeucoEventLogStore } from "@/tui/event-log-store"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 import { useEvents } from "@/tui/use-events"
 
 type Props = {
-  eventLogPath: string
+  eventStore: LeucoEventLogStore
 }
 
 /**
@@ -13,7 +14,7 @@ type Props = {
  */
 export function App(props: Props) {
   const renderer = useRenderer()
-  const events = useEvents({ path: props.eventLogPath, capacity: 500 })
+  const events = useEvents({ store: props.eventStore })
 
   useKeyboard((key) => {
     if (key.name === "escape") {
@@ -80,6 +81,8 @@ const colorFor = (event: LeucoEvent): string => {
       return "#f97316"
     case "engine.reconcile":
       return "#a78bfa"
+    case "engine.reconcile.failed":
+      return "#f87171"
     case "slack.event":
       return "#60a5fa"
     case "turn.start":
@@ -105,6 +108,8 @@ const formatSummary = (event: LeucoEvent): string => {
       return "stopped"
     case "engine.reconcile":
       return `+${event.added.length} -${event.removed.length}`
+    case "engine.reconcile.failed":
+      return `✗ ${event.reason}`
     case "slack.event":
       if (event.event.kind === "message") {
         const m = event.event

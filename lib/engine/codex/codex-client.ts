@@ -14,6 +14,7 @@ import type {
   TurnInputItem,
   TurnStartParams,
 } from "@/engine/codex/codex-types"
+import { errorMessage } from "@/error-message"
 
 type NotificationHandler = (method: string, params: unknown) => void
 
@@ -138,15 +139,20 @@ export class LeucoCodexClient {
     // (bad CODEX_HOME, codex binary missing capabilities, etc.) we must kill
     // the spawned child here — otherwise the caller's `start()` rejects with
     // no live `LeucoCodexClient` reference to call `stop()` on, leaving a
-    // zombie codex process.
+    // zombie codex process. A wall-clock timeout protects against the child
+    // accepting stdio but never replying (FS lock, codex bug, broken sandbox).
     try {
-      await protocol.request("initialize", {
-        clientInfo: {
-          name: this.clientName,
-          title: this.clientTitle,
-          version: this.clientVersion,
-        },
-      })
+      await withTimeout(
+        protocol.request("initialize", {
+          clientInfo: {
+            name: this.clientName,
+            title: this.clientTitle,
+            version: this.clientVersion,
+          },
+        }),
+        INITIALIZE_TIMEOUT_MS,
+        `codex initialize timed out after ${INITIALIZE_TIMEOUT_MS / 1000}s`,
+      )
     } catch (err) {
       child.kill("SIGTERM")
       if (this.exitPromise) await this.exitPromise
@@ -166,8 +172,16 @@ export class LeucoCodexClient {
   async startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error> {
     const protocol = this.protocol
     if (!protocol) return new Error("codex client not started")
-    const result = await protocol.request("thread/start", params)
-    return threadStartResultSchema.parse(result)
+    // Both `protocol.request` (rejects on JSON-RPC error) and `parse` (throws
+    // on schema drift) need to fold into the `| Error` contract that every
+    // other method honours; otherwise the rejection becomes an unhandled
+    // rejection in the engine layer.
+    try {
+      const result = await protocol.request("thread/start", params)
+      return threadStartResultSchema.parse(result)
+    } catch (err) {
+      return err instanceof Error ? err : new Error(errorMessage(err))
+    }
   }
 
   /**
@@ -183,16 +197,20 @@ export class LeucoCodexClient {
       const result = await protocol.request("thread/resume", params)
       return threadStartResultSchema.parse(result)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorMessage(err)
       if (/not found|no such thread|no thread/i.test(message)) return null
       return err instanceof Error ? err : new Error(message)
     }
   }
 
-  startTurn(params: TurnStartParams): Promise<unknown | Error> {
+  async startTurn(params: TurnStartParams): Promise<unknown | Error> {
     const protocol = this.protocol
-    if (!protocol) return Promise.resolve(new Error("codex client not started"))
-    return protocol.request("turn/start", params)
+    if (!protocol) return new Error("codex client not started")
+    try {
+      return await protocol.request("turn/start", params)
+    } catch (err) {
+      return err instanceof Error ? err : new Error(errorMessage(err))
+    }
   }
 
   /**
@@ -276,6 +294,10 @@ export class LeucoCodexClient {
       protocol.onNotification(handler)
       this.turnAborters.add(aborter)
 
+      // `startTurn` always resolves (errors are folded into `| Error`), so a
+      // single `.then` is enough — settling here rejects the outer promise
+      // when codex never sends `turn/completed`. Without this `runTextTurn`
+      // would hang until the tenant's 10 minute wall-clock kicks in.
       this.startTurn(params).then((result) => {
         if (result instanceof Error) {
           teardown()
@@ -289,5 +311,23 @@ export class LeucoCodexClient {
     const aborters = Array.from(this.turnAborters)
     this.turnAborters.clear()
     for (const aborter of aborters) aborter(err)
+  }
+}
+
+const INITIALIZE_TIMEOUT_MS = 30_000
+
+const withTimeout = async <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }

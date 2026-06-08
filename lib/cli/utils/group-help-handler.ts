@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 
@@ -7,5 +8,5 @@ export const groupHelpHandler = (help: string) =>
 
     if (flagBool(body.flags.help)) return c.text(help)
 
-    return c.text(`leuco: missing subcommand\n\n${help}`, 400)
+    throw new HTTPException(400, { message: `leuco: missing subcommand\n\n${help}` })
   })

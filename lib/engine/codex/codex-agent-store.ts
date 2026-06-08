@@ -8,6 +8,8 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { tomlMultiline } from "@/engine/codex/toml-multiline"
+import { tomlString } from "@/engine/codex/toml-string"
 
 export type CodexAgentScope = "project" | "user"
 
@@ -122,16 +124,34 @@ export class LeucoCodexAgentStore {
     }
   }
 
+  /**
+   * Rename `<oldName>.toml` → `<newName>.toml`. The destination is written
+   * before the source is removed so a failed `add` (invalid new name,
+   * already-exists, write error) does not lose the spec — leaves the old
+   * TOML intact and re-throws.
+   */
   rename(scope: CodexAgentScope, oldName: string, newName: string): string {
     const spec = this.read({ scope, name: oldName })
-    this.remove(scope, oldName)
-    return this.add({
+    const newPath = this.add({
       scope,
       name: newName,
       description: spec.description,
       developerInstructions: spec.developerInstructions,
       model: spec.model,
     })
+    try {
+      this.remove(scope, oldName)
+    } catch (error) {
+      // Rollback the new TOML to keep the operation atomic-ish: either both
+      // files exist (caller can retry) or only the old one survives.
+      try {
+        this.remove(scope, newName)
+      } catch {
+        // best-effort cleanup
+      }
+      throw error
+    }
+    return newPath
   }
 
   remove(scope: CodexAgentScope, name: string): string {
@@ -140,15 +160,6 @@ export class LeucoCodexAgentStore {
     unlinkSync(path)
     return path
   }
-}
-
-const tomlString = (value: string): string => {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-}
-
-const tomlMultiline = (value: string): string => {
-  const escaped = value.replace(/"""/g, '\\"\\"\\"')
-  return `"""\n${escaped}\n"""`
 }
 
 /**

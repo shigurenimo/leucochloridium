@@ -2,6 +2,7 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { validateLeucoName } from "@/cli/utils/validate-name"
 import type { Agent } from "@/config/config-schema"
 import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -28,11 +29,11 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
   const agentName = body.args[0]
   if (!agentName) {
-    return c.text(
-      `usage: leuco projects ${projectName} agents add <name> [--description <text>] [--instructions <text>] [--model <id>]`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `usage: leuco projects ${projectName} agents add <name> [--description <text>] [--instructions <text>] [--model <id>]`,
+    })
   }
+  validateLeucoName(agentName, "agent name")
 
   const description = flagString(body.flags.description) ?? `Codex agent: ${agentName}`
   const developerInstructions =
@@ -67,7 +68,19 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
     channels: [],
     mcpServers: {},
   }
-  store.save({ ...project, agents: [...project.agents, nextAgent] })
+  try {
+    store.save({ ...project, agents: [...project.agents, nextAgent] })
+  } catch (error) {
+    // Roll back the freshly-written TOML so a retry of `agents add <name>`
+    // does not fail with "agent already exists" while settings.json still
+    // doesn't know about it.
+    try {
+      tomlStore.remove("project", agentName)
+    } catch {
+      // best-effort cleanup
+    }
+    throw error
+  }
 
   return c.text(`added agent ${projectName}/${agentName} → ${tomlPath}`)
 })

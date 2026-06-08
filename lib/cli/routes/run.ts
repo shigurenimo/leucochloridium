@@ -2,6 +2,7 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoEnv } from "@/env/leuco-env"
+import { errorMessage } from "@/error-message"
 import { LeucoRuntime } from "@/runtime/runtime"
 
 const help = `leuco run — run in foreground (debug)
@@ -43,7 +44,7 @@ export const runHandler = factory.createHandlers(async (c) => {
       codexBin: cli.LEUCO_CODEX_BIN,
     })
   } catch (err) {
-    process.stderr.write(`leuco: ${err instanceof Error ? err.message : String(err)}\n`)
+    process.stderr.write(`leuco: ${errorMessage(err)}\n`)
     process.exit(1)
   }
 
@@ -66,15 +67,31 @@ export const runHandler = factory.createHandlers(async (c) => {
   process.on("SIGHUP", () => {
     process.stdout.write("[leuco] received SIGHUP — reconciling tenants\n")
     void runtime.reload().catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`[leuco] reload failed: ${message}\n`)
+      process.stderr.write(`[leuco] reload failed: ${errorMessage(err)}\n`)
     })
+  })
+
+  // Log the throw before Node's default crash semantics kick in.
+  // `uncaughtExceptionMonitor` runs purely as an observer — it does NOT
+  // suppress termination, so the process still exits non-zero and launchd
+  // restarts the daemon (`KeepAlive = true`). A real `uncaughtException`
+  // handler would silence the crash and leave the process in an undefined
+  // state, which is worse than restarting clean.
+  process.on("uncaughtExceptionMonitor", (err) => {
+    process.stderr.write(`[leuco] uncaughtException: ${errorMessage(err)}\n`)
+  })
+  process.on("unhandledRejection", (reason) => {
+    process.stderr.write(`[leuco] unhandledRejection: ${errorMessage(reason)}\n`)
+    // Node's default for unhandledRejection is also abort (since v15), and
+    // attaching this listener replaces the default. Exit so launchd restarts
+    // us instead of running with poisoned promise state.
+    void shutdown("unhandledRejection").then(() => process.exit(1))
   })
 
   try {
     await runtime.start()
   } catch (err) {
-    process.stderr.write(`leuco: ${err instanceof Error ? err.message : String(err)}\n`)
+    process.stderr.write(`leuco: ${errorMessage(err)}\n`)
     await runtime.stop().catch(() => undefined)
     process.exit(1)
   }

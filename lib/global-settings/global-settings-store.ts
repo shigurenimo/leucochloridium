@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { atomicWriteJson } from "@/fs/atomic-write-json"
 import { type GlobalSettings, globalSettingsSchema } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
@@ -38,12 +38,11 @@ export class LeucoGlobalSettingsStore {
   }
 
   save(settings: GlobalSettings): string | Error {
-    const path = this.paths.settingsPath()
     try {
-      const dir = dirname(path)
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-      writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`)
-      return path
+      return atomicWriteJson({
+        path: this.paths.settingsPath(),
+        data: settings,
+      })
     } catch (err) {
       if (err instanceof Error) return err
       return new Error(String(err))

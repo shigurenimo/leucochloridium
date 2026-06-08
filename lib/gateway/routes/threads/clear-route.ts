@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
 import { factory } from "@/gateway/gateway-factory"
 
@@ -14,10 +15,15 @@ export const threadsClearHandler = factory.createHandlers(async (c) => {
   const parsed = bodySchema.safeParse(raw)
 
   if (!parsed.success) {
-    return c.json({ ok: false, reason: "threadKey required in body" }, 400)
+    throw new HTTPException(400, { message: "threadKey required in body" })
   }
 
   const cleared = c.var.deps.engine.clearThread(parsed.data.threadKey)
+  if (!cleared) {
+    throw new HTTPException(404, {
+      message: `thread not found: ${parsed.data.threadKey}`,
+    })
+  }
 
-  return c.json({ ok: cleared, threadKey: parsed.data.threadKey }, cleared ? 200 : 404)
+  return c.json({ ok: true, threadKey: parsed.data.threadKey })
 })

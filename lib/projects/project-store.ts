@@ -1,21 +1,36 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
-import { dirname, resolve as resolvePath } from "node:path"
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
+import { resolve as resolvePath } from "node:path"
+import { z } from "zod"
 import {
   type Channel,
   type Project,
   type ScheduleEntry,
   projectSchema,
 } from "@/config/config-schema"
+import { atomicWriteJson } from "@/fs/atomic-write-json"
 import { LeucoPaths } from "@/paths/leuco-paths"
+
+/**
+ * Loose shape used only by `loadOrMigrate` to walk a legacy settings.json
+ * before strict `projectSchema.parse` runs. `passthrough()` keeps every
+ * unknown field so the post-migration shape still validates, and the agent
+ * subschema is also `passthrough()` so per-channel data survives.
+ */
+const migrationShape = z
+  .object({
+    id: z.string().optional(),
+    agents: z
+      .array(
+        z
+          .object({
+            name: z.string().optional(),
+            codexThreadId: z.string().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+  })
+  .passthrough()
 
 type Props = {
   paths?: LeucoPaths
@@ -98,13 +113,17 @@ export class LeucoProjectStore {
     )
   }
 
+  /**
+   * Write `settings.json` atomically (temp+rename) with chmod 600. Without
+   * the atomic write, `move-to` / `merge-into` could destroy an agent's
+   * tokens if the second of two `save()` calls dies mid-flight.
+   */
   save(project: Project): string {
-    const path = this.paths.projectSettingsPath(project.id)
-    const dir = dirname(path)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(path, `${JSON.stringify(project, null, 2)}\n`)
-    chmodSync(path, 0o600)
-    return path
+    return atomicWriteJson({
+      path: this.paths.projectSettingsPath(project.id),
+      data: project,
+      mode: 0o600,
+    })
   }
 
   remove(projectId: string): void {
@@ -247,7 +266,8 @@ export class LeucoProjectStore {
    */
   private loadOrMigrate(dirName: string): Project {
     const path = this.paths.projectSettingsPath(dirName)
-    const json = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"))
+    const json = migrationShape.parse(raw)
 
     let id: string
     let mutated = false
@@ -264,16 +284,13 @@ export class LeucoProjectStore {
 
     const threadMigrations: Array<{ agentName: string; threadId: string }> = []
     if (Array.isArray(json.agents)) {
-      for (const entry of json.agents) {
-        if (entry === null || typeof entry !== "object") continue
-        const agent = entry as Record<string, unknown>
-        const threadId = agent.codexThreadId
-        const agentName = agent.name
-        if (typeof threadId === "string" && threadId.length > 0 && typeof agentName === "string") {
-          threadMigrations.push({ agentName, threadId })
-          delete agent.codexThreadId
-          mutated = true
-        }
+      for (const agent of json.agents) {
+        if (agent === null || typeof agent !== "object") continue
+        if (typeof agent.codexThreadId !== "string" || agent.codexThreadId.length === 0) continue
+        if (typeof agent.name !== "string") continue
+        threadMigrations.push({ agentName: agent.name, threadId: agent.codexThreadId })
+        delete agent.codexThreadId
+        mutated = true
       }
     }
 
@@ -287,21 +304,20 @@ export class LeucoProjectStore {
     }
 
     if (mutated) {
-      const settingsPath = this.paths.projectSettingsPath(id)
-      writeFileSync(settingsPath, `${JSON.stringify(parsed, null, 2)}\n`)
-      chmodSync(settingsPath, 0o600)
+      atomicWriteJson({
+        path: this.paths.projectSettingsPath(id),
+        data: parsed,
+        mode: 0o600,
+      })
     }
 
     for (const migration of threadMigrations) {
       const statePath = this.paths.agentStatePath(id, migration.agentName)
-      const stateDir = dirname(statePath)
-      if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
-      if (!existsSync(statePath)) {
-        writeFileSync(
-          statePath,
-          `${JSON.stringify({ codexThreadId: migration.threadId }, null, 2)}\n`,
-        )
-      }
+      if (existsSync(statePath)) continue
+      atomicWriteJson({
+        path: statePath,
+        data: { codexThreadId: migration.threadId },
+      })
     }
 
     return parsed

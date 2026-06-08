@@ -1,8 +1,10 @@
 import { HTTPException } from "hono/http-exception"
+import { z } from "zod"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco slack call — forward a Slack Web API call
@@ -55,11 +57,13 @@ const parseJsonBody = (raw: string | null): Record<string, unknown> => {
   try {
     parsed = JSON.parse(raw)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    throw new HTTPException(400, { message: `--body: ${message}` })
+    throw new HTTPException(400, { message: `--body: ${errorMessage(err)}` })
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  const validated = jsonBodySchema.safeParse(parsed)
+  if (!validated.success) {
     throw new HTTPException(400, { message: "--body: must be a JSON object" })
   }
-  return parsed as Record<string, unknown>
+  return validated.data
 }
+
+const jsonBodySchema = z.record(z.string(), z.unknown())

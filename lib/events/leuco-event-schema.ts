@@ -31,6 +31,12 @@ const engineReconcileSchema = z.object({
   removed: z.array(z.string()),
 })
 
+const engineReconcileFailedSchema = z.object({
+  ...baseTs,
+  type: z.literal("engine.reconcile.failed"),
+  reason: z.string(),
+})
+
 const slackEventEnvelopeSchema = z.object({
   ...baseTs,
   type: z.literal("slack.event"),
@@ -93,6 +99,7 @@ export const leucoEventSchema = z.discriminatedUnion("type", [
   tenantStartedSchema,
   tenantStoppedSchema,
   engineReconcileSchema,
+  engineReconcileFailedSchema,
   slackEventEnvelopeSchema,
   turnStartSchema,
   turnCompleteSchema,

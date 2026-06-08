@@ -24,7 +24,8 @@ export function HasciiBreadcrumb(props: Props) {
 
     const isLast = index === props.items.length - 1
     const fg = isLast ? theme.color.foreground : theme.color.mutedForeground
-    const onPress = isLast || item.value === undefined ? undefined : () => props.onSelect?.(item.value as string)
+    const onPress =
+      isLast || item.value === undefined ? undefined : () => props.onSelect?.(item.value as string)
 
     cells.push({
       id: `crumb-${index}`,

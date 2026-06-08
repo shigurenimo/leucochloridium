@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { validateLeucoName } from "@/cli/utils/validate-name"
 import type { Project } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -23,6 +24,7 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
   const rawPath = body.args[0]
   const path = rawPath ? resolve(c.var.cwd, rawPath) : c.var.cwd
   const name = flagString(body.flags.name) ?? basename(path)
+  validateLeucoName(name, "project name")
 
   const store = new LeucoProjectStore()
   const list = store.list()

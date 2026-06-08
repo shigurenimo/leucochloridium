@@ -1,4 +1,5 @@
 import { jsonRpcIncomingSchema } from "@/engine/codex/codex-schemas"
+import { errorMessage } from "@/error-message"
 
 type Pending = {
   resolve: (value: unknown) => void
@@ -53,13 +54,26 @@ export class LeucoCodexProtocol {
     const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params })
     return new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      this.writer(`${payload}\n`)
+      // `writer` is `child.stdin.write` in production; if stdin is already
+      // closed (race with codex exit) it throws synchronously. Without this
+      // catch the pending entry would never settle and the awaiting caller
+      // would hang until tenant's wall-clock timeout fires.
+      try {
+        this.writer(`${payload}\n`)
+      } catch (err) {
+        this.pending.delete(id)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
     })
   }
 
   notify(method: string, params?: unknown): void {
     const payload = JSON.stringify({ jsonrpc: "2.0", method, params })
-    this.writer(`${payload}\n`)
+    try {
+      this.writer(`${payload}\n`)
+    } catch (err) {
+      this.onLog(`[codex notify failed] ${errorMessage(err)}`)
+    }
   }
 
   feedChunk(chunk: string): void {

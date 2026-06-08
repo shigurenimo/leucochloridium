@@ -83,7 +83,7 @@ describe("buildGatewayApp / POST /threads/clear", () => {
       headers: { "content-type": "application/json" },
     })
     expect(res.status).toBe(404)
-    expect(await res.json()).toEqual({ ok: false, threadKey: "missing" })
+    expect(await res.text()).toBe("error: thread not found: missing")
   })
 
   it("returns 400 when threadKey is missing from the body", async () => {
@@ -94,5 +94,6 @@ describe("buildGatewayApp / POST /threads/clear", () => {
       headers: { "content-type": "application/json" },
     })
     expect(res.status).toBe(400)
+    expect(await res.text()).toBe("error: threadKey required in body")
   })
 })

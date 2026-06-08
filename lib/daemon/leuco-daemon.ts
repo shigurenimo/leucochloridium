@@ -87,7 +87,21 @@ export class LeucoDaemon {
       throw new Error("failed to spawn daemon (no pid)")
     }
 
-    writeFileSync(status.pidPath, `${child.pid}\n`)
+    // If the pid file write fails (EACCES, ENOSPC, etc.), tear down the
+    // detached daemon we just spawned — otherwise the next `start()` would
+    // see no pid file and spawn a second daemon that races for the gateway
+    // port. unref()/keepAwake() are after the write because both depend on
+    // the pid being persisted first.
+    try {
+      writeFileSync(status.pidPath, `${child.pid}\n`)
+    } catch (error) {
+      try {
+        process.kill(child.pid, "SIGTERM")
+      } catch {
+        // best-effort: child may already have exited
+      }
+      throw error
+    }
     child.unref()
 
     this.maybeKeepAwake(child.pid)
@@ -123,19 +137,40 @@ export class LeucoDaemon {
     }
   }
 
+  /**
+   * Send SIGTERM and wait for the child to actually exit before removing the
+   * pid file. Removing the pid file too early causes back-to-back
+   * `stop()` → `start()` flows (move-to, rename, merge-into, relocate) to
+   * spawn a second daemon that fights for the gateway port. After a 10s grace
+   * period SIGKILL is sent; the pid file is removed in either case.
+   */
   stop(): DaemonStopResult {
     const status = this.status()
     if (status.pid === null) return { stopped: false, pid: null }
 
+    const pid = status.pid
     let stopped = false
     try {
-      process.kill(status.pid, "SIGTERM")
+      process.kill(pid, "SIGTERM")
       stopped = true
     } catch {
       // already gone
     }
+
+    if (stopped) {
+      waitForExit(pid, SHUTDOWN_GRACE_MS)
+      if (pidIsAlive(pid)) {
+        try {
+          process.kill(pid, "SIGKILL")
+        } catch {
+          // already gone
+        }
+        waitForExit(pid, SIGKILL_GRACE_MS)
+      }
+    }
+
     removePidFile(status.pidPath)
-    return { stopped, pid: status.pid }
+    return { stopped, pid }
   }
 
   /** Send SIGHUP so a running daemon re-reads config and reconciles tenants. */
@@ -181,5 +216,17 @@ const removePidFile = (path: string): void => {
     unlinkSync(path)
   } catch {
     // idempotent
+  }
+}
+
+const SHUTDOWN_GRACE_MS = 10_000
+const SIGKILL_GRACE_MS = 2_000
+const POLL_INTERVAL_MS = 50
+
+const waitForExit = (pid: number, timeoutMs: number): void => {
+  const deadline = Date.now() + timeoutMs
+  while (pidIsAlive(pid)) {
+    if (Date.now() >= deadline) return
+    Bun.sleepSync(POLL_INTERVAL_MS)
   }
 }

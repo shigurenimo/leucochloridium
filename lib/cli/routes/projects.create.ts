@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { validateLeucoName } from "@/cli/utils/validate-name"
 import { LeucoProjectScaffolder, type ProjectScaffoldResult } from "@/projects/project-scaffolder"
 
 const help = `leuco projects create — scaffold a new leuco-ready repository
@@ -33,6 +34,7 @@ export const projectsCreateHandler = factory.createHandlers(async (c) => {
 
   const path = resolve(c.var.cwd, rawPath)
   const name = flagString(body.flags.name) ?? basename(path)
+  validateLeucoName(name, "project name")
 
   const scaffolder = new LeucoProjectScaffolder()
   const result = scaffolder.create({ path, name })

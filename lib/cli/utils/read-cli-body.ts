@@ -1,5 +1,7 @@
 import type { Context } from "hono"
+import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
+import { errorMessage } from "@/error-message"
 
 const cliBodySchema = z.object({
   args: z.array(z.string()).default([]),
@@ -9,7 +11,18 @@ const cliBodySchema = z.object({
 export type CliBody = z.infer<typeof cliBodySchema>
 
 export const readCliBody = async (c: Context): Promise<CliBody> => {
-  const raw = await c.req.json().catch(() => ({}))
+  const text = await c.req.text()
+  // Treat a literally empty body as `{}` (matches the previous fallback when
+  // every leuco CLI invocation was JSON-encoded); only a body that contains
+  // bytes but isn't valid JSON should be reported, so a future client bug
+  // doesn't silently render as "no args".
+  if (text.length === 0) return cliBodySchema.parse({})
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch (error) {
+    throw new HTTPException(400, { message: `invalid CLI body: ${errorMessage(error)}` })
+  }
   return cliBodySchema.parse(raw)
 }
 

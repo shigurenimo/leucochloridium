@@ -113,4 +113,15 @@ export class LeucoPaths {
   launchAgentPlistPath(): string {
     return join(this.launchAgentsDir(), "io.leuco.daemon.plist")
   }
+
+  /**
+   * The shared codex login lives at `~/.codex/auth.json`. Per-tenant
+   * `CODEX_HOME` directories symlink to it so tenants share auth without
+   * paying for a separate `codex login`. Routed through `LeucoPaths` so a
+   * test-injected `home` overrides it the same way it overrides everything
+   * else under `.leuco/`.
+   */
+  codexAuthPath(): string {
+    return join(this.home, ".codex", "auth.json")
+  }
 }

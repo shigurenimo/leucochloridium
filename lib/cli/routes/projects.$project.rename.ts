@@ -26,7 +26,9 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
   const oldName = c.req.param("project")!
   const newName = body.args[0]
   if (!newName) {
-    return c.text(`usage: leuco projects ${oldName} rename <new-name>`, 400)
+    throw new HTTPException(400, {
+      message: `usage: leuco projects ${oldName} rename <new-name>`,
+    })
   }
   if (newName === oldName) {
     throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })

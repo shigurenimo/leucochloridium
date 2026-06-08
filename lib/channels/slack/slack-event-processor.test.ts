@@ -75,6 +75,25 @@ describe("LeucoSlackEventProcessor.processAppMention", () => {
     expect(second.skip).toBe(true)
     if (second.skip) expect(second.reason).toContain("dedup")
   })
+
+  it("skips app_mention when the user is the bot itself", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const result = proc.processAppMention(baseMention({ user: "UBOT" }))
+    expect(result.skip).toBe(true)
+    if (result.skip) expect(result.reason).toContain("self")
+  })
+
+  it("skips app_mention carrying bot_id", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const result = proc.processAppMention(baseMention({ bot_id: "B1" }))
+    expect(result.skip).toBe(true)
+  })
+
+  it("skips app_mention when botUserId is unknown", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: null })
+    const result = proc.processAppMention(baseMention())
+    expect(result.skip).toBe(true)
+  })
 })
 
 describe("LeucoSlackEventProcessor.processMessage", () => {

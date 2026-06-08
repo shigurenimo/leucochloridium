@@ -96,6 +96,39 @@ describe("LeucoTenant.start / stop", () => {
 
     expect(calls).toEqual(["a.stop", "codex.stop"])
   })
+
+  it("rolls back codex and earlier plugins when a later plugin start fails", async () => {
+    const calls: string[] = []
+    const codex = fakeCodex({
+      start: async () => {
+        calls.push("codex.start")
+      },
+      stop: async () => {
+        calls.push("codex.stop")
+      },
+    })
+    const a = fakePlugin("a")
+    a.start = async () => {
+      calls.push("a.start")
+    }
+    a.stop = async () => {
+      calls.push("a.stop")
+    }
+    const b = fakePlugin("b")
+    b.start = async () => {
+      calls.push("b.start")
+      throw new Error("b boom")
+    }
+    b.stop = async () => {
+      calls.push("b.stop")
+    }
+
+    const tenant = buildTenant({ codex, plugins: [a, b] })
+    await expect(tenant.start()).rejects.toThrow("b boom")
+
+    // a started, b threw mid-start, rollback stops a in reverse + codex.
+    expect(calls).toEqual(["codex.start", "a.start", "b.start", "a.stop", "codex.stop"])
+  })
 })
 
 describe("LeucoTenant.runTextTurn", () => {

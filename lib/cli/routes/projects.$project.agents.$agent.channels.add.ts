@@ -6,6 +6,7 @@ import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { type CliBody, flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { resolveTokenFlag } from "@/cli/utils/resolve-token-flag"
 import type { Channel } from "@/config/config-schema"
+import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> agents <a> channels add — register a channel under an agent
@@ -34,10 +35,9 @@ export const channelsAddHandler = factory.createHandlers(async (c) => {
   const type = body.args[0]
 
   if (type !== "slack" && type !== "schedule") {
-    return c.text(
-      `usage: leuco projects ${projectName} agents ${agentName} channels add (slack|schedule) [...]\n  unsupported type: ${type ?? "(missing)"}`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `usage: leuco projects ${projectName} agents ${agentName} channels add (slack|schedule) [...]\n  unsupported type: ${type ?? "(missing)"}`,
+    })
   }
 
   if (type === "slack") return addSlackChannel(c, body, { projectName, agentName })
@@ -57,16 +57,15 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) 
   const botToken = (await resolveTokenFlag(body.flags["bot-token"])) ?? ""
   const appToken = (await resolveTokenFlag(body.flags["app-token"])) ?? ""
 
-  const store = new LeucoProjectStore()
-  const project = store.load(ctx.projectName)
+  const store = new LeucoProjectStore({ paths: new LeucoPaths() })
+  const project = resolveProject(store, ctx.projectName, { preferCwd: c.var.cwd })
 
   const agent = findAgent(project, ctx.agentName)
 
   if (agent.channels.some((ch) => ch.name === channelName)) {
-    return c.text(
-      `leuco: channel already exists in ${ctx.projectName}/${ctx.agentName}: ${channelName}`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `leuco: channel already exists in ${ctx.projectName}/${ctx.agentName}: ${channelName}`,
+    })
   }
 
   const channelId = randomUUID()
@@ -105,16 +104,15 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) 
 const addScheduleChannel = async (c: Context<Env>, body: CliBody, ctx: AddContext) => {
   const channelName = typeof body.flags.name === "string" ? body.flags.name : "schedule"
 
-  const store = new LeucoProjectStore()
-  const project = store.load(ctx.projectName)
+  const store = new LeucoProjectStore({ paths: new LeucoPaths() })
+  const project = resolveProject(store, ctx.projectName, { preferCwd: c.var.cwd })
 
   const agent = findAgent(project, ctx.agentName)
 
   if (agent.channels.some((ch) => ch.name === channelName)) {
-    return c.text(
-      `leuco: channel already exists in ${ctx.projectName}/${ctx.agentName}: ${channelName}`,
-      400,
-    )
+    throw new HTTPException(400, {
+      message: `leuco: channel already exists in ${ctx.projectName}/${ctx.agentName}: ${channelName}`,
+    })
   }
 
   const channelId = randomUUID()

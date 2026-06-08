@@ -22,11 +22,11 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
   const prompt = flagString(body.flags.prompt) ?? body.args[2] ?? null
 
   if (name === null || runAt === null || prompt === null) {
-    return c.text(
-      "leuco: --name, --run-at, --prompt are required\n" +
+    throw new HTTPException(400, {
+      message:
+        "leuco: --name, --run-at, --prompt are required\n" +
         "usage: leuco projects <p> agents <a> channels <c> schedules add --name <n> --run-at <expr> --prompt <text>",
-      400,
-    )
+    })
   }
 
   const validatedName = validateLeucoName(name, "schedule entry name")

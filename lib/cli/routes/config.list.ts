@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
@@ -25,6 +26,11 @@ export const configListHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoGlobalSettingsStore()
   const settings = store.load()
+  if (settings instanceof Error) {
+    // Without this guard a corrupted ~/.leuco/settings.json would be silently
+    // rendered as `{}` and the user would think they wiped their config.
+    throw new HTTPException(500, { message: `failed to load settings: ${settings.message}` })
+  }
 
   return c.text(JSON.stringify(settings, null, 2))
 })

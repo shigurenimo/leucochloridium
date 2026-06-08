@@ -50,7 +50,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
   async start(ctx: ChannelPluginContext): Promise<void> {
     this.ctx = ctx
-    this.adapter = LeucoSlackAdapter.fromBotToken(this.props.botToken)
+    this.adapter = LeucoSlackAdapter.fromBotToken(this.props.botToken, ctx.onLog)
     this.listener = new LeucoSlackListener({
       botToken: this.props.botToken,
       appToken: this.props.appToken,
@@ -144,10 +144,24 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
 const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string => {
   return [
-    `<slack-event channel-config="${channelName}" channel="${msg.channel}" user="${msg.user}" ts="${msg.ts}" thread_ts="${msg.threadTs}" mentioned="${msg.mentioned}" source="${msg.source}">`,
-    msg.text,
+    `<slack-event channel-config="${attr(channelName)}" channel="${attr(msg.channel)}" user="${attr(msg.user)}" ts="${attr(msg.ts)}" thread_ts="${attr(msg.threadTs)}" mentioned="${msg.mentioned}" source="${msg.source}">`,
+    escapeEnvelopeBody(msg.text),
     `</slack-event>`,
   ].join("\n")
+}
+
+/** Minimal XML attribute escape. Slack IDs / ts are normally safe but a
+ * channel name set by the user could contain `"`. */
+const attr = (value: string): string => {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")
+}
+
+/** Defang any literal `</slack-event>` inside the body so a crafted message
+ * cannot inject extra envelopes the model would see as separate events
+ * (prompt-injection vector). The replacement is visible and self-explanatory
+ * so the human reading the log understands the substitution. */
+const escapeEnvelopeBody = (text: string): string => {
+  return text.replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
 }
 
 const MONOLOGUE_LOG_LIMIT = 200

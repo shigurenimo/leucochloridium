@@ -5,6 +5,7 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
+import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> relocate — move the repository directory
@@ -84,17 +85,39 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   const wasRunning = daemon.status().isRunning
   if (wasRunning) daemon.stop()
 
-  renameSync(project.path, newPath)
-  store.save({ ...project, path: newPath, name: newName })
+  try {
+    renameSync(project.path, newPath)
+    try {
+      store.save({ ...project, path: newPath, name: newName })
+    } catch (saveError) {
+      // settings.json write failed after the directory move succeeded — roll
+      // back the rename so the on-disk repo matches the persisted record.
+      try {
+        renameSync(newPath, project.path)
+      } catch (rollbackError) {
+        process.stderr.write(
+          `[leuco] relocate rollback: repo stranded at ${newPath}: ${errorMessage(rollbackError)}\n`,
+        )
+      }
+      throw saveError
+    }
 
-  const lines = [
-    newName === project.name
-      ? `relocated project ${oldName}: ${project.path} → ${newPath}`
-      : `relocated project ${oldName} → ${newName}: ${project.path} → ${newPath}`,
-  ]
-  if (wasRunning) {
-    const result = daemon.start({ binPath: c.var.binPath, env: process.env })
-    lines.push(`daemon restarted (pid ${result.pid})`)
+    const lines = [
+      newName === project.name
+        ? `relocated project ${oldName}: ${project.path} → ${newPath}`
+        : `relocated project ${oldName} → ${newName}: ${project.path} → ${newPath}`,
+    ]
+    if (wasRunning) {
+      const result = daemon.start({ binPath: c.var.binPath, env: process.env })
+      lines.push(`daemon restarted (pid ${result.pid})`)
+    }
+    return c.text(lines.join("\n"))
+  } catch (error) {
+    // Restore daemon even when the rename / save failed so the user is not
+    // left with a silently-stopped supervisor.
+    if (wasRunning && !daemon.status().isRunning) {
+      daemon.start({ binPath: c.var.binPath, env: process.env })
+    }
+    throw error
   }
-  return c.text(lines.join("\n"))
 })

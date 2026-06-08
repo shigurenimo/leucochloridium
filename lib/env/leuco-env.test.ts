@@ -66,6 +66,47 @@ describe("LeucoEnv.loadFile", () => {
     expect(env.FOO).toBe("ok")
     expect(env["123BAD"]).toBeUndefined()
   })
+
+  it('decodes \\n / \\" inside double-quoted values', () => {
+    const path = join(dir, ".env")
+    writeFileSync(path, 'MULTI="line1\\nline2"\nESC="a\\"b"\n')
+    const env: NodeJS.ProcessEnv = {}
+    new LeucoEnv({ env }).loadFile(path)
+
+    expect(env.MULTI).toBe("line1\nline2")
+    expect(env.ESC).toBe('a"b')
+  })
+
+  it("does not interpret escapes inside single-quoted values", () => {
+    const path = join(dir, ".env")
+    writeFileSync(path, "RAW='line1\\nline2'\n")
+    const env: NodeJS.ProcessEnv = {}
+    new LeucoEnv({ env }).loadFile(path)
+
+    expect(env.RAW).toBe("line1\\nline2")
+  })
+
+  it("decodes escaped backslashes correctly (single-pass)", () => {
+    const path = join(dir, ".env")
+    // File contents: ESCAPED="\\n" — two characters: backslash, n.
+    // Naive chained .replace would turn \\n into a real newline first, then
+    // \\\\ would find nothing. A single-pass scan keeps \\n literal.
+    writeFileSync(path, 'ESCAPED="\\\\n"\n')
+    const env: NodeJS.ProcessEnv = {}
+    new LeucoEnv({ env }).loadFile(path)
+
+    expect(env.ESCAPED).toBe("\\n")
+  })
+
+  it("leaves a value with an embedded quote alone instead of mangling it", () => {
+    const path = join(dir, ".env")
+    // No leading quote -> not a quoted value, should pass through as-is.
+    writeFileSync(path, 'NOQUOTE=foo"bar\n')
+    const env: NodeJS.ProcessEnv = {}
+    new LeucoEnv({ env }).loadFile(path)
+
+    expect(env.NOQUOTE).toBe('foo"bar')
+  })
 })
 
 describe("LeucoEnv.parseCli", () => {

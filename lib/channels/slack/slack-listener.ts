@@ -22,7 +22,11 @@ export class LeucoSlackListener {
   private readonly app: App
   private readonly onLog: ((line: string) => void) | undefined
   private handler: EventHandler | null = null
-  private processor: LeucoSlackEventProcessor | null = null
+  // Wire the processor at construction so events arriving in the
+  // `app.start()`→`fetchBotUserId()` window aren't silently dropped. The
+  // botUserId starts null (causing self/bot filters to skip those events
+  // until known) and is upgraded once auth.test resolves.
+  private processor: LeucoSlackEventProcessor
   private botUserId: string | null = null
 
   constructor(props: Props) {
@@ -33,6 +37,7 @@ export class LeucoSlackListener {
       socketMode: true,
       logLevel: LogLevel.WARN,
     })
+    this.processor = new LeucoSlackEventProcessor({ botUserId: null })
     this.bindEvents()
   }
 
@@ -43,7 +48,11 @@ export class LeucoSlackListener {
   async start(): Promise<{ botUserId: string | null }> {
     await this.app.start()
     this.botUserId = await this.fetchBotUserId()
-    this.processor = new LeucoSlackEventProcessor({ botUserId: this.botUserId })
+    // Upgrade the processor in place — mutating preserves the LRU dedup
+    // window that may already hold ids from events that arrived during the
+    // `app.start()` → `auth.test` race. Rebuilding would drop those keys and
+    // let an early redelivery dispatch twice.
+    this.processor.setBotUserId(this.botUserId)
     return { botUserId: this.botUserId }
   }
 
@@ -64,23 +73,19 @@ export class LeucoSlackListener {
 
   private bindEvents(): void {
     this.app.event("app_mention", async (args) => {
-      const result = this.processor?.processAppMention(args.event)
-      await this.dispatchResult(result)
+      await this.dispatchResult(this.processor.processAppMention(args.event))
     })
 
     this.app.message(async (args) => {
-      const result = this.processor?.processMessage(args.message)
-      await this.dispatchResult(result)
+      await this.dispatchResult(this.processor.processMessage(args.message))
     })
 
     this.app.event("reaction_added", async (args) => {
-      const result = this.processor?.processReaction(args.event)
-      await this.dispatchResult(result)
+      await this.dispatchResult(this.processor.processReaction(args.event))
     })
 
     this.app.event("reaction_removed", async (args) => {
-      const result = this.processor?.processReaction(args.event)
-      await this.dispatchResult(result)
+      await this.dispatchResult(this.processor.processReaction(args.event))
     })
 
     this.app.error(async (err) => {
@@ -89,9 +94,8 @@ export class LeucoSlackListener {
   }
 
   private async dispatchResult(
-    result: ReturnType<LeucoSlackEventProcessor["processMessage"]> | undefined,
+    result: ReturnType<LeucoSlackEventProcessor["processMessage"]>,
   ): Promise<void> {
-    if (!result) return
     if (result.skip) {
       this.log(result.reason)
       return
