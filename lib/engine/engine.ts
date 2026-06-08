@@ -153,9 +153,9 @@ export class LeucoEngine {
     } catch (err) {
       const reason = errorMessage(err)
       this.log(`[leuco] reconcile: failed to load projects: ${reason}`)
-      // Emit a structured event so the TUI / gateway can show the user that
-      // their SIGHUP / config edit did not take effect, instead of silently
-      // dropping the reload.
+      // Emit a structured event so consumers (gateway SSE, `leuco logs -f`)
+      // can see that the SIGHUP / config edit did not take effect, instead
+      // of silently dropping the reload.
       this.bus.emit({ ts: Date.now(), type: "engine.reconcile.failed", reason })
       return
     }

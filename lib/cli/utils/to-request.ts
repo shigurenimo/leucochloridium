@@ -4,7 +4,7 @@ const SHORT_FLAGS: Record<string, string> = {
   v: "version",
 }
 
-const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "tui", "update"])
+const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "update"])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const AGENT_LEAFS = new Set(["list", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
@@ -65,7 +65,7 @@ export type CliRequest = {
  *   leuco projects <name> agents <name> channels <chan-leaf>  → /projects/<name>/agents/<name>/channels/<leaf>
  *   leuco projects <name> agents <name> channels <name> <named-leaf>
  *
- * `top-leafs`: run | start | stop | restart | status | logs | tui | update
+ * `top-leafs`: run | start | stop | restart | status | logs | update
  * `project-leafs` / `agent-leafs` / `channel-leafs`: list | create | add
  * `config-leafs`: list | get | set
  * `boot-leafs`: install | uninstall | status

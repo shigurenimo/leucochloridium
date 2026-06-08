@@ -47,7 +47,6 @@ import { help as slackHelp } from "@/cli/routes/slack.help"
 import { startHandler } from "@/cli/routes/start"
 import { statusHandler } from "@/cli/routes/status"
 import { stopHandler } from "@/cli/routes/stop"
-import { tuiHandler } from "@/cli/routes/tui"
 import { updateHandler } from "@/cli/routes/update"
 import { groupHelpHandler } from "@/cli/utils/group-help-handler"
 
@@ -69,7 +68,7 @@ base.notFound((c) => {
 /**
  * Top-level leuco CLI app. Each subcommand is a `POST /<cmd>` route and the
  * argv → URL/body conversion lives in `@/cli/utils/to-request`. Bare `leuco`
- * routes to `/`, which opens the TUI when the daemon is running and otherwise
+ * routes to `/`, which prints status when the daemon is running and otherwise
  * starts it.
  *
  * Route file naming mirrors the URL: `<segments>.ts` for `/<segments>`,
@@ -83,7 +82,6 @@ export const app = base
   .post("/restart", ...restartHandler)
   .post("/run", ...runHandler)
   .post("/logs", ...logsHandler)
-  .post("/tui", ...tuiHandler)
   .post("/update", ...updateHandler)
 
   // Collection URLs (`/projects`, `/projects/:p/agents`, etc) return the list

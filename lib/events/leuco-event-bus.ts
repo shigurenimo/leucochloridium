@@ -11,8 +11,9 @@ type Props = {
 /**
  * In-process event bus. Components call `emit()` to publish a structured
  * `LeucoEvent`; the bus appends to `events.jsonl` and fans out to live
- * subscribers (the gateway SSE feed, the TUI, anyone else). Persistence and
- * subscription are independent — disabling one does not break the other.
+ * subscribers (the gateway SSE feed, `leuco logs -f`, anyone else).
+ * Persistence and subscription are independent — disabling one does not
+ * break the other.
  *
  * Persistence runs through a lazily-opened append `WriteStream` so high-volume
  * codex notification bursts do not pay an open/write/close syscall each. The
@@ -42,9 +43,9 @@ export class LeucoEventBus {
   }
 
   /**
-   * Convenience: emit a structured `log` event onto the bus. Subscribers (the
-   * gateway SSE feed, the TUI tail, the events.jsonl writer) handle their own
-   * mirroring; this helper exists for components that only have a bus
+   * Convenience: emit a structured `log` event onto the bus. Subscribers
+   * (gateway SSE feed, `leuco logs -f`, events.jsonl writer) handle their
+   * own mirroring; this helper exists for components that only have a bus
    * reference and no `onLog` callback.
    */
   log(level: "info" | "warn" | "error", line: string): void {
@@ -87,8 +88,8 @@ export class LeucoEventBus {
       const stream = createWriteStream(path, { flags: "a" })
       stream.on("error", (err) => {
         // Surface the disablement once so a disk-full / EACCES failure
-        // doesn't manifest as the TUI silently going dark for the rest of
-        // the daemon's lifetime.
+        // doesn't manifest as `leuco logs -f` silently going dark for the
+        // rest of the daemon's lifetime.
         process.stderr.write(`[leuco] events.jsonl write disabled: ${err.message}\n`)
         this.persistenceDisabled = true
         this.writeStream = null

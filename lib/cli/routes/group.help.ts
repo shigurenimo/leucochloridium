@@ -1,7 +1,7 @@
 export const help = `leuco — Self-hosted gateway bridging chat channels to codex app-server.
 
 usage:
-  leuco                            open the TUI when running, otherwise start the daemon in background
+  leuco                            print status when running, otherwise start the daemon in background
   leuco start                      start the daemon; reads every ~/.leuco/projects/<p>/settings.json
   leuco run                        run in foreground (debug; logs to stdout)
   leuco stop                       stop the daemon

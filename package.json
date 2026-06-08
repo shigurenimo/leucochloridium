@@ -8,8 +8,7 @@
     "codex",
     "gateway",
     "mcp",
-    "slack",
-    "tui"
+    "slack"
   ],
   "homepage": "https://github.com/shigurenimo/leuco#readme",
   "bugs": {
@@ -25,10 +24,8 @@
   },
   "files": [
     "lib/**/*.ts",
-    "lib/**/*.tsx",
     "lib/non-bun-stub.js",
     "!lib/**/*.test.ts",
-    "!lib/**/*.test.tsx",
     "!lib/**/*.bun-test.ts",
     "tsconfig.json",
     "README.md"
@@ -50,17 +47,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opentui/core": "^0.2.2",
-    "@opentui/react": "^0.2.2",
     "@slack/bolt": "^4.7.2",
     "@slack/web-api": "^7.15.1",
     "hono": "^4.12.16",
-    "react": "^19.2.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19.2.14",
     "vite-plus": "^0.1.20",
     "vitest": "^4.1.5"
   },

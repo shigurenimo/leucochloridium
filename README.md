@@ -25,25 +25,23 @@ bun link              # exposes the `leuco` bin from this checkout
 ```bash
 cd your-repo
 leuco projects add .  # register the cwd as a leuco project
-leuco                 # starts the daemon (or opens the TUI if one is already running)
+leuco                 # starts the daemon (or prints status if already running)
 ```
 
-`leuco` (no args) opens the live event TUI when the daemon is running and
-otherwise spawns the daemon in the background. ESC, `q`, or Ctrl-C exits the
-TUI.
+`leuco` (no args) prints `leuco status` output when the daemon is running
+and otherwise spawns the daemon in the background.
 
 ## Commands
 
 | command                  | what it does                                                             |
 | ------------------------ | ------------------------------------------------------------------------ |
-| `leuco`                  | open TUI when running, otherwise start the daemon                        |
+| `leuco`                  | print status when running, otherwise start the daemon                    |
 | `leuco start`            | start the daemon in background                                           |
 | `leuco run`              | run in foreground (debug; logs to stdout)                                |
 | `leuco stop`             | stop the daemon                                                          |
 | `leuco restart`          | stop + start                                                             |
 | `leuco status`           | daemon + per-project state                                               |
 | `leuco logs [-f]`        | print daemon log (`-f` to follow)                                        |
-| `leuco tui`              | force-open the live event viewer                                         |
 | `leuco update [--check]` | install the latest published leuco (`--check` only reports the registry) |
 
 Project / agent / channel management:
@@ -143,12 +141,11 @@ Per-channel Slack tokens (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) are stored in
 `leuco projects <p> agents <a> channels add slack` — no env vars required at
 runtime.
 
-## Live event viewer
+## Event log
 
-`leuco tui` (or bare `leuco` while the daemon is running) tails
-`~/.leuco/daemon/events.jsonl` and renders typed events in real time with
-the newest at the top. The same JSONL is the source of truth — any consumer
-can tail it without running the TUI.
+The daemon writes a newline-delimited JSON stream to
+`~/.leuco/daemon/events.jsonl`. `leuco logs -f` tails it; any consumer can
+tail the same file directly.
 
 Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
 `slack.event`, `turn.start`, `turn.complete`, `turn.error`,
