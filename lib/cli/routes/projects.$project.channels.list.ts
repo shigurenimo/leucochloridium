@@ -5,18 +5,14 @@ import { renderYaml } from "@/cli/utils/render-yaml"
 import type { Channel } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> channels / list channels in a project
+const help = `leuco projects <p> channels / manage channels
 
 usage / leuco projects <p> channels [subcommand]
 
 subcommands:
   (none) / list every channel
   add (slack|schedule) / add a channel
-  <c> remove / remove a channel
-  <c> rename <new> / rename a channel
-  <c> schedules / manage schedule entries
-
-output / valid YAML`
+  <c> / channel operations (run \`leuco projects <p> channels <c> -h\`)`
 
 export const channelsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

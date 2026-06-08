@@ -4,9 +4,9 @@ usage / leuco projects <p> channels <c> [subcommand]
 
 subcommands:
   remove / remove this channel
-  rename <new> / rename this channel
-  start / enable this channel
-  stop / disable this channel
+  rename <new> / rename
+  start / enable
+  stop / disable
   restart / rebuild the tenant
-  set-tokens [--bot-token <t>] [--app-token <t>] / update Slack tokens (\`-\` reads from stdin)
-  schedules / manage entries on a schedule channel (add | list | remove)`
+  set-tokens / update Slack tokens (run with -h)
+  schedules / manage cron entries (run with -h)`

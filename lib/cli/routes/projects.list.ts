@@ -3,20 +3,15 @@ import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects / list registered projects
+const help = `leuco projects / manage registered projects
 
 usage / leuco projects [subcommand]
 
 subcommands:
   (none) / list every project
-  create <path> / scaffold a new repository
+  create <path> / scaffold + register a new repo
   add [<path>] / register an existing repo
-  <p> remove [--cascade] / unregister a project
-  <p> rename <new> / rename a project
-  <p> relocate <new-path> / move the repo dir + update path
-  <p> channels / manage channels under a project
-
-output / valid YAML`
+  <p> / project operations (run \`leuco projects <p> -h\`)`
 
 export const projectsListHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

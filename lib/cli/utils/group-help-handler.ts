@@ -8,5 +8,5 @@ export const groupHelpHandler = (help: string) =>
 
     if (flagBool(body.flags.help)) return c.text(help)
 
-    throw new HTTPException(400, { message: `leuco: missing subcommand\n\n${help}` })
+    throw new HTTPException(400, { message: help })
   })
