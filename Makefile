@@ -42,7 +42,7 @@ test:
 	$(MAKE) bun-test
 
 bun-test:
-	$(BUN) test ./lib/logger/leuco-logger-sqlite-sink.bun-test.ts
+	$(BUN) test ./lib/events/leuco-event-bus.bun-test.ts ./lib/logger/leuco-logger-sqlite-sink.bun-test.ts
 
 typecheck:
 	bunx tsc -b

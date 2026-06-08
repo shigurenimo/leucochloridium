@@ -4,6 +4,7 @@ import { errorMessage } from "@/error-message"
 import { bootInstallHandler } from "@/cli/routes/boot.install"
 import { bootStatusHandler } from "@/cli/routes/boot.status"
 import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
+import { eventsHandler } from "@/cli/routes/events"
 import { configGetHandler } from "@/cli/routes/config.get"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
@@ -74,6 +75,7 @@ export const app = base
   .post("/restart", ...restartHandler)
   .post("/run", ...runHandler)
   .post("/logs", ...logsHandler)
+  .post("/events", ...eventsHandler)
   .post("/update", ...updateHandler)
 
   // Collection URLs (`/projects`, `/projects/:p/channels`, etc) return the list

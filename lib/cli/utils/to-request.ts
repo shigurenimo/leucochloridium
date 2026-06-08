@@ -4,7 +4,7 @@ const SHORT_FLAGS: Record<string, string> = {
   v: "version",
 }
 
-const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "update"])
+const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "events", "update"])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
 const NAMED_LEAFS = new Set([

@@ -1,6 +1,6 @@
 {
   "name": "leuco",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Self-hosted multi-tenant gateway that runs the Codex app-server as a Slack bot. Bun-only.",
   "keywords": [
     "bot",
@@ -46,7 +46,7 @@
     "dev": "bun run lib/index.ts"
   },
   "dependencies": {
-    "@interactive-inc/claude-funnel": "^0.57.0",
+    "@interactive-inc/claude-funnel": "^0.58.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@slack/bolt": "^4.7.2",
     "@slack/web-api": "^7.15.1",

@@ -7,6 +7,9 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./lib", import.meta.url)),
     },
   },
+  test: {
+    setupFiles: ["./vitest.setup.ts"],
+  },
   fmt: {
     semi: false,
   },

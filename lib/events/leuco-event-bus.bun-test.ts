@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, test } from "vitest"
@@ -42,34 +42,44 @@ describe("LeucoEventBus", () => {
     expect(count).toBe(1)
   })
 
-  test("appends every event to the configured log path on stop", async () => {
-    const path = join(dir, "events.jsonl")
+  test("persists events to SQLite", () => {
+    const path = join(dir, "events.db")
     const bus = new LeucoEventBus({ eventLogPath: path })
 
     bus.log("info", "one")
     bus.log("warn", "two")
-    await bus.stop()
 
-    const lines = readFileSync(path, "utf8").trim().split("\n")
-    expect(lines).toHaveLength(2)
-    expect(JSON.parse(lines[0]!)).toMatchObject({ type: "log", line: "one" })
-    expect(JSON.parse(lines[1]!)).toMatchObject({ type: "log", line: "two" })
+    const sink = bus.getSink()!
+    const entries = sink.query()
+
+    expect(entries).toHaveLength(2)
+    expect(entries[0]!.event).toMatchObject({ type: "log", line: "one" })
+    expect(entries[1]!.event).toMatchObject({ type: "log", line: "two" })
+
+    bus.stop()
   })
 
-  test("creates the log directory when it does not exist", async () => {
-    const path = join(dir, "nested", "events.jsonl")
+  test("indexes the project column", () => {
+    const path = join(dir, "events.db")
     const bus = new LeucoEventBus({ eventLogPath: path })
 
-    bus.log("info", "hi")
-    await bus.stop()
+    bus.emit({ ts: Date.now(), type: "tenant.started", project: "alpha" })
+    bus.emit({ ts: Date.now(), type: "tenant.started", project: "beta" })
+    bus.emit({ ts: Date.now(), type: "log", level: "info", line: "no project" })
 
-    expect(readFileSync(path, "utf8")).toContain('"line":"hi"')
+    const sink = bus.getSink()!
+    const alphaOnly = sink.query({ where: { project: "alpha" } })
+
+    expect(alphaOnly).toHaveLength(1)
+    expect(alphaOnly[0]!.event).toMatchObject({ type: "tenant.started", project: "alpha" })
+
+    bus.stop()
   })
 
-  test("stop is idempotent when no events were emitted", async () => {
-    const bus = new LeucoEventBus({ eventLogPath: join(dir, "events.jsonl") })
-    await bus.stop()
-    await bus.stop()
+  test("stop is idempotent", () => {
+    const bus = new LeucoEventBus({ eventLogPath: join(dir, "events.db") })
+    bus.stop()
+    bus.stop()
   })
 
   test("a failing subscriber does not block other subscribers", () => {

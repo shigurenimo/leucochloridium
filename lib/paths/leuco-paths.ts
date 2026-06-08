@@ -57,9 +57,8 @@ export class LeucoPaths {
     return join(this.base, "settings.json")
   }
 
-  /** Newline-delimited JSON stream of structured `LeucoEvent`s. */
   daemonEventLogPath(): string {
-    return join(this.daemonDir(), "events.jsonl")
+    return join(this.daemonDir(), "events.db")
   }
 
   projectsRoot(): string {

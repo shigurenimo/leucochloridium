@@ -52,6 +52,10 @@ export class LeucoDaemon {
     return this.paths.daemonLogPath()
   }
 
+  getEventLogPath(): string {
+    return this.paths.daemonEventLogPath()
+  }
+
   status(): DaemonStatus {
     const pidPath = this.paths.daemonPidPath()
     const logPath = this.paths.daemonLogPath()

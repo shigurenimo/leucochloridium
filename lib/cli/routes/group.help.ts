@@ -9,6 +9,7 @@ commands:
   restart / stop + start
   status / daemon + project state
   logs / print log (-f to follow)
+  events / query event log (--type, --project, --limit)
   update / install latest version
   projects / manage projects and channels
   config / machine-wide settings
