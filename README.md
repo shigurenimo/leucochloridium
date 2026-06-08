@@ -87,7 +87,7 @@ Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per
 - One daemon per machine; the daemon supervises every enabled
   `(project, agent)` tenant.
 - Each tenant has a dedicated `CODEX_HOME` under
-  `~/.leuco/projects/<p>/agents/<a>/home/`. `auth.json` is symlinked from
+  `~/.leuco/projects/<p>/agents/<a>/.codex/`. `auth.json` is symlinked from
   `~/.codex/auth.json` so all tenants share the user's codex login while
   keeping memories isolated.
 - One Slack thread maps to one Codex thread. Turns within a thread serialise;
@@ -111,7 +111,7 @@ Slack (Socket Mode) ─→ leuco daemon ─→ codex app-server (one process per
         ├── settings.json                  project config + per-channel tokens (chmod 600)
         └── agents/
             └── <agentName>/
-                └── home/                  CODEX_HOME for this tenant
+                └── .codex/                CODEX_HOME for this tenant
                     ├── auth.json          symlink → ~/.codex/auth.json
                     └── config.toml        project trust + mcp_servers.leuco
 ```

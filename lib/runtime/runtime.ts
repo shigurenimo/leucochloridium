@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   readlinkSync,
+  renameSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -266,8 +267,19 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
 
 const ensureCodexHome = (paths: LeucoPaths, projectId: string, agentName: string): string => {
   const dir = paths.agentHome(projectId, agentName)
+  migrateAgentHome(paths, projectId, agentName)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
+}
+
+/** Rename pre-0.9 `home/` → `.codex/` if needed. */
+const migrateAgentHome = (paths: LeucoPaths, projectId: string, agentName: string): void => {
+  const legacy = paths.legacyAgentHome(projectId, agentName)
+  const next = paths.agentHome(projectId, agentName)
+
+  if (existsSync(legacy) && !existsSync(next)) {
+    renameSync(legacy, next)
+  }
 }
 
 /**

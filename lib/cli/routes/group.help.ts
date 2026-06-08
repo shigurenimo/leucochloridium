@@ -53,7 +53,7 @@ Layout:
   daemon:   ~/.leuco/daemon/{pid,log}                     (machine-wide, single process)
   global:   ~/.leuco/settings.json                        (machine-wide; \`leuco config set\`)
   project:  ~/.leuco/projects/<p>/settings.json           (chmod 600, registration + tokens)
-  codex:    ~/.leuco/projects/<p>/agents/<a>/home/        (CODEX_HOME, memories)
+  codex:    ~/.leuco/projects/<p>/agents/<a>/.codex/      (CODEX_HOME, memories)
 
 env (optional):
   LEUCO_CODEX_BIN                  codex binary path (default: "codex")

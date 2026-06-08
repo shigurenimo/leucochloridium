@@ -26,7 +26,7 @@ type Props = {
  *           ├── settings.json                        ← project config + secrets
  *           └── agents/
  *               └── <agentName>/
- *                   └── home/                        ← CODEX_HOME
+ *                   └── .codex/                      ← CODEX_HOME
  */
 export class LeucoPaths {
   private readonly home: string
@@ -91,6 +91,11 @@ export class LeucoPaths {
 
   /** CODEX_HOME for one tenant. */
   agentHome(projectId: string, agentName: string): string {
+    return join(this.agentDir(projectId, agentName), ".codex")
+  }
+
+  /** @deprecated Pre-0.9 path. Used only by the auto-migration in runtime. */
+  legacyAgentHome(projectId: string, agentName: string): string {
     return join(this.agentDir(projectId, agentName), "home")
   }
 
