@@ -2,6 +2,7 @@ import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
+import { isSelfAgentOperation, selfAgentOperationMessage } from "@/cli/utils/self-operation-guard"
 import type { Project } from "@/config/config-schema"
 import { LeucoAgentStateStore } from "@/projects/agent-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -24,6 +25,10 @@ export const agentsResetHandler = factory.createHandlers(async (c) => {
 
   const projectName = c.req.param("project")!
   const agentName = c.req.param("agent")!
+
+  if (isSelfAgentOperation(projectName, agentName)) {
+    return c.text(selfAgentOperationMessage("reset", projectName, agentName), 409)
+  }
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })

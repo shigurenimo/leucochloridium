@@ -50,6 +50,8 @@ export class LeucoProjectStore {
   }
 
   list(): Project[] {
+    this.migrateLegacyRootSettings()
+
     const root = this.paths.projectsRoot()
     if (!existsSync(root)) return []
 
@@ -305,6 +307,85 @@ export class LeucoProjectStore {
     }
 
     return parsed
+  }
+
+  /**
+   * Legacy 0.7-style installs kept every project in the global
+   * `~/.leuco/settings.json` as `projects[]`, with channels/state directly on
+   * each project. Newer leuco stores one settings file per project and one
+   * default agent per legacy project. Copy those registrations forward on
+   * first read so upgrading does not make `leuco projects` look empty.
+   */
+  private migrateLegacyRootSettings(): void {
+    const path = this.paths.settingsPath()
+    if (!existsSync(path)) return
+
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    if (!Array.isArray(raw.projects)) return
+
+    for (const legacyEntry of raw.projects) {
+      if (legacyEntry === null || typeof legacyEntry !== "object") continue
+      const legacy = legacyEntry as Record<string, unknown>
+      if (Array.isArray(legacy.agents)) continue
+
+      const name = legacy.name
+      const projectPath = legacy.path
+      if (typeof name !== "string" || typeof projectPath !== "string") continue
+
+      const id = typeof legacy.id === "string" ? legacy.id : crypto.randomUUID()
+      if (existsSync(this.paths.projectSettingsPath(id))) continue
+
+      const project = projectSchema.parse({
+        id,
+        name,
+        path: projectPath,
+        agents: [
+          {
+            name,
+            enabled: typeof legacy.enabled === "boolean" ? legacy.enabled : true,
+            useCommonInstructions:
+              typeof legacy.useCommonInstructions === "boolean"
+                ? legacy.useCommonInstructions
+                : true,
+            prompts: Array.isArray(legacy.prompts) ? legacy.prompts : ["friendly"],
+            channels: Array.isArray(legacy.channels) ? legacy.channels : [],
+            mcpServers:
+              legacy.mcpServers !== null && typeof legacy.mcpServers === "object"
+                ? legacy.mcpServers
+                : {},
+          },
+        ],
+      })
+
+      this.save(project)
+
+      const state = legacy.state
+      if (state !== null && typeof state === "object") {
+        const legacyState = state as Record<string, unknown>
+        const codexThreadId = legacyState.codexThreadId
+        const scheduleLastFiredAt = legacyState.scheduleLastFiredAt
+        const statePath = this.paths.agentStatePath(id, name)
+        const stateDir = dirname(statePath)
+        if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
+        if (!existsSync(statePath)) {
+          writeFileSync(
+            statePath,
+            `${JSON.stringify(
+              {
+                codexThreadId: typeof codexThreadId === "string" ? codexThreadId : null,
+                scheduleLastFiredAt:
+                  scheduleLastFiredAt !== null && typeof scheduleLastFiredAt === "object"
+                    ? scheduleLastFiredAt
+                    : {},
+              },
+              null,
+              2,
+            )}\n`,
+          )
+          chmodSync(statePath, 0o600)
+        }
+      }
+    }
   }
 }
 

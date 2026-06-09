@@ -9,9 +9,8 @@ usage: leuco projects <p> agents <a> stop
 
 Sets the agent's \`enabled\` flag to false in settings.json. If the daemon is
 running, sends SIGHUP so it reconciles tenants and stops this agent's codex
-+ channels immediately. The agent definition (TOML, codex-home with
-memories, channels) is preserved — re-enable with \`leuco projects <p>
-agents <a> start\`.`
++ channels immediately. The agent's codex-home, memories, and channels are
+preserved — re-enable with \`leuco projects <p> agents <a> start\`.`
 
 export const agentsStopHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

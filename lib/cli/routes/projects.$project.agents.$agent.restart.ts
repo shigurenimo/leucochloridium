@@ -2,6 +2,7 @@ import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
+import { isSelfAgentOperation, selfAgentOperationMessage } from "@/cli/utils/self-operation-guard"
 import type { Project } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -10,9 +11,9 @@ const help = `leuco projects <p> agents <a> restart — rebuild a single agent's
 usage: leuco projects <p> agents <a> restart
 
 Toggles the agent's \`enabled\` flag false → true around two SIGHUPs so the
-daemon stops + rebuilds this tenant. Use this to pick up persona TOML edits,
-token changes, ackMode / ackIcons updates, or to clear a stuck codex
-process. The codex thread id is preserved in settings.json, so the
+daemon stops + rebuilds this tenant. Use this to pick up token changes,
+ackMode / ackIcons updates, or to clear a stuck codex process. The codex
+thread id is preserved in state.json, so the
 conversation history is resumed transparently.
 
 The agent is briefly disconnected from Slack during the restart.`
@@ -23,6 +24,10 @@ export const agentsRestartHandler = factory.createHandlers(async (c) => {
 
   const projectName = c.req.param("project")!
   const agentName = c.req.param("agent")!
+
+  if (isSelfAgentOperation(projectName, agentName)) {
+    return c.text(selfAgentOperationMessage("restart", projectName, agentName), 409)
+  }
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })

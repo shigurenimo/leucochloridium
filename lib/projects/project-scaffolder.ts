@@ -31,9 +31,8 @@ export type ProjectScaffoldResult = {
 /**
  * Scaffolds a leuco-ready repository at <path>: ensures the directory exists,
  * runs `git init` if needed, and registers the project in
- * `~/.leuco/projects/<name>/settings.json` (chmod 600). Tokens, persona TOML,
- * and channels are added later by the matching `agents add` / `channels add`
- * commands.
+ * `~/.leuco/projects/<name>/settings.json` (chmod 600). Tokens and channels
+ * are added later by the matching `agents add` / `channels add` commands.
  *
  * Idempotent: each step inspects current state and is a no-op when already done.
  */

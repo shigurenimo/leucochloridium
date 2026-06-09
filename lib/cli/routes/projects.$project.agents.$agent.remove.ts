@@ -3,19 +3,16 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> agents <a> remove — delete a codex subagent
+const help = `leuco projects <p> agents <a> remove — unregister a leuco agent
 
 usage: leuco projects <p> agents <a> remove [--cascade]
 
   --cascade   also drop channels[] entries under this agent (config-only)
 
-Deletes <project>/.codex/agents/<a>.toml and removes the agent from
-~/.leuco/config.json. If the .toml is already missing, that is reported but
-not treated as an error so config can be reconciled.`
+Removes the agent from leuco's per-project settings.`
 
 export const agentsRemoveHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -36,16 +33,6 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
     })
   }
 
-  // The toml may already be gone — that is treated as a soft warning so config
-  // can still be reconciled.
-  const tomlStore = new LeucoCodexAgentStore({ cwd: project.path })
-  let tomlMessage: string
-  try {
-    tomlMessage = tomlStore.remove("project", agentName)
-  } catch (err) {
-    tomlMessage = `(${err instanceof Error ? err.message : String(err)})`
-  }
-
   store.save({
     ...project,
     agents: project.agents.filter((a) => a.name !== agentName),
@@ -56,5 +43,5 @@ export const agentsRemoveHandler = factory.createHandlers(async (c) => {
     rmSync(paths.agentDir(project.id, agentName), { recursive: true, force: true })
   }
 
-  return c.text(`removed agent ${projectName}/${agentName} ${tomlMessage}`)
+  return c.text(`removed agent ${projectName}/${agentName}`)
 })

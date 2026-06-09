@@ -9,8 +9,7 @@ usage: leuco projects <name> remove [--cascade]
 
   --cascade   also remove the project's agents (and their channels) from config
 
-Updates ~/.leuco/config.json. The project directory itself is not touched, and
-existing .codex/agents/*.toml files inside the repository are left in place.`
+Updates leuco's project registry. The project directory itself is not touched.`
 
 export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

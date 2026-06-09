@@ -4,7 +4,6 @@ import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { validateLeucoName } from "@/cli/utils/validate-name"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -16,7 +15,6 @@ usage: leuco projects <p> agents <a> rename <new-name>
 
 Renames the agent in three places at once:
   - settings.json's agents[i].name
-  - <project>/.codex/agents/<old>.toml → <new>.toml (\`name\` inside also updated)
   - ~/.leuco/projects/<p>/agents/<old>/ → <new>/ (codex-home, including memories)
 
 Memories survive the rename. The daemon must be stopped first because the
@@ -49,12 +47,7 @@ export const agentsRenameHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: `agent already exists in ${projectName}: ${newName}` })
   }
 
-  // 1. Rename the codex TOML inside the repo (keeps it as the source of truth
-  // for codex's spawn_agent lookups; also updates `name = "..."` inside).
-  const tomlStore = new LeucoCodexAgentStore({ cwd: project.path })
-  tomlStore.rename("project", oldName, newName)
-
-  // 2. Rename the codex-home directory so memories travel with the agent.
+  // 1. Rename the codex-home directory so memories travel with the agent.
   const oldHome = paths.agentDir(project.id, oldName)
   const newHome = paths.agentDir(project.id, newName)
   if (existsSync(oldHome)) {
@@ -64,7 +57,7 @@ export const agentsRenameHandler = factory.createHandlers(async (c) => {
     renameSync(oldHome, newHome)
   }
 
-  // 3. Update settings.json.
+  // 2. Update settings.json.
   store.save({
     ...project,
     agents: project.agents.map((a) => (a.name === oldName ? { ...a, name: newName } : a)),

@@ -1,25 +1,18 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
-import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import type { Agent } from "@/config/config-schema"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> agents add — create a codex subagent for a project
+const help = `leuco projects <p> agents add — register a leuco agent for a project
 
-usage: leuco projects <p> agents add <name> [--description <text>] [--instructions <text>] [--model <id>]
+usage: leuco projects <p> agents add <name>
 
   <name>                  agent identifier ([a-z][a-z0-9_-]*)
-  --description <text>    one-line summary of when codex should use this agent
-  --instructions <text>   developer_instructions body (multi-line allowed)
-  --model <id>            override the default model for this agent
 
-Writes <project>/.codex/agents/<name>.toml (consumed by codex itself) and
-registers the agent in ~/.leuco/config.json under the project so channels can
-attach to it. Edit further fields directly in the generated file.
-
-See https://developers.openai.com/codex/subagents for the full TOML spec.`
+Registers the agent in leuco's per-project settings so channels can attach to
+it. Durable runtime instructions belong in the agent's CODEX_HOME/AGENTS.md.`
 
 export const agentsAddHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -28,17 +21,18 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
   const agentName = body.args[0]
   if (!agentName) {
-    return c.text(
-      `usage: leuco projects ${projectName} agents add <name> [--description <text>] [--instructions <text>] [--model <id>]`,
-      400,
-    )
+    return c.text(`usage: leuco projects ${projectName} agents add <name>`, 400)
   }
-
-  const description = flagString(body.flags.description) ?? `Codex agent: ${agentName}`
-  const developerInstructions =
-    flagString(body.flags.instructions) ??
-    `You are the ${agentName} agent. Replace this with real guidance.`
-  const model = flagString(body.flags.model)
+  if (
+    body.flags.description !== undefined ||
+    body.flags.instructions !== undefined ||
+    body.flags.model !== undefined
+  ) {
+    throw new HTTPException(400, {
+      message:
+        "--description, --instructions, and --model are not leuco agent settings; put durable instructions in CODEX_HOME/AGENTS.md",
+    })
+  }
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
@@ -48,16 +42,6 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
       message: `agent already exists in ${projectName}: ${agentName}`,
     })
   }
-
-  // Write the codex TOML inside the project's repo so codex itself can read it.
-  const tomlStore = new LeucoCodexAgentStore({ cwd: project.path })
-  const tomlPath = tomlStore.add({
-    scope: "project",
-    name: agentName,
-    description,
-    developerInstructions,
-    model,
-  })
 
   const nextAgent: Agent = {
     name: agentName,
@@ -69,5 +53,5 @@ export const agentsAddHandler = factory.createHandlers(async (c) => {
   }
   store.save({ ...project, agents: [...project.agents, nextAgent] })
 
-  return c.text(`added agent ${projectName}/${agentName} → ${tomlPath}`)
+  return c.text(`added agent ${projectName}/${agentName}`)
 })

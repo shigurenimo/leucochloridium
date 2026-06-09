@@ -4,7 +4,6 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -60,30 +59,7 @@ export const projectsMergeIntoHandler = factory.createHandlers(async (c) => {
   const wasRunning = daemon.status().isRunning
   if (wasRunning) daemon.stop()
 
-  const tomlMessages: string[] = []
   for (const agent of src.agents) {
-    // Move the codex TOML between repo `.codex/agents/` dirs. Skipped when
-    // both projects share the same repo path. Missing toml is non-fatal so
-    // a partially-cleaned source can still be merged.
-    if (src.path !== dst.path) {
-      const srcToml = new LeucoCodexAgentStore({ cwd: src.path })
-      try {
-        const spec = srcToml.read({ scope: "project", name: agent.name })
-        const dstToml = new LeucoCodexAgentStore({ cwd: dst.path })
-        dstToml.add({
-          scope: "project",
-          name: agent.name,
-          description: spec.description,
-          developerInstructions: spec.developerInstructions,
-          model: spec.model,
-        })
-        srcToml.remove("project", agent.name)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        tomlMessages.push(`${agent.name}: src toml missing (${message})`)
-      }
-    }
-
     // Move codex-home so memories / state.json travel with the agent.
     const oldHome = paths.agentDir(src.id, agent.name)
     const newHome = paths.agentDir(dst.id, agent.name)
@@ -108,9 +84,6 @@ export const projectsMergeIntoHandler = factory.createHandlers(async (c) => {
   const lines = [
     `merged ${srcName} → ${dstName} (${src.agents.length} agents): ${src.agents.map((a) => a.name).join(", ") || "(none)"}`,
   ]
-  if (tomlMessages.length > 0) {
-    for (const m of tomlMessages) lines.push(`  ${m}`)
-  }
   if (wasRunning) {
     const result = daemon.start({ binPath: c.var.binPath, env: process.env })
     lines.push(`daemon restarted (pid ${result.pid})`)

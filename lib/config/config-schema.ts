@@ -81,14 +81,14 @@ const agentSchema = z.object({
   enabled: z.boolean().default(true),
   /**
    * When true (default) leuco prepends a built-in dynamic preamble to the
-   * agent's `developer_instructions` covering the bot's own Slack identity,
-   * loop avoidance, sub-agent paths, and self-edit guidance. Set to false to
-   * pass the per-agent TOML instructions through verbatim.
+   * agent's turn covering the bot's own Slack identity and loop avoidance.
+   * Set to false to send only configured prompt presets plus Codex's normal
+   * instruction discovery.
    */
   useCommonInstructions: z.boolean().default(true),
   /**
-   * Named system-prompt presets to splice in between the dynamic preamble and
-   * the per-agent TOML text. Names are validated against the registered set
+   * Named system-prompt presets to splice after the dynamic preamble. Names
+   * are validated against the registered set
    * in `lib/engine/prompt-presets.ts`. Defaults to `["friendly"]` so a fresh
    * agent has a usable Slack persona without extra configuration; pass an
    * empty array to opt out.

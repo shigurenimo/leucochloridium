@@ -199,6 +199,95 @@ describe("LeucoProjectStore", () => {
     expect(newJson.id).toBe(project.id)
   })
 
+  it("list() migrates legacy root settings projects into per-project agent settings", () => {
+    const paths = store.getPaths()
+    mkdirSync(dirname(paths.settingsPath()), { recursive: true })
+    writeFileSync(
+      paths.settingsPath(),
+      JSON.stringify(
+        {
+          keepAwake: true,
+          projects: [
+            {
+              id: DEMO_ID,
+              name: "demo",
+              path: "/tmp/demo",
+              enabled: true,
+              useCommonInstructions: true,
+              prompts: ["friendly"],
+              channels: [
+                {
+                  id: "11111111-1111-4111-8111-111111111111",
+                  name: "slack",
+                  type: "slack",
+                  enabled: true,
+                  botToken: "xoxb-secret",
+                  appToken: "xapp-secret",
+                  ackMode: "mention",
+                  ackIcons: {
+                    progress: "hourglass_flowing_sand",
+                    success: "white_check_mark",
+                    error: "x",
+                  },
+                },
+              ],
+              mcpServers: {},
+              state: {
+                codexThreadId: "thread-1",
+                scheduleLastFiredAt: {},
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    )
+
+    const result = store.list()
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual(
+      sampleProject({
+        agents: [
+          {
+            name: "demo",
+            enabled: true,
+            useCommonInstructions: true,
+            prompts: ["friendly"],
+            channels: [
+              {
+                id: "11111111-1111-4111-8111-111111111111",
+                name: "slack",
+                type: "slack",
+                enabled: true,
+                botToken: "xoxb-secret",
+                appToken: "xapp-secret",
+                ackMode: "mention",
+                ackIcons: {
+                  progress: "hourglass_flowing_sand",
+                  success: "white_check_mark",
+                  error: "x",
+                },
+              },
+            ],
+            mcpServers: {},
+          },
+        ],
+      }),
+    )
+
+    const migratedSettings = JSON.parse(
+      readFileSync(paths.projectSettingsPath(DEMO_ID), "utf8"),
+    )
+    expect(migratedSettings.agents[0].name).toBe("demo")
+    expect(migratedSettings.channels).toBeUndefined()
+
+    const migratedState = JSON.parse(
+      readFileSync(paths.agentStatePath(DEMO_ID, "demo"), "utf8"),
+    )
+    expect(migratedState.codexThreadId).toBe("thread-1")
+  })
+
   describe("schedule entries", () => {
     const projectWithScheduleChannel = (): Project =>
       sampleProject({

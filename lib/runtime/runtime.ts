@@ -13,7 +13,6 @@ import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoChannelHost } from "@/channels/channel-host"
 import type { Agent, McpServer, Project } from "@/config/config-schema"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { LeucoEngine } from "@/engine/engine"
 import { LeucoPromptPresets } from "@/engine/prompt-presets"
@@ -182,17 +181,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     agentStateStore: props.agentStateStore,
   })
 
-  const tomlStore = new LeucoCodexAgentStore({ cwd: props.project.path })
-  let spec: ReturnType<typeof tomlStore.read>
-  try {
-    spec = tomlStore.read({ scope: "project", name: props.agent.name })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `${message} — run \`leuco projects ${props.project.name} agents add ${props.agent.name}\` to recreate it.`,
-    )
-  }
-
   const codexHome = ensureCodexHome(props.paths, props.project.id, props.agent.name)
   ensureTenantConfigToml(codexHome, {
     projectPath: props.project.path,
@@ -207,7 +195,12 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
   })
   ensureAuthSymlink(codexHome)
 
-  const childEnv: NodeJS.ProcessEnv = { ...props.env, CODEX_HOME: codexHome }
+  const childEnv: NodeJS.ProcessEnv = {
+    ...props.env,
+    CODEX_HOME: codexHome,
+    LEUCO_PROJECT_NAME: props.project.name,
+    LEUCO_AGENT_NAME: props.agent.name,
+  }
   if (props.mcpToken !== null) {
     childEnv[LEUCO_MCP_TOKEN_ENV] = props.mcpToken
   }
@@ -230,18 +223,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     },
   })
 
-  const agentSpec: TenantAgentSpec = {
-    developerInstructions:
-      spec.developerInstructions.length > 0 ? spec.developerInstructions : undefined,
-    model: spec.model ?? undefined,
-  }
-
-  const listSubagents = () =>
-    tomlStore
-      .list("project")
-      .filter((entry) => entry.name !== props.agent.name)
-      .map((entry) => ({ name: entry.name, path: entry.path }))
-
   const presets = LeucoPromptPresets.resolveAll(props.agent.prompts)
 
   const initialState = props.agentStateStore.load(props.project.id, props.agent.name)
@@ -251,7 +232,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectName: props.project.name,
     projectPath: props.project.path,
     agentName: props.agent.name,
-    agentSpec,
+    agentSpec: {},
     codex,
     plugins,
     onLog: props.onLog,
@@ -259,7 +240,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     initialCodexThreadId: initialState.codexThreadId ?? undefined,
     agentStateStore: props.agentStateStore,
     useCommonInstructions: props.agent.useCommonInstructions,
-    listSubagents,
     presets,
   })
 }

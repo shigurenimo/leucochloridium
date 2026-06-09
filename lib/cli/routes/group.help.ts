@@ -17,12 +17,12 @@ usage:
   leuco projects <p> rename <new>                     rename a project (also moves ~/.leuco/projects/<p>/)
 
   leuco projects <p> agents list                      list agents in <p>
-  leuco projects <p> agents add <a>                   create .codex/agents/<a>.toml + register
+  leuco projects <p> agents add <a>                   register a leuco agent
   leuco projects <p> agents <a> remove [--cascade]    remove an agent
-  leuco projects <p> agents <a> rename <new>          rename agent + TOML + codex-home (memories survive)
+  leuco projects <p> agents <a> rename <new>          rename agent + codex-home (memories survive)
   leuco projects <p> agents <a> start                 enable an agent (daemon reload)
   leuco projects <p> agents <a> stop                  disable an agent (daemon reload, memories preserved)
-  leuco projects <p> agents <a> restart               rebuild this agent's tenant to pick up persona / token / ack changes
+  leuco projects <p> agents <a> restart               rebuild this agent's tenant to pick up token / ack changes
   leuco projects <p> agents <a> reset                  drop the codex thread id (codex memories preserved)
 
   leuco projects <p> agents <a> channels list                          list channels under <a>

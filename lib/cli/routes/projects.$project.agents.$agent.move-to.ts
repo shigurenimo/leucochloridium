@@ -4,7 +4,6 @@ import { dirname } from "node:path"
 import { factory } from "@/cli/cli-factory"
 import { findAgent, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -17,8 +16,6 @@ usage: leuco projects <p> agents <a> move-to <dst-project>
 Moves the agent — with all its channels, tokens, schedules, and memories — out
 of <p> and into <dst-project>:
   - settings.json: removes from <p>, appends to <dst-project> (name unchanged)
-  - <src-path>/.codex/agents/<a>.toml → <dst-path>/.codex/agents/<a>.toml
-    (skipped when both projects share the same repo path)
   - ~/.leuco/projects/<src-id>/agents/<a>/ → ~/.leuco/projects/<dst-id>/agents/<a>/
 
 The destination must not already contain an agent with the same name; rename
@@ -65,33 +62,7 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
     daemon.stop()
   }
 
-  // 1. Move the codex TOML between repo `.codex/agents/` dirs. Skipped when
-  // both projects point at the same repo path — the file is already where
-  // codex expects it. Missing toml is non-fatal so a partially-cleaned source
-  // can still be migrated.
-  let tomlMessage = "(toml unchanged)"
-  if (src.path !== dst.path) {
-    const srcToml = new LeucoCodexAgentStore({ cwd: src.path })
-    const spec = srcToml.read({ scope: "project", name: agentName })
-    if (spec instanceof Error) {
-      tomlMessage = `(src toml missing: ${spec.message})`
-    } else {
-      const dstToml = new LeucoCodexAgentStore({ cwd: dst.path })
-      const added = dstToml.add({
-        scope: "project",
-        name: agentName,
-        description: spec.description,
-        developerInstructions: spec.developerInstructions,
-        model: spec.model,
-      })
-
-      srcToml.remove("project", agentName)
-
-      tomlMessage = `(toml: ${added})`
-    }
-  }
-
-  // 2. Move codex-home so memories travel with the agent.
+  // 1. Move codex-home so memories travel with the agent.
   const oldHome = paths.agentDir(src.id, agentName)
   const newHome = paths.agentDir(dst.id, agentName)
   if (existsSync(oldHome)) {
@@ -103,7 +74,7 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
     renameSync(oldHome, newHome)
   }
 
-  // 3. Update settings.json on both sides.
+  // 2. Update settings.json on both sides.
   store.save({
     ...src,
     agents: src.agents.filter((a) => a.name !== agentName),
@@ -114,7 +85,7 @@ export const agentsMoveToHandler = factory.createHandlers(async (c) => {
     agents: [...dst.agents, agent],
   })
 
-  const lines = [`moved agent ${srcName}/${agentName} → ${dstName}/${agentName} ${tomlMessage}`]
+  const lines = [`moved agent ${srcName}/${agentName} → ${dstName}/${agentName}`]
   if (wasRunning) {
     const result = daemon.start({ binPath: c.var.binPath, env: process.env })
     lines.push(`daemon restarted (pid ${result.pid})`)

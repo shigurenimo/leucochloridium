@@ -1,6 +1,6 @@
 import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
+import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoAgentStateStore } from "@/projects/agent-state-store"
 
@@ -35,21 +35,15 @@ type Props = {
   codex: CodexClientPort
   plugins: ChannelPlugin[]
   /**
-   * When true (default), prepend the dynamic leuco preamble (bot identity,
-   * loop avoidance, sub-agent paths) to the agent's developer instructions.
+   * When true (default), prepend the dynamic leuco preamble (bot identity
+   * and loop avoidance) to the agent's developer instructions.
    * When false, only `agentSpec.developerInstructions` is sent through.
    */
   useCommonInstructions?: boolean
   /**
-   * Called every time a turn starts to gather the current list of project
-   * sub-agents. Injected so tests can provide a deterministic list without
-   * touching the filesystem. Result is folded into the dynamic preamble.
-   */
-  listSubagents?: () => SubagentEntry[]
-  /**
    * Pre-resolved preset bodies (already looked up from
    * `LeucoPromptPresets`). Spliced in between the dynamic preamble and the
-   * per-agent TOML text on every turn.
+   * per-agent instruction tail on every turn.
    */
   presets?: string[]
   onLog?: Logger
@@ -91,7 +85,6 @@ export class LeucoTenant {
   private readonly bus: LeucoEventBus
   private readonly agentStateStore: LeucoAgentStateStore | null
   private readonly useCommonInstructions: boolean
-  private readonly listSubagents: () => SubagentEntry[]
   private readonly presets: string[]
   private agentThreadId: string | null
   /** True once the agent thread is loaded into the running codex app-server. */
@@ -118,7 +111,6 @@ export class LeucoTenant {
     this.bus = props.bus ?? new LeucoEventBus()
     this.agentStateStore = props.agentStateStore ?? null
     this.useCommonInstructions = props.useCommonInstructions ?? true
-    this.listSubagents = props.listSubagents ?? (() => [])
     this.presets = props.presets ?? []
     this.agentThreadId = props.initialCodexThreadId ?? null
   }
@@ -365,7 +357,6 @@ export class LeucoTenant {
       projectPath: this.projectPath,
       agentName: this.agentName,
       identities: this.plugins.map((p) => p.getIdentity()),
-      subagents: this.listSubagents(),
       presets: this.presets,
       perAgentInstructions: tail,
       usePreamble: this.useCommonInstructions,

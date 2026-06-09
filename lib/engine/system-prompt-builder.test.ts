@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
+import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
 
 const baseProps = {
   projectName: "demo",
   projectPath: "/tmp/demo",
   agentName: "default",
   identities: [],
-  subagents: [] as SubagentEntry[],
   presets: [] as string[],
   perAgentInstructions: null,
 }
@@ -58,28 +57,10 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("`thread_ts`")
   })
 
-  it("lists sub-agent files and points at the .codex/agents directory", () => {
-    const out = new LeucoSystemPromptBuilder({
-      ...baseProps,
-      subagents: [
-        { name: "reviewer", path: "/tmp/demo/.codex/agents/reviewer.toml" },
-        { name: "planner", path: "/tmp/demo/.codex/agents/planner.toml" },
-      ],
-    }).build()
-
-    expect(out).toContain("/tmp/demo/.codex/agents")
-    expect(out).toContain("`reviewer`")
-    expect(out).toContain("/tmp/demo/.codex/agents/reviewer.toml")
-    expect(out).toContain("`planner`")
-    expect(out).toContain("edit any of these TOML files freely")
-  })
-
-  it("always points at the agent's own definition file", () => {
-    const out = new LeucoSystemPromptBuilder({
-      ...baseProps,
-      agentName: "mochi",
-    }).build()
-    expect(out).toContain("Your own definition file is `/tmp/demo/.codex/agents/mochi.toml`")
+  it("does not present Codex subagent TOML files as leuco operating rules", () => {
+    const out = new LeucoSystemPromptBuilder(baseProps).build()
+    expect(out).not.toContain(".codex/agents")
+    expect(out).not.toContain("developer_instructions")
   })
 
   it("appends per-agent instructions after a separator", () => {
