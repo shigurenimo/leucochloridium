@@ -2,15 +2,19 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
+import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> reset / drop the codex thread id
 
-usage / leuco projects <p> reset
+usage / leuco projects <p> reset [--force]
 
 Clears codexThreadId so the next turn starts a fresh codex thread. Codex
 memories under .codex/memory/ are kept. If the project is enabled, the
-tenant is restarted so the in-memory thread id is also discarded.`
+tenant is restarted so the in-memory thread id is also discarded.
+
+options:
+  --force / allow resetting the project from inside its own Codex session`
 
 export const projectsResetHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -20,6 +24,9 @@ export const projectsResetHandler = factory.createHandlers(async (c) => {
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
+    return c.text(selfProjectGuardMessage(projectName, "reset"), 400)
+  }
 
   const previousThreadId = project.state.codexThreadId
   store.save({ ...project, state: { ...project.state, codexThreadId: null } })
