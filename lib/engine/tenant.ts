@@ -1,6 +1,6 @@
 import type { ChannelPlugin } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoSystemPromptBuilder, type SubagentEntry } from "@/engine/system-prompt-builder"
+import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
 import { errorMessage } from "@/error-message"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
@@ -33,7 +33,6 @@ type Props = {
   codex: CodexClientPort
   plugins: ChannelPlugin[]
   useCommonInstructions?: boolean
-  listSubagents?: () => SubagentEntry[]
   presets?: string[]
   onLog?: Logger
   bus?: LeucoEventBus
@@ -69,7 +68,6 @@ export class LeucoTenant {
   private readonly bus: LeucoEventBus
   private readonly projectStateStore: LeucoProjectStateStore | null
   private readonly useCommonInstructions: boolean
-  private readonly listSubagents: () => SubagentEntry[]
   private readonly presets: string[]
   private codexThreadId: string | null
   private codexThreadLive = false
@@ -87,7 +85,6 @@ export class LeucoTenant {
     this.bus = props.bus ?? new LeucoEventBus()
     this.projectStateStore = props.projectStateStore ?? null
     this.useCommonInstructions = props.useCommonInstructions ?? true
-    this.listSubagents = props.listSubagents ?? (() => [])
     this.presets = props.presets ?? []
     this.codexThreadId = props.initialCodexThreadId ?? null
   }
@@ -319,7 +316,6 @@ export class LeucoTenant {
       projectName: this.projectName,
       projectPath: this.projectPath,
       identities: this.plugins.map((p) => p.getIdentity()),
-      subagents: this.listSubagents(),
       presets: this.presets,
       perAgentInstructions: tail,
       usePreamble: this.useCommonInstructions,

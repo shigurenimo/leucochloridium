@@ -11,10 +11,10 @@ const PRESETS: Record<PromptPresetName, string> = {
 /**
  * Static catalogue of named system-prompt presets the agent config can pick
  * from. Each preset is a chunk of markdown spliced into the developer
- * instructions between the dynamic preamble and the agent's per-instance
- * TOML text. Presets are intentionally read-only here — to add or change one
- * a contributor must drop a file under `prompt-presets/` and register it
- * below, which keeps the set reviewed and discoverable.
+ * instructions after the dynamic preamble. Presets are intentionally
+ * read-only here — to add or change one a contributor must drop a file under
+ * `prompt-presets/` and register it below, which keeps the set reviewed and
+ * discoverable.
  */
 export class LeucoPromptPresets {
   static names(): readonly PromptPresetName[] {

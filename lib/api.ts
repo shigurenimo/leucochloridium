@@ -36,8 +36,6 @@ export { LeucoPaths } from "@/paths/leuco-paths"
 
 // Engine + Codex
 export type { ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
-export type { CodexAgentEntry, CodexAgentScope } from "@/engine/codex/codex-agent-store"
-export { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 export type { CodexClientPort } from "@/engine/codex/codex-client-port"
 export { LeucoCodexClient } from "@/engine/codex/codex-client"
 export { LeucoCodexProtocol } from "@/engine/codex/codex-protocol"

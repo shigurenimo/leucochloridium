@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import type { SubagentEntry } from "@/engine/system-prompt-builder"
 import { LeucoTenant } from "@/engine/tenant"
 
 const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort => ({
@@ -37,7 +36,6 @@ type BuildOverrides = {
   plugins?: ChannelPlugin[]
   agentSpec?: { developerInstructions?: string; model?: string }
   useCommonInstructions?: boolean
-  listSubagents?: () => SubagentEntry[]
   presets?: string[]
 }
 
@@ -50,7 +48,6 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     plugins: overrides.plugins ?? [],
     agentSpec: overrides.agentSpec,
     useCommonInstructions: overrides.useCommonInstructions,
-    listSubagents: overrides.listSubagents,
     presets: overrides.presets,
     onLog: () => {},
   })
@@ -282,7 +279,7 @@ describe("LeucoTenant introspection", () => {
 })
 
 describe("LeucoTenant developer instructions", () => {
-  it("prepends the dynamic preamble by default and folds in identities + subagents", async () => {
+  it("prepends the dynamic preamble by default and folds in channel identities", async () => {
     const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
       thread: { id: "t1" },
     }))
@@ -290,7 +287,6 @@ describe("LeucoTenant developer instructions", () => {
       codex: fakeCodex({ startThread }),
       plugins: [fakePlugin("general", { botUserId: "U777" })],
       agentSpec: { developerInstructions: "you are mochi" },
-      listSubagents: () => [{ name: "reviewer", path: "/tmp/demo/.codex/agents/reviewer.toml" }],
     })
 
     await tenant.runTextTurn("k", "hi")
@@ -299,7 +295,7 @@ describe("LeucoTenant developer instructions", () => {
     if (arg === undefined) throw new Error("startThread was never called")
     expect(arg.developerInstructions).toContain("# leuco built-in instructions")
     expect(arg.developerInstructions).toContain("`U777`")
-    expect(arg.developerInstructions).toContain("/tmp/demo/.codex/agents/reviewer.toml")
+    expect(arg.developerInstructions).not.toContain(".codex/agents")
     expect(arg.developerInstructions).toContain("\n---\n\nyou are mochi")
   })
 

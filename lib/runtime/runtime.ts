@@ -12,12 +12,11 @@ import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoChannelHost } from "@/channels/channel-host"
 import type { McpServer, Project } from "@/config/config-schema"
-import { LeucoCodexAgentStore } from "@/engine/codex/codex-agent-store"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { tomlString } from "@/engine/codex/toml-string"
 import { LeucoEngine } from "@/engine/engine"
 import { LeucoPromptPresets } from "@/engine/prompt-presets"
-import { LeucoTenant, type TenantAgentSpec } from "@/engine/tenant"
+import { LeucoTenant } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
@@ -169,8 +168,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectStateStore: props.projectStateStore,
   })
 
-  const tomlStore = new LeucoCodexAgentStore({ cwd: props.project.path })
-
   const codexHome = ensureCodexHome(props.paths, props.project.id)
   ensureTenantConfigToml(codexHome, {
     projectPath: props.project.path,
@@ -206,32 +203,12 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     },
   })
 
-  // Read the "main" agent TOML if one exists with the project name.
-  let agentSpec: TenantAgentSpec = {}
-  try {
-    const spec = tomlStore.read({ scope: "project", name: props.project.name })
-    agentSpec = {
-      developerInstructions:
-        spec.developerInstructions.length > 0 ? spec.developerInstructions : undefined,
-      model: spec.model ?? undefined,
-    }
-  } catch {
-    // No TOML for this project name — that's fine, use defaults.
-  }
-
-  const listSubagents = () =>
-    tomlStore
-      .list("project")
-      .filter((entry) => entry.name !== props.project.name)
-      .map((entry) => ({ name: entry.name, path: entry.path }))
-
   const presets = LeucoPromptPresets.resolveAll(props.project.prompts)
 
   return new LeucoTenant({
     projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
-    agentSpec,
     codex,
     plugins,
     onLog: props.onLog,
@@ -239,7 +216,6 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     initialCodexThreadId: props.project.state.codexThreadId ?? undefined,
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
-    listSubagents,
     presets,
   })
 }

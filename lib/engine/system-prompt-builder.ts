@@ -1,16 +1,9 @@
-import { join } from "node:path"
 import type { ChannelIdentity } from "@/engine/channel-plugin"
-
-export type SubagentEntry = {
-  name: string
-  path: string
-}
 
 type Props = {
   projectName: string
   projectPath: string
   identities: ChannelIdentity[]
-  subagents: SubagentEntry[]
   presets: string[]
   perAgentInstructions: string | null
   usePreamble?: boolean
@@ -38,7 +31,6 @@ export class LeucoSystemPromptBuilder {
         this.replySection(),
         this.scheduleSection(),
         this.loopSection(),
-        this.subagentSection(),
       ]
       blocks.push(sections.filter((s) => s.length > 0).join("\n\n"))
     }
@@ -148,29 +140,5 @@ export class LeucoSystemPromptBuilder {
       "- be conservative when replying to other bots — only continue the exchange if a human in the thread clearly wants it",
       "- if a thread has only bots talking, stop replying",
     ].join("\n")
-  }
-
-  private subagentSection(): string {
-    const dir = join(this.props.projectPath, ".codex", "agents")
-    const lines = [
-      "## Sub-agents",
-      "",
-      `Sub-agent definitions in this project live under \`${dir}/<name>.toml\`.`,
-    ]
-
-    if (this.props.subagents.length === 0) {
-      lines.push("", "No sub-agents are registered yet.")
-    } else {
-      lines.push("", "Currently registered:")
-      for (const sub of this.props.subagents) {
-        lines.push(`- \`${sub.name}\` — \`${sub.path}\``)
-      }
-    }
-
-    lines.push(
-      "",
-      "You may edit any of these TOML files freely to refine `developer_instructions`. Treat improving these prompts as part of your normal work; when you learn something that should change behavior, persist it back into the file.",
-    )
-    return lines.join("\n")
   }
 }
