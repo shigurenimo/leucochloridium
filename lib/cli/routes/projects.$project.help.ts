@@ -9,6 +9,7 @@ subcommands:
   start / enable
   stop / disable
   restart / rebuild the tenant
-  reset / drop codex thread (memories preserved)
+  session / show or reset Codex session
+  reset / deprecated alias for session reset
   path [key] / print project filesystem paths
   channels / manage channels (run \`leuco projects <p> channels -h\`)`

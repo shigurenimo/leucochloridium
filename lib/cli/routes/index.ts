@@ -32,6 +32,8 @@ import { projectsRemoveHandler } from "@/cli/routes/projects.$project.remove"
 import { projectsRenameHandler } from "@/cli/routes/projects.$project.rename"
 import { projectsRestartHandler } from "@/cli/routes/projects.$project.restart"
 import { projectsResetHandler } from "@/cli/routes/projects.$project.reset"
+import { projectsSessionHandler } from "@/cli/routes/projects.$project.session"
+import { projectsSessionResetHandler } from "@/cli/routes/projects.$project.session.reset"
 import { projectsStartHandler } from "@/cli/routes/projects.$project.start"
 import { projectsStopHandler } from "@/cli/routes/projects.$project.stop"
 import { restartHandler } from "@/cli/routes/restart"
@@ -97,6 +99,8 @@ export const app = base
   .post("/projects/:project/restart", ...projectsRestartHandler)
   .post("/projects/:project/reset", ...projectsResetHandler)
   .post("/projects/:project/path", ...projectsPathHandler)
+  .post("/projects/:project/session", ...projectsSessionHandler)
+  .post("/projects/:project/session/reset", ...projectsSessionResetHandler)
 
   .post("/projects/:project/channels", ...channelsListHandler)
   .post("/projects/:project/channels/list", ...channelsListHandler)

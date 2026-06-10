@@ -102,6 +102,15 @@ describe("toRequest", () => {
     expect(r.parsed.args).toEqual(["agents"])
   })
 
+  it("expands project session reset", () => {
+    expect(toRequest(["projects", "azamino", "session"]).path).toBe(
+      "/projects/azamino/session",
+    )
+    expect(toRequest(["projects", "azamino", "session", "reset"]).path).toBe(
+      "/projects/azamino/session/reset",
+    )
+  })
+
   it("expands /boot/<leaf>", () => {
     expect(toRequest(["boot", "install"]).path).toBe("/boot/install")
     expect(toRequest(["boot", "uninstall"]).path).toBe("/boot/uninstall")
@@ -151,7 +160,7 @@ describe("toRequest", () => {
     expect(remove.parsed.args).toEqual(["morning"])
   })
 
-  it("expands project-level start/stop/restart/reset", () => {
+  it("expands project-level start/stop/restart/reset aliases", () => {
     expect(toRequest(["projects", "p", "start"]).path).toBe("/projects/p/start")
     expect(toRequest(["projects", "p", "stop"]).path).toBe("/projects/p/stop")
     expect(toRequest(["projects", "p", "restart"]).path).toBe("/projects/p/restart")

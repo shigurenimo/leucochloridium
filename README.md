@@ -60,7 +60,8 @@ leuco projects <p> relocate <new-path>
 leuco projects <p> start
 leuco projects <p> stop
 leuco projects <p> restart
-leuco projects <p> reset                clear codex thread + restart
+leuco projects <p> session              show codex session state
+leuco projects <p> session reset        clear codex session + restart
 ```
 
 Channel management:

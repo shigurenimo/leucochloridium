@@ -29,6 +29,7 @@ const NAMED_LEAFS = new Set([
   "set-tokens",
   "download-file",
 ])
+const PROJECT_SESSION_LEAFS = new Set(["reset"])
 const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
 const SLACK_LEAFS = new Set(["call"])
 const CONFIG_LEAFS = new Set(["list", "get", "set"])
@@ -38,6 +39,7 @@ type Stage =
   | "top"
   | "projects"
   | "named-project"
+  | "project-session"
   | "channels"
   | "named-channel"
   | "schedules"
@@ -178,7 +180,13 @@ const step = (stage: Stage, arg: string): StepDecision => {
 
   if (stage === "named-project") {
     if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (arg === "session") return { kind: "segment", next: "project-session" }
     if (arg === "channels") return { kind: "segment", next: "channels" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "project-session") {
+    if (PROJECT_SESSION_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     return { kind: "positional" }
   }
 
