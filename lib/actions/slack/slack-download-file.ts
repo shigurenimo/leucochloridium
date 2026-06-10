@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
+import { assertSlackFileUrl } from "@/actions/slack/assert-slack-file-url"
 
 type Props = {
   botToken: string
@@ -7,8 +8,12 @@ type Props = {
   outputPath: string
 }
 
-export const slackDownloadFile = async (props: Props): Promise<{ outputPath: string; size: number }> => {
-  const response = await fetch(props.url, {
+export const slackDownloadFile = async (
+  props: Props,
+): Promise<{ outputPath: string; size: number }> => {
+  const safeUrl = assertSlackFileUrl(props.url)
+
+  const response = await fetch(safeUrl, {
     headers: {
       Authorization: `Bearer ${props.botToken}`,
     },

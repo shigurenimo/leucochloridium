@@ -26,7 +26,13 @@ export const atomicWriteJson = (props: Props): string => {
 
   const tempPath = `${props.path}.${process.pid}.${Date.now()}.tmp`
   try {
-    writeFileSync(tempPath, `${JSON.stringify(props.data, null, 2)}\n`)
+    // Create with the restrictive mode so the temp file never exists with
+    // world-readable bits before the chmod — settings.json holds Slack tokens.
+    // The explicit chmodSync still runs to override umask, which can clear bits
+    // off the `writeFileSync` mode.
+    writeFileSync(tempPath, `${JSON.stringify(props.data, null, 2)}\n`, {
+      mode: props.mode,
+    })
     if (props.mode !== undefined) chmodSync(tempPath, props.mode)
     renameSync(tempPath, props.path)
     return props.path
