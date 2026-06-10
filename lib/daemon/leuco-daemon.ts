@@ -210,9 +210,14 @@ const pidIsAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
+  } catch (error) {
+    if (isNodeErrno(error) && error.code === "EPERM") return true
     return false
   }
+}
+
+const isNodeErrno = (error: unknown): error is NodeJS.ErrnoException => {
+  return error instanceof Error && "code" in error
 }
 
 const removePidFile = (path: string): void => {
