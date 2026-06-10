@@ -9,6 +9,7 @@ import { configGetHandler } from "@/cli/routes/config.get"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
 import { logsHandler } from "@/cli/routes/logs"
+import { pathHandler } from "@/cli/routes/path"
 import { projectsAddHandler } from "@/cli/routes/projects.add"
 import { projectsCreateHandler } from "@/cli/routes/projects.create"
 import { projectsListHandler } from "@/cli/routes/projects.list"
@@ -75,6 +76,7 @@ export const app = base
   .post("/restart", ...restartHandler)
   .post("/run", ...runHandler)
   .post("/logs", ...logsHandler)
+  .post("/path", ...pathHandler)
   .post("/events", ...eventsHandler)
   .post("/update", ...updateHandler)
 
