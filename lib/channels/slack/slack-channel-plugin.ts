@@ -80,6 +80,18 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
   private async handleEvent(event: SlackEvent): Promise<void> {
     const ctx = this.ctx
+    const adapter = this.adapter
+
+    if (adapter && isConversationChannel(event.channel)) {
+      const canRead = await adapter.canReadChannel(event.channel)
+      if (!canRead) {
+        ctx?.onLog(
+          `[${this.name}] drop inaccessible slack event channel=${event.channel}`,
+        )
+        return
+      }
+    }
+
     if (ctx) {
       ctx.bus.emit({
         ts: Date.now(),
@@ -140,6 +152,8 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     return msg.mentioned
   }
 }
+
+const isConversationChannel = (channel: string): boolean => /^[CDG]/.test(channel)
 
 const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string => {
   return [

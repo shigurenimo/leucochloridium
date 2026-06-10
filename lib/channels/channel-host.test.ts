@@ -62,6 +62,24 @@ describe("LeucoChannelHost.buildForProject", () => {
     ).toThrow(/appToken/)
   })
 
+  it("throws when a user OAuth token is configured as the bot token", () => {
+    expect(() =>
+      LeucoChannelHost.buildForProject({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        channels: [slackChannel("main", "xoxp-1", "xapp-1")],
+      }),
+    ).toThrow(/botToken must start with xoxb-/)
+  })
+
+  it("throws when the app token is not an app-level token", () => {
+    expect(() =>
+      LeucoChannelHost.buildForProject({
+        project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+        channels: [slackChannel("main", "xoxb-1", "xoxb-2")],
+      }),
+    ).toThrow(/appToken must start with xapp-/)
+  })
+
   it("stops at the first failing channel", () => {
     expect(() =>
       LeucoChannelHost.buildForProject({

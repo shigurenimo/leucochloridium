@@ -46,6 +46,28 @@ export class LeucoSlackAdapter {
     }
   }
 
+  async canReadChannel(channel: string): Promise<boolean> {
+    try {
+      const info = await this.props.client.conversations.info({ channel })
+      if (isPublicChannel(channel) && conversationIsNonMember(info)) {
+        if (this.props.onLog) {
+          this.props.onLog(
+            `[slack] conversations.info says bot is not a channel member (channel=${channel})`,
+          )
+        }
+        return false
+      }
+      return true
+    } catch (err) {
+      if (this.props.onLog) {
+        this.props.onLog(
+          `[slack] conversations.info failed (channel=${channel}): ${errorMessage(err)}`,
+        )
+      }
+      return false
+    }
+  }
+
   private logReactionFailure(
     op: "add" | "remove",
     channel: string,
@@ -60,4 +82,13 @@ export class LeucoSlackAdapter {
       `[slack] reactions.${op} failed (channel=${channel} ts=${ts} :${name}:): ${message}`,
     )
   }
+}
+
+const isPublicChannel = (channel: string): boolean => channel.startsWith("C")
+
+const conversationIsNonMember = (info: unknown): boolean => {
+  if (typeof info !== "object" || info === null) return false
+  const channel = (info as { channel?: unknown }).channel
+  if (typeof channel !== "object" || channel === null) return false
+  return (channel as { is_member?: unknown }).is_member === false
 }

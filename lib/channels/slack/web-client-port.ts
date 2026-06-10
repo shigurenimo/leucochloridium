@@ -10,6 +10,9 @@ export type WebClientPort = {
     add(args: { channel: string; timestamp: string; name: string }): Promise<unknown>
     remove(args: { channel: string; timestamp: string; name: string }): Promise<unknown>
   }
+  conversations: {
+    info(args: { channel: string }): Promise<unknown>
+  }
   auth: {
     test(): Promise<unknown>
   }

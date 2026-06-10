@@ -5,6 +5,7 @@ import { factory, type Env } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { type CliBody, flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { resolveTokenFlag } from "@/cli/utils/resolve-token-flag"
+import { slackAppTokenSchema, slackBotTokenSchema } from "@/channels/slack/slack-schemas"
 import type { Channel } from "@/config/config-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -49,6 +50,7 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
   const channelName = typeof body.flags.name === "string" ? body.flags.name : "slack"
   const botToken = (await resolveTokenFlag(body.flags["bot-token"])) ?? ""
   const appToken = (await resolveTokenFlag(body.flags["app-token"])) ?? ""
+  validateSlackTokens({ botToken, appToken })
 
   const store = new LeucoProjectStore({ paths: new LeucoPaths() })
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
@@ -83,6 +85,25 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
       : `edit ${saved} (or run \`leuco projects ${projectName} channels ${channelName} set-tokens\`) to fill in any missing tokens.`
 
   return c.text(`added channel "${channelName}" (slack, id: ${channelId})\n${tail}`)
+}
+
+const validateSlackTokens = (input: { botToken: string; appToken: string }): void => {
+  if (input.botToken.length > 0) {
+    const parsed = slackBotTokenSchema.safeParse(input.botToken)
+    if (!parsed.success) {
+      throw new HTTPException(400, {
+        message: `--bot-token ${parsed.error.issues[0]?.message}`,
+      })
+    }
+  }
+  if (input.appToken.length > 0) {
+    const parsed = slackAppTokenSchema.safeParse(input.appToken)
+    if (!parsed.success) {
+      throw new HTTPException(400, {
+        message: `--app-token ${parsed.error.issues[0]?.message}`,
+      })
+    }
+  }
 }
 
 const addScheduleChannel = async (c: Context<Env>, body: CliBody, projectName: string) => {

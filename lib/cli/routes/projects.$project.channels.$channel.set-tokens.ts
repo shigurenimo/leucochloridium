@@ -3,6 +3,7 @@ import { factory } from "@/cli/cli-factory"
 import { findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { resolveTokenFlag } from "@/cli/utils/resolve-token-flag"
+import { slackAppTokenSchema, slackBotTokenSchema } from "@/channels/slack/slack-schemas"
 import type { Channel } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -50,6 +51,7 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
 
   const nextBotToken = (await resolveTokenFlag(botFlag)) ?? channel.botToken
   const nextAppToken = (await resolveTokenFlag(appFlag)) ?? channel.appToken
+  validateSlackTokens({ botToken: nextBotToken, appToken: nextAppToken })
 
   const next: Channel = { ...channel, botToken: nextBotToken, appToken: nextAppToken }
 
@@ -66,3 +68,22 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
     `updated ${updated.join(", ")} for "${channelName}"\nrestart the project for the daemon to pick up the change.`,
   )
 })
+
+const validateSlackTokens = (input: { botToken: string; appToken: string }): void => {
+  if (input.botToken.length > 0) {
+    const botToken = slackBotTokenSchema.safeParse(input.botToken)
+    if (!botToken.success) {
+      throw new HTTPException(400, {
+        message: `--bot-token ${botToken.error.issues[0]?.message}`,
+      })
+    }
+  }
+  if (input.appToken.length > 0) {
+    const appToken = slackAppTokenSchema.safeParse(input.appToken)
+    if (!appToken.success) {
+      throw new HTTPException(400, {
+        message: `--app-token ${appToken.error.issues[0]?.message}`,
+      })
+    }
+  }
+}
