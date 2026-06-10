@@ -9,7 +9,6 @@ commands:
   restart / stop + start
   status / daemon + project state
   logs / print log (-f to follow)
-  path / print leuco filesystem paths
   events / query event log (--preset, --type, --project)
   update / install latest version
   projects / manage projects and channels

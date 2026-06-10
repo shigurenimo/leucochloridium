@@ -77,11 +77,10 @@ describe("toRequest", () => {
     expect(r.parsed.args).toEqual(["extra"])
   })
 
-  it("maps path keys and flags as positional data", () => {
-    const r = toRequest(["path", "agents", "--project", "azamino"])
-    expect(r.path).toBe("/path")
+  it("maps project path keys as positional data", () => {
+    const r = toRequest(["projects", "azamino", "path", "agents"])
+    expect(r.path).toBe("/projects/azamino/path")
     expect(r.parsed.args).toEqual(["agents"])
-    expect(r.parsed.flags).toEqual({ project: "azamino" })
   })
 
   it("expands /boot/<leaf>", () => {

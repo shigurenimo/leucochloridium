@@ -10,4 +10,5 @@ subcommands:
   stop / disable
   restart / rebuild the tenant
   reset / drop codex thread (memories preserved)
+  path [key] / print project filesystem paths
   channels / manage channels (run \`leuco projects <p> channels -h\`)`

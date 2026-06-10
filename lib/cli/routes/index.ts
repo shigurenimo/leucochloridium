@@ -9,7 +9,6 @@ import { configGetHandler } from "@/cli/routes/config.get"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
 import { logsHandler } from "@/cli/routes/logs"
-import { pathHandler } from "@/cli/routes/path"
 import { projectsAddHandler } from "@/cli/routes/projects.add"
 import { projectsCreateHandler } from "@/cli/routes/projects.create"
 import { projectsListHandler } from "@/cli/routes/projects.list"
@@ -26,6 +25,7 @@ import { schedulesAddHandler } from "@/cli/routes/projects.$project.channels.$ch
 import { schedulesListHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.list"
 import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.remove"
 import { help as projectsNamedHelp } from "@/cli/routes/projects.$project.help"
+import { projectsPathHandler } from "@/cli/routes/projects.$project.path"
 import { projectsRelocateHandler } from "@/cli/routes/projects.$project.relocate"
 import { projectsRemoveHandler } from "@/cli/routes/projects.$project.remove"
 import { projectsRenameHandler } from "@/cli/routes/projects.$project.rename"
@@ -76,7 +76,6 @@ export const app = base
   .post("/restart", ...restartHandler)
   .post("/run", ...runHandler)
   .post("/logs", ...logsHandler)
-  .post("/path", ...pathHandler)
   .post("/events", ...eventsHandler)
   .post("/update", ...updateHandler)
 
@@ -96,6 +95,7 @@ export const app = base
   .post("/projects/:project/stop", ...projectsStopHandler)
   .post("/projects/:project/restart", ...projectsRestartHandler)
   .post("/projects/:project/reset", ...projectsResetHandler)
+  .post("/projects/:project/path", ...projectsPathHandler)
 
   .post("/projects/:project/channels", ...channelsListHandler)
   .post("/projects/:project/channels/list", ...channelsListHandler)

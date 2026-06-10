@@ -11,7 +11,6 @@ const TOP_LEAFS = new Set([
   "restart",
   "status",
   "logs",
-  "path",
   "events",
   "update",
 ])
@@ -26,6 +25,7 @@ const NAMED_LEAFS = new Set([
   "stop",
   "restart",
   "reset",
+  "path",
   "set-tokens",
 ])
 const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
