@@ -1,25 +1,11 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { readCliBody } from "@/cli/utils/read-cli-body"
-import { resetProjectSession } from "@/cli/utils/reset-project-session"
-
-const help = `leuco projects <p> reset / deprecated alias for session reset
-
-usage / leuco projects <p> reset [--force]
-
-Deprecated: use \`leuco projects <p> session reset\`.
-
-Clears the Codex thread id so the next turn starts a fresh Codex session.
-Codex memories, auth, Slack tokens, project settings, and repository files are kept.
-If the project is enabled, the tenant is restarted so the in-memory thread id is
-also discarded.
-
-options:
-  --force / allow resetting the project from inside its own Codex session`
 
 export const projectsResetHandler = factory.createHandlers(async (c) => {
-  const body = await readCliBody(c)
-  return await resetProjectSession(c, body, {
-    help,
-    commandName: "reset",
+  await readCliBody(c)
+  const projectName = c.req.param("project")!
+  throw new HTTPException(410, {
+    message: `use instead: leuco projects ${projectName} session reset`,
   })
 })

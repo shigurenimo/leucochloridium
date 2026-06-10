@@ -160,10 +160,13 @@ describe("toRequest", () => {
     expect(remove.parsed.args).toEqual(["morning"])
   })
 
-  it("expands project-level start/stop/restart/reset aliases", () => {
+  it("expands project-level start/stop/restart", () => {
     expect(toRequest(["projects", "p", "start"]).path).toBe("/projects/p/start")
     expect(toRequest(["projects", "p", "stop"]).path).toBe("/projects/p/stop")
     expect(toRequest(["projects", "p", "restart"]).path).toBe("/projects/p/restart")
+  })
+
+  it("keeps removed project reset routed to a tombstone", () => {
     expect(toRequest(["projects", "p", "reset"]).path).toBe("/projects/p/reset")
   })
 })
