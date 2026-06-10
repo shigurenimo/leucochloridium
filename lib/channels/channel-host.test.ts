@@ -62,13 +62,21 @@ describe("LeucoChannelHost.buildForProject", () => {
     ).toThrow(/appToken/)
   })
 
-  it("throws when a user OAuth token is configured as the bot token", () => {
+  it("accepts a user OAuth token for user-mode Slack operation", () => {
+    const plugins = LeucoChannelHost.buildForProject({
+      project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
+      channels: [slackChannel("main", "xoxp-1", "xapp-1")],
+    })
+    expect(plugins).toHaveLength(1)
+  })
+
+  it("throws when the Slack access token is neither bot nor user token", () => {
     expect(() =>
       LeucoChannelHost.buildForProject({
         project: { id: "00000000-0000-4000-8000-000000000000", name: "demo" },
-        channels: [slackChannel("main", "xoxp-1", "xapp-1")],
+        channels: [slackChannel("main", "xoxa-1", "xapp-1")],
       }),
-    ).toThrow(/botToken must start with xoxb-/)
+    ).toThrow(/botToken must start with xoxb- or xoxp-/)
   })
 
   it("throws when the app token is not an app-level token", () => {

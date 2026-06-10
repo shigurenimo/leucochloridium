@@ -12,7 +12,7 @@ const help = `leuco projects <p> channels <c> set-tokens / update Slack tokens
 usage / leuco projects <p> channels <c> set-tokens [--bot-token <t>] [--app-token <t>]
 
 options:
-  --bot-token <token | -> / Slack bot OAuth token (xoxb-...). \`-\` reads from stdin.
+  --bot-token <token | -> / Slack bot/user OAuth token (xoxb- or xoxp-). \`-\` reads from stdin.
   --app-token <token | -> / Slack app-level token (xapp-...). \`-\` reads from stdin.
 
 At least one flag is required. Omitted flags keep the existing value.

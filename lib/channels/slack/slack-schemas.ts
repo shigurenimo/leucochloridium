@@ -1,6 +1,8 @@
 import { z } from "zod"
 
-export const slackBotTokenSchema = z.string().regex(/^xoxb-/, "must start with xoxb-")
+export const slackBotTokenSchema = z
+  .string()
+  .regex(/^xox[bp]-/, "must start with xoxb- or xoxp-")
 
 export const slackAppTokenSchema = z.string().regex(/^xapp-/, "must start with xapp-")
 

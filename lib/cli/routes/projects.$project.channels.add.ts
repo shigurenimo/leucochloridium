@@ -16,7 +16,7 @@ usage / leuco projects <p> channels add (slack|schedule) [options]
 
 options:
   --name <name> / channel identifier (default: <type>)
-  --bot-token <token | -> / [slack] bot OAuth token (xoxb-...). \`-\` reads from stdin.
+  --bot-token <token | -> / [slack] bot/user OAuth token (xoxb- or xoxp-). \`-\` reads from stdin.
   --app-token <token | -> / [slack] app-level token (xapp-...). \`-\` reads from stdin.
 
 examples:
