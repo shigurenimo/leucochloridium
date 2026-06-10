@@ -8,4 +8,7 @@ options:
   --project / project whose stored bot token is used
   --channel / pick a specific channel when the project has multiple
 
+For channel-scoped file downloads, use:
+  leuco projects <p> channels <c> download-file (--file <id>|--url <url>) --out <path>
+
 The same operation is exposed to codex as the MCP \`slack_call\` tool.`

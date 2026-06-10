@@ -237,7 +237,13 @@ const ensureTenantConfigToml = (
   },
 ): void => {
   const path = join(codexHome, "config.toml")
-  const autoApproveTools = ["slack_call", "schedule_create", "schedule_list", "schedule_delete"]
+  const autoApproveTools = [
+    "slack_call",
+    "slack_download_file",
+    "schedule_create",
+    "schedule_list",
+    "schedule_delete",
+  ]
   const lines = [
     `approval_policy = "never"`,
     `sandbox_mode = "danger-full-access"`,

@@ -41,6 +41,25 @@ describe("toRequest", () => {
     )
   })
 
+  it("expands channel download-file", () => {
+    const r = toRequest([
+      "projects",
+      "azamino",
+      "channels",
+      "slack",
+      "download-file",
+      "--file",
+      "F123",
+      "--out",
+      "/tmp/image.png",
+    ])
+    expect(r.path).toBe("/projects/azamino/channels/slack/download-file")
+    expect(r.parsed.flags).toEqual({
+      file: "F123",
+      out: "/tmp/image.png",
+    })
+  })
+
   it("expands the full /projects/<p>/channels/<leaf> with positional", () => {
     const r = toRequest(["projects", "p", "channels", "add", "slack"])
     expect(r.path).toBe("/projects/p/channels/add")

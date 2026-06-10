@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import pkg from "../../package.json" with { type: "json" }
+import { slackDownloadFile } from "@/actions/slack/slack-download-file"
+import { slackResolveFileDownloadUrl } from "@/actions/slack/slack-resolve-file-download-url"
+import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { validateRunAt } from "@/channels/schedule/validate-run-at"
 import { validateLeucoName } from "@/cli/utils/validate-name"
-import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import type { ScheduleChannel, ScheduleEntry } from "@/config/config-schema"
 import { errorMessage } from "@/error-message"
 import {
@@ -13,6 +17,7 @@ import {
   scheduleDeleteArgsSchema,
   scheduleListArgsSchema,
   slackCallArgsSchema,
+  slackDownloadFileArgsSchema,
 } from "@/mcp/mcp-tool-schemas"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -22,6 +27,7 @@ type Props = {
 }
 
 const TOOL_SLACK_CALL = "slack_call"
+const TOOL_SLACK_DOWNLOAD_FILE = "slack_download_file"
 const TOOL_SCHEDULE_CREATE = "schedule_create"
 const TOOL_SCHEDULE_LIST = "schedule_list"
 const TOOL_SCHEDULE_DELETE = "schedule_delete"
@@ -51,6 +57,37 @@ const SLACK_CALL_INPUT_SCHEMA = {
       type: "string",
       description:
         "Optional leuco-side channel identifier when the project has multiple slack channels. Defaults to the first enabled one.",
+    },
+  },
+}
+
+const SLACK_DOWNLOAD_FILE_DESCRIPTION = [
+  "Download a Slack private file using this project's stored Slack bot token.",
+  "Pass either `file_id` (resolved through files.info) or `url`",
+  "(url_private/url_private_download). The tool writes the binary to",
+  "`output_path`, or a temporary path when omitted, and returns the saved path.",
+].join(" ")
+
+const SLACK_DOWNLOAD_FILE_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    file_id: {
+      type: "string",
+      description: "Slack file id, e.g. F0123. Mutually exclusive with `url`.",
+    },
+    url: {
+      type: "string",
+      description:
+        "Slack url_private or url_private_download. Mutually exclusive with `file_id`.",
+    },
+    output_path: {
+      type: "string",
+      description: "Optional local output file path. Defaults to a temp file.",
+    },
+    channel_name: {
+      type: "string",
+      description:
+        "Optional leuco-side channel identifier when the project has multiple slack channels.",
     },
   },
 }
@@ -140,6 +177,12 @@ export const buildMcpServer = (props: Props): Server => {
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
       {
+        name: TOOL_SLACK_DOWNLOAD_FILE,
+        description: SLACK_DOWNLOAD_FILE_DESCRIPTION,
+        inputSchema: SLACK_DOWNLOAD_FILE_INPUT_SCHEMA,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      {
         name: TOOL_SCHEDULE_CREATE,
         description: SCHEDULE_CREATE_DESCRIPTION,
         inputSchema: SCHEDULE_CREATE_INPUT_SCHEMA,
@@ -166,6 +209,9 @@ export const buildMcpServer = (props: Props): Server => {
 
     try {
       if (name === TOOL_SLACK_CALL) return await handleSlackCall(handlerProps, args)
+      if (name === TOOL_SLACK_DOWNLOAD_FILE) {
+        return await handleSlackDownloadFile(handlerProps, args)
+      }
       if (name === TOOL_SCHEDULE_CREATE) return await handleScheduleCreate(handlerProps, args)
       if (name === TOOL_SCHEDULE_LIST) return await handleScheduleList(handlerProps, args)
       if (name === TOOL_SCHEDULE_DELETE) return await handleScheduleDelete(handlerProps, args)
@@ -200,6 +246,53 @@ const handleSlackCall = async (props: HandlerProps, args: unknown) => {
   })
 
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
+}
+
+const handleSlackDownloadFile = async (props: HandlerProps, args: unknown) => {
+  const parsed = slackDownloadFileArgsSchema.safeParse(args)
+  if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
+
+  const tokens = resolveTenantTokens({
+    store: props.store,
+    projectId: props.projectId,
+    channelName: parsed.data.channel_name,
+  })
+
+  const fileUrl =
+    parsed.data.url ??
+    (await resolveSlackDownloadUrlFromFileId({
+      botToken: tokens.botToken,
+      fileId: parsed.data.file_id,
+    }))
+  const outputPath = parsed.data.output_path ?? join(tmpdir(), `leuco-slack-${randomUUID()}`)
+  const result = await slackDownloadFile({
+    botToken: tokens.botToken,
+    url: fileUrl,
+    outputPath,
+  })
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  }
+}
+
+const resolveSlackDownloadUrlFromFileId = async (props: {
+  botToken: string
+  fileId?: string
+}): Promise<string> => {
+  if (props.fileId === undefined) {
+    throw new Error("one of `file_id` or `url` is required")
+  }
+
+  return await slackResolveFileDownloadUrl({
+    botToken: props.botToken,
+    fileId: props.fileId,
+  })
 }
 
 const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {

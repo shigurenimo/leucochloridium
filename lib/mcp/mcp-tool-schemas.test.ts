@@ -5,6 +5,7 @@ import {
   scheduleDeleteArgsSchema,
   scheduleListArgsSchema,
   slackCallArgsSchema,
+  slackDownloadFileArgsSchema,
 } from "@/mcp/mcp-tool-schemas"
 
 describe("slackCallArgsSchema", () => {
@@ -34,6 +35,33 @@ describe("slackCallArgsSchema", () => {
       body: { channel: "C123", text: "hi" },
     })
     expect(parsed.success).toBe(true)
+  })
+})
+
+describe("slackDownloadFileArgsSchema", () => {
+  it("accepts file_id", () => {
+    const parsed = slackDownloadFileArgsSchema.safeParse({ file_id: "F123" })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts url", () => {
+    const parsed = slackDownloadFileArgsSchema.safeParse({
+      url: "https://files.slack.com/files-pri/T-F/download/image.png",
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects missing file_id and url", () => {
+    const parsed = slackDownloadFileArgsSchema.safeParse({})
+    expect(parsed.success).toBe(false)
+  })
+
+  it("rejects both file_id and url", () => {
+    const parsed = slackDownloadFileArgsSchema.safeParse({
+      file_id: "F123",
+      url: "https://files.slack.com/files-pri/T-F/download/image.png",
+    })
+    expect(parsed.success).toBe(false)
   })
 })
 

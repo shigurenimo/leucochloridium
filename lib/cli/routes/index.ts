@@ -15,6 +15,7 @@ import { projectsListHandler } from "@/cli/routes/projects.list"
 import { channelsAddHandler } from "@/cli/routes/projects.$project.channels.add"
 import { channelsListHandler } from "@/cli/routes/projects.$project.channels.list"
 import { help as channelsNamedHelp } from "@/cli/routes/projects.$project.channels.$channel.help"
+import { channelsDownloadFileHandler } from "@/cli/routes/projects.$project.channels.$channel.download-file"
 import { channelsRemoveHandler } from "@/cli/routes/projects.$project.channels.$channel.remove"
 import { channelsRenameHandler } from "@/cli/routes/projects.$project.channels.$channel.rename"
 import { channelsRestartHandler } from "@/cli/routes/projects.$project.channels.$channel.restart"
@@ -101,6 +102,7 @@ export const app = base
   .post("/projects/:project/channels/list", ...channelsListHandler)
   .post("/projects/:project/channels/add", ...channelsAddHandler)
   .post("/projects/:project/channels/:channel", ...groupHelpHandler(channelsNamedHelp))
+  .post("/projects/:project/channels/:channel/download-file", ...channelsDownloadFileHandler)
   .post("/projects/:project/channels/:channel/remove", ...channelsRemoveHandler)
   .post("/projects/:project/channels/:channel/rename", ...channelsRenameHandler)
   .post("/projects/:project/channels/:channel/start", ...channelsStartHandler)

@@ -27,6 +27,7 @@ const NAMED_LEAFS = new Set([
   "reset",
   "path",
   "set-tokens",
+  "download-file",
 ])
 const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
 const SLACK_LEAFS = new Set(["call"])
