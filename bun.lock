@@ -5,7 +5,7 @@
     "": {
       "name": "react",
       "dependencies": {
-        "@interactive-inc/claude-funnel": "^0.58.1",
+        "@interactive-inc/claude-funnel": "^0.60.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@slack/bolt": "^4.7.2",
         "@slack/web-api": "^7.15.1",
@@ -46,7 +46,7 @@
 
     "@hono/zod-validator": ["@hono/zod-validator@0.8.0", "", { "peerDependencies": { "hono": ">=4.10.0", "zod": "^3.25.0 || ^4.0.0" } }, "sha512-5uS4S1/LKtZQYvD4BtpPUFkOv8d1wNxHHrChm26buMiEYc1FrHWvDUaKVBwkiVtvSExHSpLGDvcnpI2Copyj9w=="],
 
-    "@interactive-inc/claude-funnel": ["@interactive-inc/claude-funnel@0.58.1", "", { "dependencies": { "@hono/zod-validator": "^0.8.0", "@modelcontextprotocol/sdk": "^1.29.0", "@slack/bolt": "^4.7.2", "@slack/web-api": "^7.16.0", "discord.js": "^14.26.4", "hono": "^4.12.19", "yaml": "^2.9.0", "zod": "^4.4.3" }, "bin": { "fnl": "dist/bin.js", "funnel": "dist/bin.js" } }, "sha512-CFyxHDLNmQ6CDtYBrC2YD9UzUqpvXquolvyjpt+uM6fnNIQgTCVXybZxEN5gUWJehu+YypPunkhLnSgmSTHSIQ=="],
+    "@interactive-inc/claude-funnel": ["@interactive-inc/claude-funnel@0.60.0", "", { "dependencies": { "@hono/zod-validator": "0.8.0", "@modelcontextprotocol/sdk": "^1.29.0", "@slack/bolt": "^4.7.2", "@slack/web-api": "^7.16.0", "discord.js": "^14.26.4", "hono": "^4.12.19", "yaml": "^2.9.0", "zod": "^4.4.3" }, "bin": { "fnl": "dist/bin.js", "funnel": "dist/bin.js" } }, "sha512-w665PV+kUEekEZ0nTGiJ19dc5H1MmNmt6NCPAP5EGFuaLbYy62LLKUG4x+QQffyVZ+1F5hfr2/YuERaHUEejsw=="],
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 

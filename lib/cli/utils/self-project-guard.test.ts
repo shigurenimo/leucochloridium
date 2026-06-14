@@ -1,8 +1,9 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it } from "vitest"
 import type { Project } from "@/config/config-schema"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
 
 const project: Project = {
+  version: 1,
   id: "45ec9e03-5da4-4566-aa82-143cc38b8df5",
   name: "azamino",
   path: "/Users/i/inta",
@@ -11,7 +12,7 @@ const project: Project = {
   prompts: [],
   useCommonInstructions: true,
   mcpServers: {},
-  state: { codexThreadId: null },
+  state: { codexThreadId: null, scheduleLastFiredAt: {} },
 }
 
 describe("isCurrentCodexProject", () => {
