@@ -12,6 +12,13 @@ export type WebClientPort = {
   }
   conversations: {
     info(args: { channel: string }): Promise<unknown>
+    replies(args: {
+      channel: string
+      ts: string
+      oldest?: string
+      inclusive?: boolean
+      limit?: number
+    }): Promise<unknown>
   }
   auth: {
     test(): Promise<unknown>

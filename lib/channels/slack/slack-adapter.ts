@@ -26,6 +26,39 @@ export class LeucoSlackAdapter {
     })
   }
 
+  async hasBotReplyAfter(
+    channel: string,
+    threadTs: string,
+    messageTs: string,
+    botUserId: string,
+    options: { ignoredTexts?: readonly string[] } = {},
+  ): Promise<boolean> {
+    try {
+      const result = await this.props.client.conversations.replies({
+        channel,
+        ts: threadTs,
+        oldest: messageTs,
+        inclusive: false,
+        limit: 100,
+      })
+      const ignoredTexts = new Set((options.ignoredTexts ?? []).map((text) => text.trim()))
+      const messages = ((result as SlackRepliesResult).messages ?? []).filter(isReplyMessage)
+      return messages.some((message) => {
+        if (message.user !== botUserId) return false
+        const text = typeof message.text === "string" ? message.text : ""
+        if (ignoredTexts.has(text.trim())) return false
+        return true
+      })
+    } catch (err) {
+      if (this.props.onLog) {
+        this.props.onLog(
+          `[slack] conversations.replies failed (channel=${channel} ts=${threadTs}): ${errorMessage(err)}`,
+        )
+      }
+      return false
+    }
+  }
+
   async addReaction(channel: string, ts: string, name: string): Promise<void> {
     try {
       await this.props.client.reactions.add({ channel, timestamp: ts, name })
@@ -85,6 +118,19 @@ export class LeucoSlackAdapter {
 }
 
 const isPublicChannel = (channel: string): boolean => channel.startsWith("C")
+
+type SlackRepliesResult = {
+  messages?: unknown[]
+}
+
+type ReplyMessage = {
+  user?: string
+  text?: string
+}
+
+const isReplyMessage = (value: unknown): value is ReplyMessage => {
+  return typeof value === "object" && value !== null
+}
 
 const conversationIsNonMember = (info: unknown): boolean => {
   if (typeof info !== "object" || info === null) return false

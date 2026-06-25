@@ -245,6 +245,9 @@ const ensureTenantConfigToml = (
     "schedule_delete",
   ]
   const lines = [
+    `model = "gpt-5.5"`,
+    `model_reasoning_effort = "xhigh"`,
+    "",
     `approval_policy = "never"`,
     `sandbox_mode = "danger-full-access"`,
     "",

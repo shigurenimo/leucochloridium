@@ -8,7 +8,10 @@ const fakeClient = (overrides: Partial<WebClientPort> = {}): WebClientPort => ({
     add: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
   },
-  conversations: { info: vi.fn(async () => undefined) },
+  conversations: {
+    info: vi.fn(async () => undefined),
+    replies: vi.fn(async () => ({ messages: [] })),
+  },
   auth: { test: vi.fn(async () => undefined) },
   ...overrides,
 })
@@ -36,7 +39,10 @@ describe("LeucoSlackAdapter.canReadChannel", () => {
 
   it("returns false for a public channel the bot is not a member of", async () => {
     const client = fakeClient({
-      conversations: { info: vi.fn(async () => ({ channel: { is_member: false } })) },
+      conversations: {
+        info: vi.fn(async () => ({ channel: { is_member: false } })),
+        replies: vi.fn(async () => ({ messages: [] })),
+      },
     })
     const adapter = new LeucoSlackAdapter({ client })
     await expect(adapter.canReadChannel("C1")).resolves.toBe(false)
@@ -44,7 +50,10 @@ describe("LeucoSlackAdapter.canReadChannel", () => {
 
   it("returns true for a public channel the bot is a member of", async () => {
     const client = fakeClient({
-      conversations: { info: vi.fn(async () => ({ channel: { is_member: true } })) },
+      conversations: {
+        info: vi.fn(async () => ({ channel: { is_member: true } })),
+        replies: vi.fn(async () => ({ messages: [] })),
+      },
     })
     const adapter = new LeucoSlackAdapter({ client })
     await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
@@ -52,10 +61,55 @@ describe("LeucoSlackAdapter.canReadChannel", () => {
 
   it("returns false when conversations.info fails", async () => {
     const client = fakeClient({
-      conversations: { info: vi.fn(async () => Promise.reject(new Error("channel_not_found"))) },
+      conversations: {
+        info: vi.fn(async () => Promise.reject(new Error("channel_not_found"))),
+        replies: vi.fn(async () => ({ messages: [] })),
+      },
     })
     const adapter = new LeucoSlackAdapter({ client })
     await expect(adapter.canReadChannel("D1")).resolves.toBe(false)
+  })
+})
+
+describe("LeucoSlackAdapter.hasBotReplyAfter", () => {
+  it("detects a later reply from the bot user", async () => {
+    const client = fakeClient({
+      conversations: {
+        info: vi.fn(async () => undefined),
+        replies: vi.fn(async () => ({
+          messages: [
+            { user: "U_OTHER", text: "hi" },
+            { user: "U_BOT", text: "working" },
+          ],
+        })),
+      },
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+    await expect(adapter.hasBotReplyAfter("C1", "1.0", "1.0", "U_BOT")).resolves.toBe(true)
+    expect(client.conversations.replies).toHaveBeenCalledWith({
+      channel: "C1",
+      ts: "1.0",
+      oldest: "1.0",
+      inclusive: false,
+      limit: 100,
+    })
+  })
+
+  it("ignores configured status texts", async () => {
+    const client = fakeClient({
+      conversations: {
+        info: vi.fn(async () => undefined),
+        replies: vi.fn(async () => ({
+          messages: [{ user: "U_BOT", text: "見てます。少し待ってください。" }],
+        })),
+      },
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+    await expect(
+      adapter.hasBotReplyAfter("C1", "1.0", "1.0", "U_BOT", {
+        ignoredTexts: ["見てます。少し待ってください。"],
+      }),
+    ).resolves.toBe(false)
   })
 })
 

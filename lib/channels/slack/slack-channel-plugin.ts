@@ -2,6 +2,7 @@ import { LeucoSlackAdapter } from "@/channels/slack/slack-adapter"
 import { LeucoSlackListener } from "@/channels/slack/slack-listener"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import { errorMessage } from "@/error-message"
 
 export type SlackAckMode = "off" | "mention" | "always"
 
@@ -26,6 +27,11 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
   success: "white_check_mark",
   error: "x",
 }
+
+const STATUS_REPLY_DELAY_MS = 20 * 1000
+const STATUS_REPLY_TEXT = "見てます。少し待ってください。"
+const TIMEOUT_REPLY_TEXT =
+  "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
 
 /**
  * Bridges a single Slack workspace to the engine. Forwards every accepted
@@ -54,6 +60,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     this.listener = new LeucoSlackListener({
       botToken: this.props.botToken,
       appToken: this.props.appToken,
+      label: `${ctx.projectName}/${this.name}`,
       onLog: ctx.onLog,
     })
 
@@ -127,14 +134,32 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const threadKey = `${this.name}:${msg.channel}:${msg.threadTs}`
     const reactionTs = msg.ts
     const wantsAck = this.shouldAck(msg)
+    const wantsStatusReply = this.shouldSendStatusReply(msg)
     const icons = this.props.ackIcons ?? DEFAULT_ACK_ICONS
+    let turnDone = false
+    let statusReplyPosted = false
+    let statusReplyTimer: ReturnType<typeof setTimeout> | null = null
 
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
+    if (wantsStatusReply) {
+      statusReplyTimer = setTimeout(() => {
+        void (async () => {
+          if (turnDone) return
+          if (await this.hasVisibleBotReplyAfter(msg)) return
+          if (turnDone) return
+          statusReplyPosted = await this.postReplySafely(msg, STATUS_REPLY_TEXT)
+        })()
+      }, STATUS_REPLY_DELAY_MS)
+      unrefTimer(statusReplyTimer)
+    }
 
     const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
+    turnDone = true
+    if (statusReplyTimer) clearTimeout(statusReplyTimer)
     if (monologue instanceof Error) {
       ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
+      if (wantsStatusReply) await this.postTimeoutReplyIfNeeded(msg, statusReplyPosted)
     } else {
       logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
@@ -150,6 +175,49 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     if (mode === "off") return false
     if (mode === "always") return true
     return msg.mentioned
+  }
+
+  private shouldSendStatusReply(msg: SlackMessageEvent): boolean {
+    return msg.mentioned || msg.channel.startsWith("D")
+  }
+
+  private async hasVisibleBotReplyAfter(
+    msg: SlackMessageEvent,
+    ignoredTexts: readonly string[] = [],
+  ): Promise<boolean> {
+    if (!this.adapter || this.botUserId === null) return false
+    return this.adapter.hasBotReplyAfter(
+      msg.channel,
+      msg.threadTs,
+      msg.ts,
+      this.botUserId,
+      { ignoredTexts },
+    )
+  }
+
+  private async postTimeoutReplyIfNeeded(
+    msg: SlackMessageEvent,
+    statusReplyPosted: boolean,
+  ): Promise<void> {
+    if (!this.adapter) return
+    const ignoredTexts = statusReplyPosted ? [STATUS_REPLY_TEXT] : []
+    if (await this.hasVisibleBotReplyAfter(msg, ignoredTexts)) return
+    await this.postReplySafely(msg, TIMEOUT_REPLY_TEXT)
+  }
+
+  private async postReplySafely(msg: SlackMessageEvent, text: string): Promise<boolean> {
+    if (!this.adapter || !this.ctx) return false
+    try {
+      await this.adapter.postReply({
+        channel: msg.channel,
+        threadTs: msg.threadTs,
+        text,
+      })
+      return true
+    } catch (err) {
+      this.ctx.onLog(`[${this.name}] status reply failed: ${errorMessage(err)}`)
+      return false
+    }
   }
 }
 
@@ -175,6 +243,11 @@ const attr = (value: string): string => {
  * so the human reading the log understands the substitution. */
 const escapeEnvelopeBody = (text: string): string => {
   return text.replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
+}
+
+const unrefTimer = (timer: ReturnType<typeof setTimeout>): void => {
+  const maybeUnref = (timer as { unref?: () => void }).unref
+  if (typeof maybeUnref === "function") maybeUnref.call(timer)
 }
 
 const MONOLOGUE_LOG_LIMIT = 200

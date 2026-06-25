@@ -78,6 +78,9 @@ export class LeucoSlackEventProcessor {
     if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
     if (data.user === this.botUserId) return { skip: true, reason: "self message" }
+    if (isAddressedToAnotherUser(data.text ?? "", this.botUserId)) {
+      return { skip: true, reason: "addressed to another user" }
+    }
 
     return this.dispatchMessage(data, "message")
   }
@@ -121,7 +124,7 @@ export class LeucoSlackEventProcessor {
     }
 
     const rawText = data.text ?? ""
-    const mentioned = this.botUserId !== null && rawText.includes(`<@${this.botUserId}>`)
+    const mentioned = slackTextMentionsUser(rawText, this.botUserId)
     const text = stripMention(rawText, this.botUserId)
     const threadTs = data.thread_ts ?? data.ts
 
@@ -154,5 +157,26 @@ export class LeucoSlackEventProcessor {
 
 const stripMention = (text: string, botUserId: string | null): string => {
   if (botUserId === null) return text.trim()
-  return text.replace(new RegExp(`<@${botUserId}>`, "g"), "").trim()
+  return text.replace(slackMentionRegex(botUserId), "").trim()
+}
+
+export const slackTextMentionsUser = (
+  text: string,
+  userId: string | null,
+): boolean => {
+  if (userId === null) return false
+  return slackMentionRegex(userId).test(text)
+}
+
+const slackMentionRegex = (userId: string): RegExp => {
+  return new RegExp(`<@${escapeRegExp(userId)}(?:\\|[^>]+)?>`, "g")
+}
+
+const isAddressedToAnotherUser = (text: string, botUserId: string): boolean => {
+  const firstToken = text.trimStart().match(/^<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/)
+  return firstToken !== null && firstToken[1] !== botUserId
+}
+
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

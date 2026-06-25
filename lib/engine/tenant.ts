@@ -14,7 +14,7 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
  * On timeout the codex child is restarted (in-flight turn dies with it) and
  * the project thread is re-resumed on the next call.
  */
-const TURN_TIMEOUT_MS = 10 * 60 * 1000
+const TURN_TIMEOUT_MS = 6 * 60 * 1000
 
 type Logger = (line: string) => void
 
