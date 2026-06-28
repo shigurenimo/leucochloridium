@@ -104,7 +104,7 @@ export class LeucoEngine {
     }
     this.tenants = []
 
-    await this.bus.stop()
+    this.bus.stop()
   }
 
   async reconcile(): Promise<void> {

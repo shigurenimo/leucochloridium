@@ -66,6 +66,10 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly lastFiredMinute = new Map<string, number>()
   private tickInFlight = false
+  /** Promise for the startup catch-up tick. Tests await this to drive a
+   * deterministic first run; production fires-and-forgets to avoid blocking
+   * daemon ready on a slow first turn. */
+  private startupTick: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
     this.name = props.name
@@ -80,13 +84,23 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     this.ctx = ctx
     ctx.onLog(`[${this.name}] schedule channel ready (tick=${this.intervalMs}ms)`)
 
-    // Fire once immediately so any past one-shots dispatch on daemon startup
-    // instead of waiting up to a full interval.
-    await this.tickOnce()
+    // Kick off the first tick (catch-up + any past one-shots) WITHOUT awaiting
+    // it — a `runTextTurn` inside the first fire can take up to the 10-minute
+    // codex timeout, and blocking `daemon ready` on that would delay the
+    // gateway, MCP endpoint, and every other plugin start for a single
+    // overdue schedule entry.
+    this.startupTick = this.tickOnce()
+    void this.startupTick
 
     this.timer = this.setIntervalFn(() => {
       void this.tickOnce()
     }, this.intervalMs)
+  }
+
+  /** Test-only: await the start-time catch-up tick. Production code should
+   * never need this; the daemon expects `start()` to return promptly. */
+  async waitForStartupTick(): Promise<void> {
+    await this.startupTick
   }
 
   async stop(): Promise<void> {

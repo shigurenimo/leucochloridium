@@ -11,6 +11,7 @@ export class LeucoEventBus {
   private readonly eventLog: FunnelLog<LeucoEvent> | null
   private readonly sink: FunnelLogSqliteSink<LeucoEvent, ["project"]> | null
   private readonly listeners = new Set<LeucoEventListener>()
+  private closed = false
 
   constructor(props: Props = {}) {
     if (props.eventLogPath) {
@@ -36,6 +37,8 @@ export class LeucoEventBus {
   }
 
   emit(event: LeucoEvent): void {
+    if (this.closed) return
+
     if (this.eventLog) {
       const result = this.eventLog.emit(event)
 
@@ -44,7 +47,9 @@ export class LeucoEventBus {
       }
     }
 
-    for (const listener of this.listeners) {
+    // Snapshot to survive subscribe()/unsubscribe() inside a listener.
+    const snapshot = Array.from(this.listeners)
+    for (const listener of snapshot) {
       try {
         listener(event)
       } catch {
@@ -69,6 +74,8 @@ export class LeucoEventBus {
   }
 
   stop(): void {
+    if (this.closed) return
+    this.closed = true
     if (this.eventLog) this.eventLog.close()
   }
 }

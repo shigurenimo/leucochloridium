@@ -12,6 +12,12 @@ export const slackResolveFileDownloadUrl = async (props: Props): Promise<string>
     method: "files.info",
     body: { file: props.fileId },
   })
+
+  const envelope = okEnvelopeSchema.safeParse(response)
+  if (envelope.success && envelope.data.ok === false) {
+    throw new Error(`files.info failed: ${envelope.data.error ?? "unknown"}`)
+  }
+
   const parsed = filesInfoResponseSchema.safeParse(response)
   if (!parsed.success) {
     throw new Error("files.info response did not include url_private_download")
@@ -19,6 +25,11 @@ export const slackResolveFileDownloadUrl = async (props: Props): Promise<string>
 
   return parsed.data.file.url_private_download
 }
+
+const okEnvelopeSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+})
 
 const filesInfoResponseSchema = z.object({
   ok: z.literal(true),

@@ -27,6 +27,13 @@ export class LeucoPaths {
 
   constructor(props: Props = {}) {
     this.home = props.home ?? homedir()
+    if (this.home === "") {
+      // homedir() falls back to an empty string when neither HOME nor the
+      // user database resolve. Joining `""` produces the relative path
+      // `.leuco`, which would end up under whatever directory the daemon
+      // happens to be in — invisible from the CLI's perspective. Fail loudly.
+      throw new Error("LeucoPaths: cannot resolve home directory (HOME unset)")
+    }
     this.base = join(this.home, ".leuco")
     Object.freeze(this)
   }

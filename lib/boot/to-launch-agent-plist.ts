@@ -64,6 +64,9 @@ ${programBlock}
   <key>KeepAlive</key>
   <true/>
 
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
   <key>WorkingDirectory</key>
   <string>${escapeXml(props.workingDirectory)}</string>
 

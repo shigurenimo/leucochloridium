@@ -11,12 +11,12 @@ const PRESETS: Record<string, { types: string[]; description: string }> = {
     description: "codex turn lifecycle (start / complete / error)",
   },
   errors: {
-    types: ["turn.error", "engine.reconcile.failed"],
-    description: "turn errors and reconcile failures",
+    types: ["turn.error", "engine.reconcile.failed", "slack.error"],
+    description: "turn errors, reconcile failures, slack auth/connection errors",
   },
   lifecycle: {
-    types: ["tenant.started", "tenant.stopped", "engine.reconcile"],
-    description: "tenant start/stop and engine reconcile",
+    types: ["tenant.started", "tenant.stopped", "engine.reconcile", "slack.connection"],
+    description: "tenant start/stop, engine reconcile, slack connection transitions",
   },
   schedule: {
     types: ["schedule.fired"],
@@ -45,8 +45,8 @@ ${presetList}
 
 event types:
   log  tenant.started  tenant.stopped  engine.reconcile
-  engine.reconcile.failed  slack.event  turn.start  turn.complete
-  turn.error  codex.notification  schedule.fired
+  engine.reconcile.failed  slack.event  slack.connection  slack.error
+  turn.start  turn.complete  turn.error  codex.notification  schedule.fired
 
 output / one line per event, newest first. --json outputs raw JSON objects.
 
@@ -133,28 +133,34 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   const typeFlag = typeof body.flags.type === "string" ? body.flags.type : null
 
   if (presetName !== null && !(presetName in PRESETS)) {
-    throw new HTTPException(400, { message: `unknown preset: ${presetName}\n\navailable: ${Object.keys(PRESETS).join(", ")}` })
+    throw new HTTPException(400, {
+      message: `unknown preset: ${presetName}\n\navailable: ${Object.keys(PRESETS).join(", ")}`,
+    })
   }
 
   const presetTypes = presetName !== null ? PRESETS[presetName]!.types : null
   const filterTypes = typeFlag !== null ? [typeFlag] : presetTypes
 
-  const allEntries = filterTypes !== null
-    ? filterTypes.flatMap((type) =>
-        sink.query({
-          type,
-          where: projectFilter ? { project: projectFilter } : undefined,
-          limit,
-          order: "desc",
-        }),
-      )
-    : sink.query({
-        where: projectFilter ? { project: projectFilter } : undefined,
-        limit,
-        order: "desc",
-      })
-
-  sink.close()
+  let allEntries: Awaited<ReturnType<typeof sink.query>>
+  try {
+    allEntries =
+      filterTypes !== null
+        ? filterTypes.flatMap((type) =>
+            sink.query({
+              type,
+              where: projectFilter ? { project: projectFilter } : undefined,
+              limit,
+              order: "desc",
+            }),
+          )
+        : sink.query({
+            where: projectFilter ? { project: projectFilter } : undefined,
+            limit,
+            order: "desc",
+          })
+  } finally {
+    sink.close()
+  }
 
   const sorted = allEntries.sort((a, b) => b.seq - a.seq).slice(0, limit)
 

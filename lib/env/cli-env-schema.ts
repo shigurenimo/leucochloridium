@@ -11,7 +11,7 @@ export const DEFAULT_LEUCO_PORT = 7331
 export const cliEnvSchema = z.object({
   LEUCO_CWD: z.string().optional(),
   LEUCO_CODEX_BIN: z.string().optional(),
-  LEUCO_PORT: z.coerce.number().int().positive().default(DEFAULT_LEUCO_PORT),
+  LEUCO_PORT: z.coerce.number().int().min(1).max(65535).default(DEFAULT_LEUCO_PORT),
 })
 
 export type CliEnv = z.infer<typeof cliEnvSchema>

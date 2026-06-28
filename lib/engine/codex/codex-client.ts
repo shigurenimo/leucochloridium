@@ -155,7 +155,7 @@ export class LeucoCodexClient {
       )
     } catch (err) {
       child.kill("SIGTERM")
-      if (this.exitPromise) await this.exitPromise
+      await this.waitForExitOrEscalate(child)
       throw err
     }
     protocol.notify("initialized")
@@ -166,7 +166,21 @@ export class LeucoCodexClient {
     if (child === null) return
     child.stdin.end()
     child.kill("SIGTERM")
-    if (this.exitPromise) await this.exitPromise
+    await this.waitForExitOrEscalate(child)
+  }
+
+  private async waitForExitOrEscalate(child: ChildProcessWithoutNullStreams): Promise<void> {
+    const exit = this.exitPromise
+    if (!exit) return
+
+    const termRace = await Promise.race([
+      exit.then(() => "exited" as const),
+      sleep(STOP_TERM_GRACE_MS).then(() => "timeout" as const),
+    ])
+    if (termRace === "exited") return
+
+    child.kill("SIGKILL")
+    await Promise.race([exit, sleep(STOP_KILL_GRACE_MS)])
   }
 
   async startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error> {
@@ -315,6 +329,13 @@ export class LeucoCodexClient {
 }
 
 const INITIALIZE_TIMEOUT_MS = 30_000
+
+const STOP_TERM_GRACE_MS = 5_000
+const STOP_KILL_GRACE_MS = 5_000
+
+const sleep = (ms: number): Promise<void> => {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 const withTimeout = async <T>(
   promise: Promise<T>,
