@@ -45,14 +45,20 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       botToken: this.props.botToken,
     })
 
+    const onLog = props.onLog
     const flume = new Flume({
       sources: [source],
+      // Enable flume's built-in reconnect supervisor. Without this, a single
+      // socket-mode disconnect (WiFi blip, Slack-side close, idle timeout)
+      // would silently stop event delivery until the daemon is restarted.
+      // Defaults: infinite attempts, 1s base, 30s cap, exponential w/ jitter.
+      reconnect: {},
       onEvent: (item: FlumeStreamItem) => {
         if (item.kind === "event") {
-          this.handleEvent(item.event, props.onEvent)
+          this.handleEvent(item.event, props.onEvent, onLog)
           return
         }
-        this.handleLog(item.log, props.onLog, props.onStatus)
+        this.handleLog(item.log, onLog, props.onStatus)
       },
     })
 
@@ -77,9 +83,24 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   private handleEvent(
     event: FlumeEvent,
     onEvent: (envelope: LeucoSlackEnvelope) => Promise<void>,
+    onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
   ): void {
     if (event.source !== "slack") return
-    void onEvent(toLeucoEnvelope(event))
+    // Catch a rejected handler explicitly so an exception inside the plugin's
+    // event pipeline does not become an unhandled rejection — which run.ts
+    // treats as a fatal error and terminates the daemon.
+    onEvent(toLeucoEnvelope(event)).catch((err: unknown) => {
+      if (!onLog) return
+      const error = err instanceof Error ? err : new Error(String(err))
+      onLog({
+        level: "error",
+        action: "event.handler.failed",
+        message: error.message,
+        error,
+        detail: null,
+        timestamp: Date.now(),
+      })
+    })
   }
 
   private handleLog(

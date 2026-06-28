@@ -40,6 +40,7 @@ export class LeucoEngine {
   private readonly mcpToken: string | null
   private gateway: LeucoGatewayServer | null = null
   private reconcileQueue: Promise<void> = Promise.resolve()
+  private stopped = false
 
   constructor(props: Props) {
     this.tenants = props.tenants
@@ -92,7 +93,14 @@ export class LeucoEngine {
   }
 
   async stop(): Promise<void> {
+    if (this.stopped) return
+    this.stopped = true
     this.log("[leuco] shutting down")
+
+    // Drain any in-flight reconcile so it cannot mutate `this.tenants` after
+    // we null it out. Errors inside reconcile are already swallowed at the
+    // `reconcileQueue` site, so awaiting it is safe and cannot reject.
+    await this.reconcileQueue
 
     if (this.gateway) {
       await this.gateway.stop()
@@ -108,7 +116,11 @@ export class LeucoEngine {
   }
 
   async reconcile(): Promise<void> {
-    const result = this.reconcileQueue.then(() => this.runReconcile())
+    if (this.stopped) return
+    const result = this.reconcileQueue.then(() => {
+      if (this.stopped) return
+      return this.runReconcile()
+    })
     this.reconcileQueue = result.then(
       () => undefined,
       () => undefined,

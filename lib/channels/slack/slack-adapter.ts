@@ -88,12 +88,16 @@ export class LeucoSlackAdapter {
       }
       return true
     } catch (err) {
+      const message = errorMessage(err)
       if (this.props.onLog) {
-        this.props.onLog(
-          `[slack] conversations.info failed (channel=${channel}): ${errorMessage(err)}`,
-        )
+        this.props.onLog(`[slack] conversations.info failed (channel=${channel}): ${message}`)
       }
-      return false
+      // Only treat known access-denied errors as a hard "skip this event".
+      // Transient errors (rate-limited, network blip, Slack 5xx) must NOT
+      // silently drop the inbound event — otherwise a brief Slack outage
+      // turns into universal "the bot ignored my mention".
+      if (isPermanentChannelDenial(message)) return false
+      return true
     }
   }
 
@@ -114,3 +118,15 @@ export class LeucoSlackAdapter {
 }
 
 const isPublicChannel = (channel: string): boolean => channel.startsWith("C")
+
+// Slack returns these error strings in the `error` field of the JSON envelope
+// when the bot genuinely cannot read the channel; the fetch client surfaces
+// them through `Error("slack <method>: <reason>")`. Anything else (network
+// failures, ratelimits, 5xx) we treat as transient and let the event through
+// — losing one mention to a flaky `conversations.info` is worse than letting
+// the agent decide whether to reply.
+const isPermanentChannelDenial = (message: string): boolean => {
+  return /channel_not_found|is_archived|missing_scope|not_authed|account_inactive|access_denied|not_in_channel|invalid_channel/i.test(
+    message,
+  )
+}

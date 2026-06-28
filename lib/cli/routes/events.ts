@@ -104,6 +104,15 @@ const formatEvent = (event: LeucoEvent): string => {
     return `${time}  slack.event          ${event.project}  ${event.channel}`
   }
 
+  if (event.type === "slack.connection") {
+    return `${time}  slack.connection     ${event.project}  ${event.channel}  ${event.status}`
+  }
+
+  if (event.type === "slack.error") {
+    const errSuffix = event.error !== null ? `  err=${event.error}` : ""
+    return `${time}  slack.error          ${event.project}  ${event.channel}  ${event.level}  ${event.action}: ${event.message}${errSuffix}`
+  }
+
   return `${time}  unknown`
 }
 

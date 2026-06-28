@@ -102,6 +102,18 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
         dispatchMessage: (raw) => this.dispatchRawMessage(raw),
         rememberActiveThread: (channel, threadTs) => this.rememberActiveThread(channel, threadTs),
         onLog: (line) => ctx.onLog(`[${this.name}] ${line}`),
+        onError: (info) => {
+          ctx.bus.emit({
+            ts: Date.now(),
+            type: "slack.error",
+            project: ctx.projectName,
+            channel: this.name,
+            level: "warn",
+            action: info.action,
+            message: info.message,
+            error: info.error,
+          })
+        },
       })
     }
 
@@ -227,6 +239,10 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
         message: log.message,
         error: log.error !== null ? log.error.message : null,
       })
+      // Also surface on the diagnostic log stream so `leuco logs -f` shows
+      // socket-mode failures in real time — events.db alone is invisible to
+      // anyone tailing the log without knowing to also query the bus.
+      ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
       return
     }
 
@@ -401,7 +417,21 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       })
       return true
     } catch (err) {
-      this.ctx.onLog(`[${this.name}] status reply failed: ${errorMessage(err)}`)
+      const message = errorMessage(err)
+      this.ctx.onLog(`[${this.name}] status reply failed: ${message}`)
+      // Surface to events.db so a silent disappearance of the "見てます。少し待っ
+      // てください。" / timeout reply is queryable via `leuco events --preset
+      // errors`. Without this, a failing reply has zero observability.
+      this.ctx.bus.emit({
+        ts: Date.now(),
+        type: "slack.error",
+        project: this.ctx.projectName,
+        channel: this.name,
+        level: "warn",
+        action: "postReply.failed",
+        message: `${msg.channel}/${msg.threadTs}: ${message}`,
+        error: message,
+      })
       return false
     }
   }

@@ -16,12 +16,23 @@ type DispatchRawMessage = (raw: {
   botId: string | null
 }) => Promise<void>
 
+export type XoxpPollerErrorAction =
+  | "dm.poll.failed"
+  | "mention.poll.failed"
+  | "own-reply.poll.failed"
+
 type Props = {
   client: LeucoSlackWebClient
   botUserId: string
   dispatchMessage: DispatchRawMessage
   rememberActiveThread: (channel: string, threadTs: string) => void
   onLog: (line: string) => void
+  /**
+   * Surface a structured slack.error to the bus. Without this, xoxp polling
+   * failures (401 / 429 / network) only land in the diagnostic log and are
+   * invisible to `leuco events --preset errors`.
+   */
+  onError?: (props: { action: XoxpPollerErrorAction; message: string; error: string }) => void
 }
 
 const DM_POLL_INTERVAL_MS = 15_000
@@ -123,7 +134,9 @@ export class LeucoSlackXoxpPoller {
         await this.pollDmChannel(channel)
       }
     } catch (err) {
-      this.props.onLog(`dm poll failed: ${errorMessage(err)}`)
+      const message = errorMessage(err)
+      this.props.onLog(`dm poll failed: ${message}`)
+      this.props.onError?.({ action: "dm.poll.failed", message, error: message })
     } finally {
       this.dmPollInflight = false
     }
@@ -218,7 +231,9 @@ export class LeucoSlackXoxpPoller {
       this.mentionPollOldest = newestSeen
       this.mentionPollBootstrapped = true
     } catch (err) {
-      this.props.onLog(`mention poll failed: ${errorMessage(err)}`)
+      const message = errorMessage(err)
+      this.props.onLog(`mention poll failed: ${message}`)
+      this.props.onError?.({ action: "mention.poll.failed", message, error: message })
     } finally {
       this.mentionPollInflight = false
     }
@@ -244,7 +259,9 @@ export class LeucoSlackXoxpPoller {
         await this.dispatchLatestThreadFollowup(match.channelId, threadTs, checkedThreads)
       }
     } catch (err) {
-      this.props.onLog(`own reply poll failed: ${errorMessage(err)}`)
+      const message = errorMessage(err)
+      this.props.onLog(`own reply poll failed: ${message}`)
+      this.props.onError?.({ action: "own-reply.poll.failed", message, error: message })
     } finally {
       this.ownReplyPollInflight = false
     }
