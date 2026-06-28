@@ -5,9 +5,9 @@ import type { LeucoEngine } from "@/engine/engine"
 type Props = {
   engine: LeucoEngine
   port: number
+  mcpToken: string
   selfPid?: number
   onLog?: (line: string) => void
-  mcpToken?: string | null
 }
 
 /**
@@ -20,7 +20,7 @@ export class LeucoGatewayServer {
   private readonly port: number
   private readonly selfPid: number
   private readonly onLog: ((line: string) => void) | undefined
-  private readonly mcpToken: string | null
+  private readonly mcpToken: string
   private server: Server | null = null
 
   constructor(props: Props) {
@@ -28,7 +28,7 @@ export class LeucoGatewayServer {
     this.port = props.port
     this.selfPid = props.selfPid ?? process.pid
     this.onLog = props.onLog
-    this.mcpToken = props.mcpToken ?? null
+    this.mcpToken = props.mcpToken
   }
 
   start(): Server {

@@ -15,7 +15,6 @@ commands:
   config / machine-wide settings
   boot / macOS LaunchAgent
   slack / forward Slack API calls
-  mcp / stdio MCP server
 
 diagnosis (something is wrong?):
   leuco status              is the daemon running? which projects are active?

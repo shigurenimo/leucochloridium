@@ -93,7 +93,6 @@ Other:
 
 ```
 leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
-leuco mcp --project <p>
 leuco config [get <key> | set <key> <value>]
 leuco boot [install | uninstall]
 ```

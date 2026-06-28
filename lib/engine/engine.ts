@@ -9,10 +9,13 @@ type Props = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
   buildTenant: (project: Project) => LeucoTenant
+  /** Production callers (runtime.ts) always supply both `port` and `mcpToken`.
+   * They are optional here only so tests can drive `engine.start()` /
+   * `engine.reconcile()` without bringing up a real Bun.serve gateway. */
   port?: number
+  mcpToken?: string
   onLog?: (line: string) => void
   bus?: LeucoEventBus
-  mcpToken?: string | null
 }
 
 type Logger = (line: string) => void
@@ -37,7 +40,7 @@ export class LeucoEngine {
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly mcpToken: string | null
+  private readonly mcpToken: string | undefined
   private gateway: LeucoGatewayServer | null = null
   private reconcileQueue: Promise<void> = Promise.resolve()
   private stopped = false
@@ -49,7 +52,7 @@ export class LeucoEngine {
     this.port = props.port
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
-    this.mcpToken = props.mcpToken ?? null
+    this.mcpToken = props.mcpToken
   }
 
   async start(): Promise<void> {
@@ -69,7 +72,7 @@ export class LeucoEngine {
       throw error
     }
 
-    if (this.port !== undefined) {
+    if (this.port !== undefined && this.mcpToken !== undefined) {
       this.gateway = new LeucoGatewayServer({
         engine: this,
         port: this.port,
