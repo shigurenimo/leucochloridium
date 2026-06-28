@@ -28,8 +28,8 @@ leuco projects add .  # register the cwd as a leuco project
 leuco                 # starts the daemon (or prints status if already running)
 ```
 
-`leuco` (no args) starts the daemon in the background. If already running,
-shows the TUI dashboard.
+`leuco` (no args) starts the daemon in the background, or prints status
+when it is already running.
 
 ## Commands
 
@@ -44,7 +44,7 @@ leuco stop                stop daemon
 leuco restart             stop + start
 leuco status              daemon + project state
 leuco logs [-f]           print daemon log (-f to follow)
-leuco events              query event log (--type, --project, --limit, --json)
+leuco events              query event log (--preset, --type, --project, --limit, --json)
 leuco update [--check]    install latest version
 ```
 
@@ -152,7 +152,7 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 ## Environment variables
 
 - `LEUCO_CODEX_BIN` -- Codex binary path (default: `codex`)
-- `LEUCO_PORT` -- HTTP gateway port (default: `7331`)
+- `LEUCO_PORT` -- HTTP gateway port, 1-65535 (default: `7331`)
 - `LEUCO_CWD` -- Override Codex working directory (default: project path)
 
 `.env.local` and `.env` are read from the cwd at CLI invocation. Existing
@@ -178,9 +178,19 @@ leuco events --json                       # raw JSON lines
 the event log.
 
 Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
-`engine.reconcile.failed`, `slack.event`, `turn.start`, `turn.complete`,
-`turn.error`, `codex.notification`, `schedule.fired`, `log`.
+`engine.reconcile.failed`, `slack.event`, `slack.connection`, `slack.error`,
+`turn.start`, `turn.complete`, `turn.error`, `codex.notification`,
+`schedule.fired`, `log`.
 See `lib/events/leuco-event-schema.ts`.
+
+Presets group common queries:
+
+```bash
+leuco events --preset turns       # codex turn lifecycle
+leuco events --preset errors      # turn errors + reconcile + slack errors
+leuco events --preset lifecycle   # tenant + reconcile + slack connection
+leuco events --preset schedule    # cron / one-shot firings
+```
 
 ## Library usage
 
