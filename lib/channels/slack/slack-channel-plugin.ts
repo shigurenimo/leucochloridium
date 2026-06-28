@@ -1,6 +1,17 @@
+import type {
+  LeucoSlackEnvelope,
+  LeucoSlackEventSource,
+  LeucoSlackSourceLog,
+  LeucoSlackSourceStatus,
+} from "@/channels/slack/leuco-slack-event-source"
+import type { LeucoSlackWebClient } from "@/channels/slack/leuco-slack-web-client"
 import { LeucoSlackAdapter } from "@/channels/slack/slack-adapter"
-import { LeucoSlackListener } from "@/channels/slack/slack-listener"
+import {
+  LeucoSlackEventProcessor,
+  type ProcessResult,
+} from "@/channels/slack/slack-event-processor"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
+import { LeucoSlackXoxpPoller } from "@/channels/slack/leuco-slack-xoxp-poller"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import { errorMessage } from "@/error-message"
 
@@ -14,8 +25,11 @@ export type SlackAckIcons = {
 
 type Props = {
   name: string
-  botToken: string
-  appToken: string
+  eventSource: LeucoSlackEventSource
+  webClient: LeucoSlackWebClient
+  /** True when the workspace gave the bot a user token (`xoxp-`) instead of a
+   * bot token (`xoxb-`). Drives the xoxp poller for `app_mention` parity. */
+  usesUserToken: boolean
   /** When the bot adds the in-progress / done / error reactions. Defaults to "mention". */
   ackMode?: SlackAckMode
   /** Override the emoji names used for ack reactions. */
@@ -32,57 +46,235 @@ const STATUS_REPLY_DELAY_MS = 20 * 1000
 const STATUS_REPLY_TEXT = "見てます。少し待ってください。"
 const TIMEOUT_REPLY_TEXT =
   "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
+const ACTIVE_THREAD_CAPACITY = 500
+const SOCKET_EVENT_START_GRACE_MS = 30_000
 
 /**
- * Bridges a single Slack workspace to the engine. Forwards every accepted
- * `message` event (no mention gating, no thread-active state) to the agent
- * through `ctx.runTextTurn`, wrapped in a structured envelope so the agent
- * has the metadata it needs to decide whether to reply. If the agent returns
- * empty text, the plugin posts nothing. Reactions are emitted to the bus for
- * telemetry only and never trigger an agent turn — see `handleEvent`.
+ * Bridges a single Slack workspace to the engine. Subscribes to inbound
+ * Socket Mode envelopes through `LeucoSlackEventSource`, routes
+ * `payload.event.type` into the pure `LeucoSlackEventProcessor`, and forwards
+ * each accepted `message` event to the agent through `ctx.runTextTurn`,
+ * wrapped in a structured envelope so the agent has the metadata it needs to
+ * decide whether to reply. If the agent returns empty text, the plugin posts
+ * nothing. Reactions are emitted to the bus for telemetry only and never
+ * trigger an agent turn.
  */
 export class LeucoSlackChannelPlugin implements ChannelPlugin {
   readonly name: string
   private readonly props: Props
-  private listener: LeucoSlackListener | null = null
   private adapter: LeucoSlackAdapter | null = null
+  private processor: LeucoSlackEventProcessor
+  private xoxpPoller: LeucoSlackXoxpPoller | null = null
   private ctx: ChannelPluginContext | null = null
   private botUserId: string | null = null
+  private lastConnectionStatus: LeucoSlackSourceStatus | null = null
+  private readonly socketEventOldest = socketEventStartOldest()
+  private readonly activeThreads = new Map<string, number>()
 
   constructor(props: Props) {
     this.name = props.name
     this.props = props
+    // Wire the processor at construction so events arriving during the
+    // `start()` → `authTest()` window don't drop. The botUserId starts null
+    // (self/bot filters skip those events until known) and is upgraded once
+    // auth.test resolves.
+    this.processor = new LeucoSlackEventProcessor({ botUserId: null })
   }
 
   async start(ctx: ChannelPluginContext): Promise<void> {
     this.ctx = ctx
-    this.adapter = LeucoSlackAdapter.fromBotToken(this.props.botToken, ctx.onLog)
-    this.listener = new LeucoSlackListener({
-      botToken: this.props.botToken,
-      appToken: this.props.appToken,
-      label: `${ctx.projectName}/${this.name}`,
-      onLog: ctx.onLog,
-    })
+    this.adapter = new LeucoSlackAdapter({ client: this.props.webClient, onLog: ctx.onLog })
 
-    this.listener.onEvent((event) => this.handleEvent(event))
+    ctx.onLog(`[${this.name}] resolving bot identity via auth.test`)
+    this.botUserId = await this.fetchBotUserId()
+    this.processor.setBotUserId(this.botUserId)
+
+    if (this.botUserId === null) {
+      throw new Error(
+        `slack channel '${this.name}': auth.test did not resolve a bot user id — all messages would be silently dropped`,
+      )
+    }
+
+    if (this.props.usesUserToken) {
+      this.xoxpPoller = new LeucoSlackXoxpPoller({
+        client: this.props.webClient,
+        botUserId: this.botUserId,
+        dispatchMessage: (raw) => this.dispatchRawMessage(raw),
+        rememberActiveThread: (channel, threadTs) => this.rememberActiveThread(channel, threadTs),
+        onLog: (line) => ctx.onLog(`[${this.name}] ${line}`),
+      })
+    }
 
     ctx.onLog(`[${this.name}] connecting to Slack (Socket Mode)`)
-    const started = await this.listener.start()
-    this.botUserId = started.botUserId
-    const who = started.botUserId ? `<@${started.botUserId}>` : "(bot)"
+    await this.props.eventSource.start({
+      onEvent: (envelope) => this.handleEnvelope(envelope),
+      onStatus: (status) => this.handleStatus(status),
+      onLog: (log) => this.handleSourceLog(log),
+    })
+
+    if (this.xoxpPoller !== null) this.xoxpPoller.start()
+
+    const who = this.botUserId !== null ? `<@${this.botUserId}>` : "(bot)"
     ctx.onLog(`[${this.name}] ready — forwarding messages to agent (bot=${who})`)
   }
 
   async stop(): Promise<void> {
-    if (this.listener) await this.listener.stop()
-    this.listener = null
+    if (this.xoxpPoller !== null) this.xoxpPoller.stop()
+    this.xoxpPoller = null
+    await this.props.eventSource.stop()
     this.adapter = null
     this.ctx = null
     this.botUserId = null
+    this.lastConnectionStatus = null
   }
 
   getIdentity(): ChannelIdentity {
     return { name: this.name, type: "slack", botUserId: this.botUserId }
+  }
+
+  /** Live socket-mode connection status. Read on demand (e.g. from CLI /
+   * health-check routes). Status transitions are also emitted as
+   * `slack.connection` events on the bus — this getter is the synchronous
+   * point read on top of that. */
+  getConnectionStatus(): LeucoSlackSourceStatus {
+    return this.props.eventSource.status()
+  }
+
+  private async fetchBotUserId(): Promise<string | null> {
+    try {
+      const result = await this.props.webClient.authTest()
+      return result.userId
+    } catch (err) {
+      this.emitAuthFailure(err)
+      return null
+    }
+  }
+
+  private emitAuthFailure(err: unknown): void {
+    const ctx = this.ctx
+    if (ctx === null) return
+    const message = errorMessage(err)
+    ctx.bus.emit({
+      ts: Date.now(),
+      type: "slack.error",
+      project: ctx.projectName,
+      channel: this.name,
+      level: "error",
+      action: "auth.test",
+      message: "auth.test failed; bot identity unknown",
+      error: message,
+    })
+  }
+
+  private async handleEnvelope(envelope: LeucoSlackEnvelope): Promise<void> {
+    if (envelope.type !== "events_api") return
+
+    const rawEvent = envelope.payload.event
+    if (typeof rawEvent !== "object" || rawEvent === null) return
+
+    if (this.shouldDropStaleSocketEvent(rawEvent)) return
+
+    const eventType = (rawEvent as { type?: unknown }).type
+
+    if (eventType === "app_mention") {
+      await this.dispatchResult(this.processor.processAppMention(rawEvent))
+      return
+    }
+
+    if (eventType === "message") {
+      this.recordActiveThreadFromRawMessage(rawEvent)
+      await this.dispatchResult(
+        this.withActiveThreadContext(this.processor.processMessage(rawEvent)),
+      )
+      return
+    }
+
+    if (eventType === "reaction_added" || eventType === "reaction_removed") {
+      await this.dispatchResult(this.processor.processReaction(rawEvent))
+      return
+    }
+  }
+
+  private handleStatus(status: LeucoSlackSourceStatus): void {
+    const ctx = this.ctx
+    if (ctx === null) return
+    // Suppress flapping during reconnect storms — flume cycles through the
+    // same intermediate states many times per minute when Slack is unhappy
+    // and the bus would otherwise drown out the events worth alerting on.
+    if (this.lastConnectionStatus === status) return
+    this.lastConnectionStatus = status
+    ctx.bus.emit({
+      ts: Date.now(),
+      type: "slack.connection",
+      project: ctx.projectName,
+      channel: this.name,
+      status,
+    })
+  }
+
+  private handleSourceLog(log: LeucoSlackSourceLog): void {
+    const ctx = this.ctx
+    if (ctx === null) return
+
+    if (log.level === "warn" || log.level === "error") {
+      ctx.bus.emit({
+        ts: Date.now(),
+        type: "slack.error",
+        project: ctx.projectName,
+        channel: this.name,
+        level: log.level,
+        action: log.action,
+        message: log.message,
+        error: log.error !== null ? log.error.message : null,
+      })
+      return
+    }
+
+    if (log.level === "debug") return
+    ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
+  }
+
+  private shouldDropStaleSocketEvent(event: unknown): boolean {
+    const ts = slackEventTimestamp(event)
+    if (ts === null || ts >= this.socketEventOldest) return false
+    this.ctx?.onLog(
+      `[${this.name}] skip stale socket event ts=${ts.toFixed(6)} oldest=${this.socketEventOldest.toFixed(6)}`,
+    )
+    return true
+  }
+
+  private async dispatchRawMessage(raw: {
+    channel: string
+    user: string | null
+    text: string | null
+    ts: string
+    threadTs: string | null
+    subtype: string | null
+    botId: string | null
+  }): Promise<void> {
+    const slackEvent: Record<string, unknown> = {
+      type: "message",
+      channel: raw.channel,
+      ts: raw.ts,
+    }
+    if (raw.user !== null) slackEvent.user = raw.user
+    if (raw.text !== null) slackEvent.text = raw.text
+    if (raw.threadTs !== null) slackEvent.thread_ts = raw.threadTs
+    if (raw.subtype !== null) slackEvent.subtype = raw.subtype
+    if (raw.botId !== null) slackEvent.bot_id = raw.botId
+
+    await this.dispatchResult(
+      this.withActiveThreadContext(this.processor.processMessage(slackEvent)),
+    )
+  }
+
+  private async dispatchResult(result: ProcessResult): Promise<void> {
+    if (result.skip) {
+      this.ctx?.onLog(`[${this.name}] ${result.reason}`)
+      return
+    }
+    this.ctx?.onLog(`[${this.name}] ${formatDispatch(result.event)}`)
+    await this.handleEvent(result.event)
   }
 
   private async handleEvent(event: SlackEvent): Promise<void> {
@@ -92,9 +284,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     if (adapter && isConversationChannel(event.channel)) {
       const canRead = await adapter.canReadChannel(event.channel)
       if (!canRead) {
-        ctx?.onLog(
-          `[${this.name}] drop inaccessible slack event channel=${event.channel}`,
-        )
+        ctx?.onLog(`[${this.name}] drop inaccessible slack event channel=${event.channel}`)
         return
       }
     }
@@ -186,13 +376,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     ignoredTexts: readonly string[] = [],
   ): Promise<boolean> {
     if (!this.adapter || this.botUserId === null) return false
-    return this.adapter.hasBotReplyAfter(
-      msg.channel,
-      msg.threadTs,
-      msg.ts,
-      this.botUserId,
-      { ignoredTexts },
-    )
+    return this.adapter.hasBotReplyAfter(msg.channel, msg.threadTs, msg.ts, this.botUserId, {
+      ignoredTexts,
+    })
   }
 
   private async postTimeoutReplyIfNeeded(
@@ -219,9 +405,68 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       return false
     }
   }
+
+  private recordActiveThreadFromRawMessage(message: unknown): void {
+    if (this.botUserId === null) return
+    if (typeof message !== "object" || message === null) return
+    const data = message as {
+      channel?: unknown
+      user?: unknown
+      ts?: unknown
+      thread_ts?: unknown
+    }
+    if (data.user !== this.botUserId) return
+    if (typeof data.channel !== "string" || typeof data.ts !== "string") return
+    const threadTs = typeof data.thread_ts === "string" ? data.thread_ts : data.ts
+    this.rememberActiveThread(data.channel, threadTs)
+  }
+
+  private withActiveThreadContext(result: ProcessResult): ProcessResult {
+    if (result.skip || result.event.kind !== "message") return result
+    if (!this.activeThreads.has(activeThreadKey(result.event.channel, result.event.threadTs))) {
+      return result
+    }
+    return {
+      skip: false,
+      event: { ...result.event, mentioned: true },
+    }
+  }
+
+  private rememberActiveThread(channel: string, threadTs: string): void {
+    const key = activeThreadKey(channel, threadTs)
+    this.activeThreads.delete(key)
+    this.activeThreads.set(key, Date.now())
+    while (this.activeThreads.size > ACTIVE_THREAD_CAPACITY) {
+      const oldest = this.activeThreads.keys().next().value
+      if (typeof oldest !== "string") break
+      this.activeThreads.delete(oldest)
+    }
+  }
 }
 
 const isConversationChannel = (channel: string): boolean => /^[CDG]/.test(channel)
+
+const activeThreadKey = (channel: string, threadTs: string): string => `${channel}:${threadTs}`
+
+const socketEventStartOldest = (): number => {
+  return (Date.now() - SOCKET_EVENT_START_GRACE_MS) / 1000
+}
+
+const slackEventTimestamp = (event: unknown): number | null => {
+  if (typeof event !== "object" || event === null) return null
+  const raw =
+    (event as { ts?: unknown; event_ts?: unknown }).ts ?? (event as { event_ts?: unknown }).event_ts
+  if (typeof raw !== "string" && typeof raw !== "number") return null
+  const ts = Number(raw)
+  return Number.isFinite(ts) ? ts : null
+}
+
+const formatDispatch = (event: SlackEvent): string => {
+  if (event.kind === "message") {
+    return `dispatch ${event.source} channel=${event.channel} ts=${event.ts}${event.mentioned ? " mentioned" : ""}`
+  }
+  return `dispatch ${event.kind} channel=${event.channel} target_ts=${event.targetTs} :${event.emoji}: by=${event.user}`
+}
 
 const formatMessageInput = (channelName: string, msg: SlackMessageEvent): string => {
   return [

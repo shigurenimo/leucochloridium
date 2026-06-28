@@ -1,27 +1,23 @@
-import { WebClient } from "@slack/web-api"
+import type { LeucoSlackWebClient } from "@/channels/slack/leuco-slack-web-client"
 import type { SlackReply } from "@/channels/slack/slack-types"
-import type { WebClientPort } from "@/channels/slack/web-client-port"
 import { errorMessage } from "@/error-message"
 
 type Props = {
-  client: WebClientPort
+  client: LeucoSlackWebClient
   onLog?: (line: string) => void
 }
 
-/** Thin wrapper around `chat.postMessage` for thread replies and ephemeral status updates. */
+/** Thin wrapper around the outbound Slack Web API surface the channel plugin
+ * actually needs (reply, reaction, accessibility check). */
 export class LeucoSlackAdapter {
   constructor(private readonly props: Props) {
     Object.freeze(this)
   }
 
-  static fromBotToken(botToken: string, onLog?: (line: string) => void): LeucoSlackAdapter {
-    return new LeucoSlackAdapter({ client: new WebClient(botToken), onLog })
-  }
-
   async postReply(reply: SlackReply): Promise<void> {
-    await this.props.client.chat.postMessage({
+    await this.props.client.chatPostMessage({
       channel: reply.channel,
-      thread_ts: reply.threadTs,
+      threadTs: reply.threadTs,
       text: reply.text,
     })
   }
@@ -34,7 +30,7 @@ export class LeucoSlackAdapter {
     options: { ignoredTexts?: readonly string[] } = {},
   ): Promise<boolean> {
     try {
-      const result = await this.props.client.conversations.replies({
+      const result = await this.props.client.conversationsReplies({
         channel,
         ts: threadTs,
         oldest: messageTs,
@@ -42,10 +38,10 @@ export class LeucoSlackAdapter {
         limit: 100,
       })
       const ignoredTexts = new Set((options.ignoredTexts ?? []).map((text) => text.trim()))
-      const messages = ((result as SlackRepliesResult).messages ?? []).filter(isReplyMessage)
-      return messages.some((message) => {
+
+      return result.messages.some((message) => {
         if (message.user !== botUserId) return false
-        const text = typeof message.text === "string" ? message.text : ""
+        const text = message.text ?? ""
         if (ignoredTexts.has(text.trim())) return false
         return true
       })
@@ -61,7 +57,7 @@ export class LeucoSlackAdapter {
 
   async addReaction(channel: string, ts: string, name: string): Promise<void> {
     try {
-      await this.props.client.reactions.add({ channel, timestamp: ts, name })
+      await this.props.client.reactionsAdd({ channel, timestamp: ts, name })
     } catch (err) {
       // Idempotent reactions (`already_reacted`) are expected; everything else
       // (invalid_auth, channel_not_found, account_inactive, ratelimited, …)
@@ -73,7 +69,7 @@ export class LeucoSlackAdapter {
 
   async removeReaction(channel: string, ts: string, name: string): Promise<void> {
     try {
-      await this.props.client.reactions.remove({ channel, timestamp: ts, name })
+      await this.props.client.reactionsRemove({ channel, timestamp: ts, name })
     } catch (err) {
       this.logReactionFailure("remove", channel, ts, name, err)
     }
@@ -81,8 +77,8 @@ export class LeucoSlackAdapter {
 
   async canReadChannel(channel: string): Promise<boolean> {
     try {
-      const info = await this.props.client.conversations.info({ channel })
-      if (isPublicChannel(channel) && conversationIsNonMember(info)) {
+      const info = await this.props.client.conversationsInfo({ channel })
+      if (isPublicChannel(channel) && info.isMember === false) {
         if (this.props.onLog) {
           this.props.onLog(
             `[slack] conversations.info says bot is not a channel member (channel=${channel})`,
@@ -118,23 +114,3 @@ export class LeucoSlackAdapter {
 }
 
 const isPublicChannel = (channel: string): boolean => channel.startsWith("C")
-
-type SlackRepliesResult = {
-  messages?: unknown[]
-}
-
-type ReplyMessage = {
-  user?: string
-  text?: string
-}
-
-const isReplyMessage = (value: unknown): value is ReplyMessage => {
-  return typeof value === "object" && value !== null
-}
-
-const conversationIsNonMember = (info: unknown): boolean => {
-  if (typeof info !== "object" || info === null) return false
-  const channel = (info as { channel?: unknown }).channel
-  if (typeof channel !== "object" || channel === null) return false
-  return (channel as { is_member?: unknown }).is_member === false
-}

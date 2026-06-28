@@ -53,7 +53,9 @@ const resolveSlackBotToken = (props: ResolveSlackBotTokenProps): string => {
   const channel = findChannel(project, props.channelName)
 
   if (channel.type !== "slack") {
-    throw new HTTPException(400, { message: `channel "${props.channelName}" is not a slack channel` })
+    throw new HTTPException(400, {
+      message: `channel "${props.channelName}" is not a slack channel`,
+    })
   }
 
   return channel.botToken

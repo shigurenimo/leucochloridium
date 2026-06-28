@@ -160,10 +160,7 @@ const stripMention = (text: string, botUserId: string | null): string => {
   return text.replace(slackMentionRegex(botUserId), "").trim()
 }
 
-export const slackTextMentionsUser = (
-  text: string,
-  userId: string | null,
-): boolean => {
+export const slackTextMentionsUser = (text: string, userId: string | null): boolean => {
   if (userId === null) return false
   return slackMentionRegex(userId).test(text)
 }

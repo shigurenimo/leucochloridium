@@ -1,5 +1,7 @@
 import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
+import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
+import { LeucoFlumeSlackEventSource } from "@/channels/slack/leuco-flume-slack-event-source"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import { slackAppTokenSchema, slackBotTokenSchema } from "@/channels/slack/slack-schemas"
 import type { Channel, ScheduleEntry } from "@/config/config-schema"
@@ -65,10 +67,17 @@ export class LeucoChannelHost {
       if (!appToken.success) {
         throw new Error(`channel ${label}: appToken ${appToken.error.issues[0]?.message}`)
       }
-      return new LeucoSlackChannelPlugin({
-        name: props.channel.name,
+      const webClient = new LeucoFetchSlackWebClient({ botToken: props.channel.botToken })
+      const eventSource = new LeucoFlumeSlackEventSource({
         botToken: props.channel.botToken,
         appToken: props.channel.appToken,
+      })
+
+      return new LeucoSlackChannelPlugin({
+        name: props.channel.name,
+        eventSource,
+        webClient,
+        usesUserToken: props.channel.botToken.startsWith("xoxp-"),
         ackMode: props.channel.ackMode,
         ackIcons: props.channel.ackIcons,
       })

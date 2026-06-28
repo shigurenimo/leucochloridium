@@ -1,7 +1,10 @@
 import { normalize } from "node:path"
 import type { Project } from "@/config/config-schema"
 
-export const isCurrentCodexProject = (project: Project, env: NodeJS.ProcessEnv = process.env): boolean => {
+export const isCurrentCodexProject = (
+  project: Project,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
   const codexHome = env.CODEX_HOME
   if (typeof codexHome !== "string" || codexHome.length === 0) return false
 

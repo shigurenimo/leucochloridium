@@ -1,8 +1,6 @@
 import { z } from "zod"
 
-export const slackBotTokenSchema = z
-  .string()
-  .regex(/^xox[bp]-/, "must start with xoxb- or xoxp-")
+export const slackBotTokenSchema = z.string().regex(/^xox[bp]-/, "must start with xoxb- or xoxp-")
 
 export const slackAppTokenSchema = z.string().regex(/^xapp-/, "must start with xapp-")
 
@@ -28,12 +26,6 @@ export const slackMessageEventSchema = z
     thread_ts: z.string().optional(),
     subtype: z.string().optional(),
     bot_id: z.string().optional(),
-  })
-  .passthrough()
-
-export const slackAuthTestSchema = z
-  .object({
-    user_id: z.string().optional(),
   })
   .passthrough()
 

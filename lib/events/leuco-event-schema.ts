@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { leucoSlackSourceStatusSchema } from "@/channels/slack/leuco-slack-event-source"
 import { slackEventSchema } from "@/channels/slack/slack-event-schema"
 
 const baseTs = { ts: z.number() }
@@ -41,6 +42,25 @@ const slackEventEnvelopeSchema = z.object({
   project: z.string(),
   channel: z.string(),
   event: slackEventSchema,
+})
+
+const slackConnectionSchema = z.object({
+  ...baseTs,
+  type: z.literal("slack.connection"),
+  project: z.string(),
+  channel: z.string(),
+  status: leucoSlackSourceStatusSchema,
+})
+
+const slackErrorSchema = z.object({
+  ...baseTs,
+  type: z.literal("slack.error"),
+  project: z.string(),
+  channel: z.string(),
+  level: z.enum(["warn", "error"]),
+  action: z.string(),
+  message: z.string(),
+  error: z.string().nullable(),
 })
 
 const turnStartSchema = z.object({
@@ -93,6 +113,8 @@ export const leucoEventSchema = z.discriminatedUnion("type", [
   engineReconcileSchema,
   engineReconcileFailedSchema,
   slackEventEnvelopeSchema,
+  slackConnectionSchema,
+  slackErrorSchema,
   turnStartSchema,
   turnCompleteSchema,
   turnErrorSchema,
