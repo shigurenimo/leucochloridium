@@ -120,7 +120,7 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 - One Slack thread maps to one Codex thread. Turns within a thread serialise;
   separate threads run in parallel.
 - Mention gating, ack reactions, and bot-message filtering are configurable
-  per channel (`ackMode: off | mention | always`, custom `ackIcons`).
+  per channel (`ackMode: off | mention | always`, default `off`, custom `ackIcons`).
 - Codex subagents (`.codex/agents/*.toml`) are managed by codex, not leuco.
 
 ## Filesystem layout

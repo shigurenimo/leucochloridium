@@ -30,7 +30,7 @@ type Props = {
    * bot token (`xoxb-`). Used only for diagnostics; inbound delivery must
    * come from Socket Mode, not Web API history polling. */
   usesUserToken: boolean
-  /** When the bot adds the in-progress / done / error reactions. Defaults to "mention". */
+  /** When the bot adds the in-progress / done / error reactions. Defaults to "off". */
   ackMode?: SlackAckMode
   /** Override the emoji names used for ack reactions. */
   ackIcons?: SlackAckIcons
@@ -298,7 +298,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   }
 
   private shouldAck(msg: SlackMessageEvent): boolean {
-    const mode = this.props.ackMode ?? "mention"
+    const mode = this.props.ackMode ?? "off"
     if (mode === "off") return false
     if (mode === "always") return true
     return msg.mentioned

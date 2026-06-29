@@ -35,6 +35,41 @@ const makeCtx = (): {
 }
 
 describe("LeucoSlackChannelPlugin", () => {
+  it("does not add ack reactions by default", async () => {
+    const ts = `${Math.floor(Date.now() / 1000) + 1}.0`
+    const eventSource = new LeucoMemorySlackEventSource()
+    const webClient = new LeucoMemorySlackWebClient({
+      authTest: { userId: "UBOT" },
+    })
+    const plugin = new LeucoSlackChannelPlugin({
+      name: "main",
+      eventSource,
+      webClient,
+      usesUserToken: true,
+    })
+    const { ctx, turns } = makeCtx()
+
+    await plugin.start(ctx)
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: 1_000,
+      payload: {
+        event: {
+          type: "message",
+          channel: "D1",
+          user: "U_USER",
+          text: "hello dm",
+          ts,
+        },
+      },
+    })
+    await plugin.stop()
+
+    expect(turns).toHaveLength(1)
+    expect(webClient.calls.reactionsAdd).toHaveLength(0)
+    expect(webClient.calls.reactionsRemove).toHaveLength(0)
+  })
+
   it("handles DM messages from Socket Mode without polling Slack history", async () => {
     const ts = `${Math.floor(Date.now() / 1000) + 1}.0`
     const eventSource = new LeucoMemorySlackEventSource()

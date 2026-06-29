@@ -29,11 +29,11 @@ const slackChannelSchema = z.object({
    * When the bot adds the in-progress / done / error reactions to the
    * incoming message:
    *   - "off": never (codex is fully responsible for any visible feedback)
-   *   - "mention": only when the bot is @-mentioned (default)
+   *   - "mention": only when the bot is @-mentioned
    *   - "always": every accepted message event
    * Reaction events themselves never trigger ack — they are silent regardless.
    */
-  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
+  ackMode: z.enum(["off", "mention", "always"]).default("off"),
   /** Override the emoji names used by the ack reactions. Slack reaction names without `:`. */
   ackIcons: ackIconsSchema,
 })
