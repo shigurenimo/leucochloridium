@@ -147,7 +147,9 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   }
 
   async apiCall(method: string, body: Record<string, unknown>): Promise<unknown> {
-    return await this.post(method, body)
+    return FORM_ENCODED_METHODS.has(method)
+      ? await this.postForm(method, body)
+      : await this.post(method, body)
   }
 
   private async history(method: string, body: Record<string, unknown>): Promise<SlackHistorySlice> {
@@ -171,8 +173,12 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     return { messages }
   }
 
-  private async callOk(method: string, body: Record<string, unknown>): Promise<unknown> {
-    const raw = await this.post(method, body)
+  private async callOk(
+    method: string,
+    body: Record<string, unknown>,
+    encoding: "json" | "form" = FORM_ENCODED_METHODS.has(method) ? "form" : "json",
+  ): Promise<unknown> {
+    const raw = encoding === "form" ? await this.postForm(method, body) : await this.post(method, body)
     if (typeof raw !== "object" || raw === null) {
       throw new Error(`slack ${method}: response is not an object`)
     }
@@ -201,6 +207,42 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
 
     return await response.json()
   }
+
+  private async postForm(method: string, body: Record<string, unknown>): Promise<unknown> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(body)) {
+      if (value === null || value === undefined) continue
+      params.set(key, formValue(value))
+    }
+
+    const response = await fetch(`${SLACK_API_BASE}/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.props.botToken}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      },
+      body: params.toString(),
+    })
+
+    if (!response.ok) {
+      throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
+    }
+
+    return await response.json()
+  }
+}
+
+const FORM_ENCODED_METHODS = new Set([
+  "conversations.history",
+  "conversations.info",
+  "conversations.list",
+  "conversations.replies",
+  "search.messages",
+])
+
+const formValue = (value: unknown): string => {
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
 }
 
 const authTestSchema = z

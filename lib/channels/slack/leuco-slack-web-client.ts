@@ -1,6 +1,6 @@
 /**
- * Outbound port for Slack Web API. The adapter, the xoxp poller, and the
- * `slack_call` action depend on this abstract class. Real traffic goes through
+ * Outbound port for Slack Web API. The adapter and the `slack_call` action
+ * depend on this abstract class. Real traffic goes through
  * `LeucoFetchSlackWebClient` (raw fetch over `https://slack.com/api/...`); tests
  * substitute `LeucoMemorySlackWebClient`.
  */

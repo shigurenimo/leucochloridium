@@ -112,6 +112,13 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
     expect(event.text).toBe("hi")
   })
 
+  it("treats direct messages as mentioned without an explicit bot mention", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const event = expectMessage(proc.processMessage(baseMessage({ channel: "D1", text: "hello dm" })))
+    expect(event.mentioned).toBe(true)
+    expect(event.text).toBe("hello dm")
+  })
+
   it("detects labeled mention syntax returned by Slack search", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
     const event = expectMessage(

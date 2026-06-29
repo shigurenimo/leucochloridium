@@ -11,7 +11,6 @@ import {
   type ProcessResult,
 } from "@/channels/slack/slack-event-processor"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
-import { LeucoSlackXoxpPoller } from "@/channels/slack/leuco-slack-xoxp-poller"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import { errorMessage } from "@/error-message"
 
@@ -28,9 +27,10 @@ type Props = {
   eventSource: LeucoSlackEventSource
   webClient: LeucoSlackWebClient
   /** True when the workspace gave the bot a user token (`xoxp-`) instead of a
-   * bot token (`xoxb-`). Drives the xoxp poller for `app_mention` parity. */
+   * bot token (`xoxb-`). Used only for diagnostics; inbound delivery must
+   * come from Socket Mode, not Web API history polling. */
   usesUserToken: boolean
-  /** When the bot adds the in-progress / done / error reactions. Defaults to "mention". */
+  /** When the bot adds the in-progress / done / error reactions. Defaults to "off". */
   ackMode?: SlackAckMode
   /** Override the emoji names used for ack reactions. */
   ackIcons?: SlackAckIcons
@@ -42,12 +42,9 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
   error: "x",
 }
 
-const STATUS_REPLY_DELAY_MS = 20 * 1000
-const STATUS_REPLY_TEXT = "見てます。少し待ってください。"
 const TIMEOUT_REPLY_TEXT =
   "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
 const ACTIVE_THREAD_CAPACITY = 500
-const SOCKET_EVENT_START_GRACE_MS = 30_000
 
 /**
  * Bridges a single Slack workspace to the engine. Subscribes to inbound
@@ -64,11 +61,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   private readonly props: Props
   private adapter: LeucoSlackAdapter | null = null
   private processor: LeucoSlackEventProcessor
-  private xoxpPoller: LeucoSlackXoxpPoller | null = null
   private ctx: ChannelPluginContext | null = null
   private botUserId: string | null = null
   private lastConnectionStatus: LeucoSlackSourceStatus | null = null
-  private readonly socketEventOldest = socketEventStartOldest()
   private readonly activeThreads = new Map<string, number>()
 
   constructor(props: Props) {
@@ -96,25 +91,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     }
 
     if (this.props.usesUserToken) {
-      this.xoxpPoller = new LeucoSlackXoxpPoller({
-        client: this.props.webClient,
-        botUserId: this.botUserId,
-        dispatchMessage: (raw) => this.dispatchRawMessage(raw),
-        rememberActiveThread: (channel, threadTs) => this.rememberActiveThread(channel, threadTs),
-        onLog: (line) => ctx.onLog(`[${this.name}] ${line}`),
-        onError: (info) => {
-          ctx.bus.emit({
-            ts: Date.now(),
-            type: "slack.error",
-            project: ctx.projectName,
-            channel: this.name,
-            level: "warn",
-            action: info.action,
-            message: info.message,
-            error: info.error,
-          })
-        },
-      })
+      ctx.onLog(`[${this.name}] using xoxp token for Slack Web API; inbound events are Socket Mode only`)
     }
 
     ctx.onLog(`[${this.name}] connecting to Slack (Socket Mode)`)
@@ -124,15 +101,11 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       onLog: (log) => this.handleSourceLog(log),
     })
 
-    if (this.xoxpPoller !== null) this.xoxpPoller.start()
-
     const who = this.botUserId !== null ? `<@${this.botUserId}>` : "(bot)"
     ctx.onLog(`[${this.name}] ready — forwarding messages to agent (bot=${who})`)
   }
 
   async stop(): Promise<void> {
-    if (this.xoxpPoller !== null) this.xoxpPoller.stop()
-    this.xoxpPoller = null
     await this.props.eventSource.stop()
     this.adapter = null
     this.ctx = null
@@ -183,8 +156,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
     const rawEvent = envelope.payload.event
     if (typeof rawEvent !== "object" || rawEvent === null) return
-
-    if (this.shouldDropStaleSocketEvent(rawEvent)) return
 
     const eventType = (rawEvent as { type?: unknown }).type
 
@@ -250,40 +221,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
   }
 
-  private shouldDropStaleSocketEvent(event: unknown): boolean {
-    const ts = slackEventTimestamp(event)
-    if (ts === null || ts >= this.socketEventOldest) return false
-    this.ctx?.onLog(
-      `[${this.name}] skip stale socket event ts=${ts.toFixed(6)} oldest=${this.socketEventOldest.toFixed(6)}`,
-    )
-    return true
-  }
-
-  private async dispatchRawMessage(raw: {
-    channel: string
-    user: string | null
-    text: string | null
-    ts: string
-    threadTs: string | null
-    subtype: string | null
-    botId: string | null
-  }): Promise<void> {
-    const slackEvent: Record<string, unknown> = {
-      type: "message",
-      channel: raw.channel,
-      ts: raw.ts,
-    }
-    if (raw.user !== null) slackEvent.user = raw.user
-    if (raw.text !== null) slackEvent.text = raw.text
-    if (raw.threadTs !== null) slackEvent.thread_ts = raw.threadTs
-    if (raw.subtype !== null) slackEvent.subtype = raw.subtype
-    if (raw.botId !== null) slackEvent.bot_id = raw.botId
-
-    await this.dispatchResult(
-      this.withActiveThreadContext(this.processor.processMessage(slackEvent)),
-    )
-  }
-
   private async dispatchResult(result: ProcessResult): Promise<void> {
     if (result.skip) {
       this.ctx?.onLog(`[${this.name}] ${result.reason}`)
@@ -340,32 +277,16 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const threadKey = `${this.name}:${msg.channel}:${msg.threadTs}`
     const reactionTs = msg.ts
     const wantsAck = this.shouldAck(msg)
-    const wantsStatusReply = this.shouldSendStatusReply(msg)
+    const wantsTimeoutReply = this.shouldSendTimeoutReply(msg)
     const icons = this.props.ackIcons ?? DEFAULT_ACK_ICONS
-    let turnDone = false
-    let statusReplyPosted = false
-    let statusReplyTimer: ReturnType<typeof setTimeout> | null = null
 
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
-    if (wantsStatusReply) {
-      statusReplyTimer = setTimeout(() => {
-        void (async () => {
-          if (turnDone) return
-          if (await this.hasVisibleBotReplyAfter(msg)) return
-          if (turnDone) return
-          statusReplyPosted = await this.postReplySafely(msg, STATUS_REPLY_TEXT)
-        })()
-      }, STATUS_REPLY_DELAY_MS)
-      unrefTimer(statusReplyTimer)
-    }
 
     const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
-    turnDone = true
-    if (statusReplyTimer) clearTimeout(statusReplyTimer)
     if (monologue instanceof Error) {
       ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
-      if (wantsStatusReply) await this.postTimeoutReplyIfNeeded(msg, statusReplyPosted)
+      if (wantsTimeoutReply) await this.postTimeoutReplyIfNeeded(msg)
     } else {
       logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
@@ -377,13 +298,13 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   }
 
   private shouldAck(msg: SlackMessageEvent): boolean {
-    const mode = this.props.ackMode ?? "mention"
+    const mode = this.props.ackMode ?? "off"
     if (mode === "off") return false
     if (mode === "always") return true
     return msg.mentioned
   }
 
-  private shouldSendStatusReply(msg: SlackMessageEvent): boolean {
+  private shouldSendTimeoutReply(msg: SlackMessageEvent): boolean {
     return msg.mentioned || msg.channel.startsWith("D")
   }
 
@@ -397,13 +318,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     })
   }
 
-  private async postTimeoutReplyIfNeeded(
-    msg: SlackMessageEvent,
-    statusReplyPosted: boolean,
-  ): Promise<void> {
+  private async postTimeoutReplyIfNeeded(msg: SlackMessageEvent): Promise<void> {
     if (!this.adapter) return
-    const ignoredTexts = statusReplyPosted ? [STATUS_REPLY_TEXT] : []
-    if (await this.hasVisibleBotReplyAfter(msg, ignoredTexts)) return
+    if (await this.hasVisibleBotReplyAfter(msg)) return
     await this.postReplySafely(msg, TIMEOUT_REPLY_TEXT)
   }
 
@@ -418,10 +335,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       return true
     } catch (err) {
       const message = errorMessage(err)
-      this.ctx.onLog(`[${this.name}] status reply failed: ${message}`)
-      // Surface to events.db so a silent disappearance of the "見てます。少し待っ
-      // てください。" / timeout reply is queryable via `leuco events --preset
-      // errors`. Without this, a failing reply has zero observability.
+      this.ctx.onLog(`[${this.name}] slack reply failed: ${message}`)
+      // Surface to events.db so a failed timeout reply is queryable via
+      // `leuco events --preset errors`.
       this.ctx.bus.emit({
         ts: Date.now(),
         type: "slack.error",
@@ -478,19 +394,6 @@ const isConversationChannel = (channel: string): boolean => /^[CDG]/.test(channe
 
 const activeThreadKey = (channel: string, threadTs: string): string => `${channel}:${threadTs}`
 
-const socketEventStartOldest = (): number => {
-  return (Date.now() - SOCKET_EVENT_START_GRACE_MS) / 1000
-}
-
-const slackEventTimestamp = (event: unknown): number | null => {
-  if (typeof event !== "object" || event === null) return null
-  const raw =
-    (event as { ts?: unknown; event_ts?: unknown }).ts ?? (event as { event_ts?: unknown }).event_ts
-  if (typeof raw !== "string" && typeof raw !== "number") return null
-  const ts = Number(raw)
-  return Number.isFinite(ts) ? ts : null
-}
-
 const formatDispatch = (event: SlackEvent): string => {
   if (event.kind === "message") {
     return `dispatch ${event.source} channel=${event.channel} ts=${event.ts}${event.mentioned ? " mentioned" : ""}`
@@ -518,11 +421,6 @@ const attr = (value: string): string => {
  * so the human reading the log understands the substitution. */
 const escapeEnvelopeBody = (text: string): string => {
   return text.replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
-}
-
-const unrefTimer = (timer: ReturnType<typeof setTimeout>): void => {
-  const maybeUnref = (timer as { unref?: () => void }).unref
-  if (typeof maybeUnref === "function") maybeUnref.call(timer)
 }
 
 const MONOLOGUE_LOG_LIMIT = 200
