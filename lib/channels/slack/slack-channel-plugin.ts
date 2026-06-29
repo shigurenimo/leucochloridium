@@ -45,7 +45,6 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
 const TIMEOUT_REPLY_TEXT =
   "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
 const ACTIVE_THREAD_CAPACITY = 500
-const SOCKET_EVENT_START_GRACE_MS = 30_000
 
 /**
  * Bridges a single Slack workspace to the engine. Subscribes to inbound
@@ -65,7 +64,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   private ctx: ChannelPluginContext | null = null
   private botUserId: string | null = null
   private lastConnectionStatus: LeucoSlackSourceStatus | null = null
-  private readonly socketEventOldest = socketEventStartOldest()
   private readonly activeThreads = new Map<string, number>()
 
   constructor(props: Props) {
@@ -159,8 +157,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const rawEvent = envelope.payload.event
     if (typeof rawEvent !== "object" || rawEvent === null) return
 
-    if (this.shouldDropStaleSocketEvent(rawEvent)) return
-
     const eventType = (rawEvent as { type?: unknown }).type
 
     if (eventType === "app_mention") {
@@ -223,15 +219,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 
     if (log.level === "debug") return
     ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
-  }
-
-  private shouldDropStaleSocketEvent(event: unknown): boolean {
-    const ts = slackEventTimestamp(event)
-    if (ts === null || ts >= this.socketEventOldest) return false
-    this.ctx?.onLog(
-      `[${this.name}] skip stale socket event ts=${ts.toFixed(6)} oldest=${this.socketEventOldest.toFixed(6)}`,
-    )
-    return true
   }
 
   private async dispatchRawMessage(raw: {
@@ -431,19 +418,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
 const isConversationChannel = (channel: string): boolean => /^[CDG]/.test(channel)
 
 const activeThreadKey = (channel: string, threadTs: string): string => `${channel}:${threadTs}`
-
-const socketEventStartOldest = (): number => {
-  return (Date.now() - SOCKET_EVENT_START_GRACE_MS) / 1000
-}
-
-const slackEventTimestamp = (event: unknown): number | null => {
-  if (typeof event !== "object" || event === null) return null
-  const raw =
-    (event as { ts?: unknown; event_ts?: unknown }).ts ?? (event as { event_ts?: unknown }).event_ts
-  if (typeof raw !== "string" && typeof raw !== "number") return null
-  const ts = Number(raw)
-  return Number.isFinite(ts) ? ts : null
-}
 
 const formatDispatch = (event: SlackEvent): string => {
   if (event.kind === "message") {

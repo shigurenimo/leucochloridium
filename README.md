@@ -144,8 +144,12 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 - [Bun](https://bun.sh) 1.3+
 - `codex` CLI on `PATH`, signed in via `codex login`
 - A Slack App in Socket Mode
-  - Bot scopes: `app_mentions:read`, `channels:history`, `im:history`, `chat:write`, `reactions:write`
-  - Event subscriptions: `app_mention`, `message.channels`, `message.im` (optionally `reaction_added`)
+  - Bot-token apps: bot scopes `app_mentions:read`, `channels:history`, `im:history`,
+    `chat:write`, `reactions:write`; bot events `app_mention`, `message.channels`,
+    `message.im` (optionally `reaction_added`)
+  - User-token apps (`xoxp-*`, acting as the user): user scopes `channels:history`,
+    `im:history`, `im:read`, `chat:write`; user events `message.channels`,
+    `message.im` (optionally `message.groups`, `message.mpim`, reactions)
   - App-level token with `connections:write`
 
 ## Environment variables
@@ -216,6 +220,7 @@ Common causes when nothing happens on mention:
 
 - Slack App is missing the `app_mention` event subscription
 - Slack App is missing the `message.im` event subscription for DMs
+  - For user-token apps, `message.im` must be under user events, not bot events.
 - Bot is not invited to the channel (`/invite @yourbot`)
 - App-level token is missing `connections:write`
 - Channel has `ackMode: "off"` and the bot returned empty text

@@ -76,4 +76,41 @@ describe("LeucoSlackChannelPlugin", () => {
     expect(turns[0]?.text).toContain("hello dm")
     expect(events.some((event) => event.type === "slack.event")).toBe(true)
   })
+
+  it("handles delayed Socket Mode deliveries without timestamp-based stale dropping", async () => {
+    const ts = `${Math.floor(Date.now() / 1000) - 120}.0`
+    const eventSource = new LeucoMemorySlackEventSource()
+    const webClient = new LeucoMemorySlackWebClient({
+      authTest: { userId: "UBOT" },
+    })
+    const plugin = new LeucoSlackChannelPlugin({
+      name: "main",
+      eventSource,
+      webClient,
+      usesUserToken: true,
+      ackMode: "off",
+    })
+    const { ctx, turns, logs } = makeCtx()
+
+    await plugin.start(ctx)
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: Date.now(),
+      payload: {
+        event: {
+          type: "message",
+          channel: "D1",
+          user: "U_USER",
+          text: "delayed but socket-delivered",
+          ts,
+        },
+      },
+    })
+    await plugin.stop()
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.threadKey).toBe(`main:D1:${ts}`)
+    expect(turns[0]?.text).toContain("delayed but socket-delivered")
+    expect(logs.some((line) => line.includes("skip stale socket event"))).toBe(false)
+  })
 })
