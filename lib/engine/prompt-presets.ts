@@ -1,11 +1,25 @@
-import { FRIENDLY_PROMPT } from "@/engine/prompt-presets/friendly"
+import { COMMUNICATION_PROMPT } from "@/engine/prompt-presets/communication"
+import { COMMUNICATION_SLACK_PROMPT } from "@/engine/prompt-presets/communication-slack"
+import { CORE_PROMPT } from "@/engine/prompt-presets/core"
 
-export const PROMPT_PRESET_NAMES = ["friendly"] as const
+export const PromptPreset = {
+  CORE: "CORE",
+  COMMUNICATION: "COMMUNICATION",
+  COMMUNICATION_SLACK: "COMMUNICATION_SLACK",
+} as const
 
-export type PromptPresetName = (typeof PROMPT_PRESET_NAMES)[number]
+export type PromptPresetName = (typeof PromptPreset)[keyof typeof PromptPreset]
+
+export const PROMPT_PRESET_NAMES = [
+  PromptPreset.CORE,
+  PromptPreset.COMMUNICATION,
+  PromptPreset.COMMUNICATION_SLACK,
+] as const
 
 const PRESETS: Record<PromptPresetName, string> = {
-  friendly: FRIENDLY_PROMPT,
+  [PromptPreset.CORE]: CORE_PROMPT,
+  [PromptPreset.COMMUNICATION]: COMMUNICATION_PROMPT,
+  [PromptPreset.COMMUNICATION_SLACK]: COMMUNICATION_SLACK_PROMPT,
 }
 
 /**
