@@ -134,7 +134,7 @@ export class LeucoSlackEventProcessor {
     }
 
     const rawText = data.text ?? ""
-    const mentioned = slackTextMentionsUser(rawText, this.botUserId)
+    const mentioned = data.channel.startsWith("D") || slackTextMentionsUser(rawText, this.botUserId)
     const text = stripMention(rawText, this.botUserId)
     const threadTs = data.thread_ts ?? data.ts
 

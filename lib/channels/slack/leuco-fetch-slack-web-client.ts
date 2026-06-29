@@ -119,7 +119,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     if (args.sortDir !== null) body.sort_dir = args.sortDir
     if (args.count !== null) body.count = args.count
 
-    const raw = await this.callOk("search.messages", body)
+    const raw = await this.callOk("search.messages", body, "form")
     const parsed = searchMessagesSchema.safeParse(raw)
     if (!parsed.success) return { matches: [] }
 
@@ -171,8 +171,12 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     return { messages }
   }
 
-  private async callOk(method: string, body: Record<string, unknown>): Promise<unknown> {
-    const raw = await this.post(method, body)
+  private async callOk(
+    method: string,
+    body: Record<string, unknown>,
+    encoding: "json" | "form" = "json",
+  ): Promise<unknown> {
+    const raw = encoding === "form" ? await this.postForm(method, body) : await this.post(method, body)
     if (typeof raw !== "object" || raw === null) {
       throw new Error(`slack ${method}: response is not an object`)
     }
@@ -193,6 +197,29 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
         "Content-Type": "application/json; charset=utf-8",
       },
       body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
+    }
+
+    return await response.json()
+  }
+
+  private async postForm(method: string, body: Record<string, unknown>): Promise<unknown> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(body)) {
+      if (value === null || value === undefined) continue
+      params.set(key, String(value))
+    }
+
+    const response = await fetch(`${SLACK_API_BASE}/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.props.botToken}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      },
+      body: params.toString(),
     })
 
     if (!response.ok) {

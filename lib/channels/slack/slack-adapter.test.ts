@@ -77,7 +77,7 @@ describe("LeucoSlackAdapter.hasBotReplyAfter", () => {
         messages: [
           {
             user: "U_BOT",
-            text: "見てます。少し待ってください。",
+            text: "status update",
             ts: "1.1",
             threadTs: null,
             subtype: null,
@@ -90,7 +90,7 @@ describe("LeucoSlackAdapter.hasBotReplyAfter", () => {
 
     await expect(
       adapter.hasBotReplyAfter("C1", "1.0", "1.0", "U_BOT", {
-        ignoredTexts: ["見てます。少し待ってください。"],
+        ignoredTexts: ["status update"],
       }),
     ).resolves.toBe(false)
   })

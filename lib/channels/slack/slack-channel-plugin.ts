@@ -42,8 +42,6 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
   error: "x",
 }
 
-const STATUS_REPLY_DELAY_MS = 20 * 1000
-const STATUS_REPLY_TEXT = "見てます。少し待ってください。"
 const TIMEOUT_REPLY_TEXT =
   "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
 const ACTIVE_THREAD_CAPACITY = 500
@@ -340,32 +338,16 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const threadKey = `${this.name}:${msg.channel}:${msg.threadTs}`
     const reactionTs = msg.ts
     const wantsAck = this.shouldAck(msg)
-    const wantsStatusReply = this.shouldSendStatusReply(msg)
+    const wantsTimeoutReply = this.shouldSendTimeoutReply(msg)
     const icons = this.props.ackIcons ?? DEFAULT_ACK_ICONS
-    let turnDone = false
-    let statusReplyPosted = false
-    let statusReplyTimer: ReturnType<typeof setTimeout> | null = null
 
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
-    if (wantsStatusReply) {
-      statusReplyTimer = setTimeout(() => {
-        void (async () => {
-          if (turnDone) return
-          if (await this.hasVisibleBotReplyAfter(msg)) return
-          if (turnDone) return
-          statusReplyPosted = await this.postReplySafely(msg, STATUS_REPLY_TEXT)
-        })()
-      }, STATUS_REPLY_DELAY_MS)
-      unrefTimer(statusReplyTimer)
-    }
 
     const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
-    turnDone = true
-    if (statusReplyTimer) clearTimeout(statusReplyTimer)
     if (monologue instanceof Error) {
       ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
-      if (wantsStatusReply) await this.postTimeoutReplyIfNeeded(msg, statusReplyPosted)
+      if (wantsTimeoutReply) await this.postTimeoutReplyIfNeeded(msg)
     } else {
       logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
@@ -383,7 +365,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     return msg.mentioned
   }
 
-  private shouldSendStatusReply(msg: SlackMessageEvent): boolean {
+  private shouldSendTimeoutReply(msg: SlackMessageEvent): boolean {
     return msg.mentioned || msg.channel.startsWith("D")
   }
 
@@ -397,13 +379,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     })
   }
 
-  private async postTimeoutReplyIfNeeded(
-    msg: SlackMessageEvent,
-    statusReplyPosted: boolean,
-  ): Promise<void> {
+  private async postTimeoutReplyIfNeeded(msg: SlackMessageEvent): Promise<void> {
     if (!this.adapter) return
-    const ignoredTexts = statusReplyPosted ? [STATUS_REPLY_TEXT] : []
-    if (await this.hasVisibleBotReplyAfter(msg, ignoredTexts)) return
+    if (await this.hasVisibleBotReplyAfter(msg)) return
     await this.postReplySafely(msg, TIMEOUT_REPLY_TEXT)
   }
 
@@ -418,10 +396,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       return true
     } catch (err) {
       const message = errorMessage(err)
-      this.ctx.onLog(`[${this.name}] status reply failed: ${message}`)
-      // Surface to events.db so a silent disappearance of the "見てます。少し待っ
-      // てください。" / timeout reply is queryable via `leuco events --preset
-      // errors`. Without this, a failing reply has zero observability.
+      this.ctx.onLog(`[${this.name}] slack reply failed: ${message}`)
+      // Surface to events.db so a failed timeout reply is queryable via
+      // `leuco events --preset errors`.
       this.ctx.bus.emit({
         ts: Date.now(),
         type: "slack.error",
@@ -518,11 +495,6 @@ const attr = (value: string): string => {
  * so the human reading the log understands the substitution. */
 const escapeEnvelopeBody = (text: string): string => {
   return text.replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
-}
-
-const unrefTimer = (timer: ReturnType<typeof setTimeout>): void => {
-  const maybeUnref = (timer as { unref?: () => void }).unref
-  if (typeof maybeUnref === "function") maybeUnref.call(timer)
 }
 
 const MONOLOGUE_LOG_LIMIT = 200

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { LeucoMemorySlackWebClient } from "@/channels/slack/leuco-memory-slack-web-client"
 import { LeucoSlackXoxpPoller } from "@/channels/slack/leuco-slack-xoxp-poller"
 
@@ -44,9 +44,17 @@ describe("LeucoSlackXoxpPoller", () => {
     })
 
     poller.start()
-    await vi.waitFor(() => expect(dispatched.length).toBeGreaterThan(0))
+    await waitFor(() => dispatched.length > 0)
     poller.stop()
 
     expect(dispatched).toEqual([{ channel: "D1", ts: "100.0" }])
   })
 })
+
+const waitFor = async (predicate: () => boolean): Promise<void> => {
+  for (let i = 0; i < 20; i += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  expect(predicate()).toBe(true)
+}
