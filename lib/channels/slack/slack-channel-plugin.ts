@@ -221,31 +221,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
   }
 
-  private async dispatchRawMessage(raw: {
-    channel: string
-    user: string | null
-    text: string | null
-    ts: string
-    threadTs: string | null
-    subtype: string | null
-    botId: string | null
-  }): Promise<void> {
-    const slackEvent: Record<string, unknown> = {
-      type: "message",
-      channel: raw.channel,
-      ts: raw.ts,
-    }
-    if (raw.user !== null) slackEvent.user = raw.user
-    if (raw.text !== null) slackEvent.text = raw.text
-    if (raw.threadTs !== null) slackEvent.thread_ts = raw.threadTs
-    if (raw.subtype !== null) slackEvent.subtype = raw.subtype
-    if (raw.botId !== null) slackEvent.bot_id = raw.botId
-
-    await this.dispatchResult(
-      this.withActiveThreadContext(this.processor.processMessage(slackEvent)),
-    )
-  }
-
   private async dispatchResult(result: ProcessResult): Promise<void> {
     if (result.skip) {
       this.ctx?.onLog(`[${this.name}] ${result.reason}`)
