@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@interactive-inc/claude-funnel": "^0.60.0",
-    "@interactive-inc/flume": "^0.9.3",
+    "@interactive-inc/flume": "^0.9.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4.12.16",
     "yaml": "^2.9.0",
