@@ -11,7 +11,6 @@ import {
   type ProcessResult,
 } from "@/channels/slack/slack-event-processor"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
-import { LeucoSlackXoxpPoller } from "@/channels/slack/leuco-slack-xoxp-poller"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import { errorMessage } from "@/error-message"
 
@@ -28,7 +27,8 @@ type Props = {
   eventSource: LeucoSlackEventSource
   webClient: LeucoSlackWebClient
   /** True when the workspace gave the bot a user token (`xoxp-`) instead of a
-   * bot token (`xoxb-`). Drives the xoxp poller for `app_mention` parity. */
+   * bot token (`xoxb-`). Used only for diagnostics; inbound delivery must
+   * come from Socket Mode, not Web API history polling. */
   usesUserToken: boolean
   /** When the bot adds the in-progress / done / error reactions. Defaults to "mention". */
   ackMode?: SlackAckMode
@@ -62,7 +62,6 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   private readonly props: Props
   private adapter: LeucoSlackAdapter | null = null
   private processor: LeucoSlackEventProcessor
-  private xoxpPoller: LeucoSlackXoxpPoller | null = null
   private ctx: ChannelPluginContext | null = null
   private botUserId: string | null = null
   private lastConnectionStatus: LeucoSlackSourceStatus | null = null
@@ -94,25 +93,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     }
 
     if (this.props.usesUserToken) {
-      this.xoxpPoller = new LeucoSlackXoxpPoller({
-        client: this.props.webClient,
-        botUserId: this.botUserId,
-        dispatchMessage: (raw) => this.dispatchRawMessage(raw),
-        rememberActiveThread: (channel, threadTs) => this.rememberActiveThread(channel, threadTs),
-        onLog: (line) => ctx.onLog(`[${this.name}] ${line}`),
-        onError: (info) => {
-          ctx.bus.emit({
-            ts: Date.now(),
-            type: "slack.error",
-            project: ctx.projectName,
-            channel: this.name,
-            level: "warn",
-            action: info.action,
-            message: info.message,
-            error: info.error,
-          })
-        },
-      })
+      ctx.onLog(`[${this.name}] using xoxp token for Slack Web API; inbound events are Socket Mode only`)
     }
 
     ctx.onLog(`[${this.name}] connecting to Slack (Socket Mode)`)
@@ -122,15 +103,11 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
       onLog: (log) => this.handleSourceLog(log),
     })
 
-    if (this.xoxpPoller !== null) this.xoxpPoller.start()
-
     const who = this.botUserId !== null ? `<@${this.botUserId}>` : "(bot)"
     ctx.onLog(`[${this.name}] ready — forwarding messages to agent (bot=${who})`)
   }
 
   async stop(): Promise<void> {
-    if (this.xoxpPoller !== null) this.xoxpPoller.stop()
-    this.xoxpPoller = null
     await this.props.eventSource.stop()
     this.adapter = null
     this.ctx = null
