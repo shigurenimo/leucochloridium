@@ -119,7 +119,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     if (args.sortDir !== null) body.sort_dir = args.sortDir
     if (args.count !== null) body.count = args.count
 
-    const raw = await this.callOk("search.messages", body, "form")
+    const raw = await this.callOk("search.messages", body)
     const parsed = searchMessagesSchema.safeParse(raw)
     if (!parsed.success) return { matches: [] }
 
@@ -147,7 +147,9 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   }
 
   async apiCall(method: string, body: Record<string, unknown>): Promise<unknown> {
-    return await this.post(method, body)
+    return FORM_ENCODED_METHODS.has(method)
+      ? await this.postForm(method, body)
+      : await this.post(method, body)
   }
 
   private async history(method: string, body: Record<string, unknown>): Promise<SlackHistorySlice> {
@@ -174,7 +176,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   private async callOk(
     method: string,
     body: Record<string, unknown>,
-    encoding: "json" | "form" = "json",
+    encoding: "json" | "form" = FORM_ENCODED_METHODS.has(method) ? "form" : "json",
   ): Promise<unknown> {
     const raw = encoding === "form" ? await this.postForm(method, body) : await this.post(method, body)
     if (typeof raw !== "object" || raw === null) {
@@ -210,7 +212,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(body)) {
       if (value === null || value === undefined) continue
-      params.set(key, String(value))
+      params.set(key, formValue(value))
     }
 
     const response = await fetch(`${SLACK_API_BASE}/${method}`, {
@@ -228,6 +230,19 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
 
     return await response.json()
   }
+}
+
+const FORM_ENCODED_METHODS = new Set([
+  "conversations.history",
+  "conversations.info",
+  "conversations.list",
+  "conversations.replies",
+  "search.messages",
+])
+
+const formValue = (value: unknown): string => {
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
 }
 
 const authTestSchema = z
