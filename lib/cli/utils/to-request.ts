@@ -13,6 +13,8 @@ const TOP_LEAFS = new Set([
   "logs",
   "events",
   "update",
+  "doctor",
+  "kill",
 ])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])

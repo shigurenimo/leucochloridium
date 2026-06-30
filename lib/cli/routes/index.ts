@@ -4,7 +4,9 @@ import { errorMessage } from "@/error-message"
 import { bootInstallHandler } from "@/cli/routes/boot.install"
 import { bootStatusHandler } from "@/cli/routes/boot.status"
 import { bootUninstallHandler } from "@/cli/routes/boot.uninstall"
+import { doctorHandler } from "@/cli/routes/doctor"
 import { eventsHandler } from "@/cli/routes/events"
+import { killHandler } from "@/cli/routes/kill"
 import { configGetHandler } from "@/cli/routes/config.get"
 import { configListHandler } from "@/cli/routes/config.list"
 import { configSetHandler } from "@/cli/routes/config.set"
@@ -81,6 +83,8 @@ export const app = base
   .post("/logs", ...logsHandler)
   .post("/events", ...eventsHandler)
   .post("/update", ...updateHandler)
+  .post("/doctor", ...doctorHandler)
+  .post("/kill", ...killHandler)
 
   // Collection URLs (`/projects`, `/projects/:p/channels`, etc) return the list
   // directly so `leuco projects` is enough to see what's registered. The
