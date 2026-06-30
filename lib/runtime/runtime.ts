@@ -26,8 +26,13 @@ type Logger = (line: string) => void
 
 type Props = {
   env: NodeJS.ProcessEnv
+  /** Gateway port. Required in production so codex children can reach the
+   * daemon's HTTP MCP route at `/mcp/<projectId>`. The legacy `leuco mcp`
+   * stdio fallback was removed. CLI always supplies the port via
+   * `cliEnvSchema` (default 7331). Library embedders MUST supply it too —
+   * skipping it leaves tenants without MCP. */
+  port: number
   home?: string
-  port?: number
   codexBin?: string
   onLog?: Logger
 }
@@ -67,7 +72,7 @@ export class LeucoRuntime {
     const projectStateStore = new LeucoProjectStateStore({ projectStore })
     const projects = projectStore.list()
 
-    const mcpToken = buildProps.port !== undefined ? randomBytes(32).toString("hex") : null
+    const mcpToken = randomBytes(32).toString("hex")
     const mcpPort = buildProps.port
 
     const tenants: LeucoTenant[] = []
@@ -153,8 +158,8 @@ type BuildTenantProps = {
   bus: LeucoEventBus
   projectStore: LeucoProjectStore
   projectStateStore: LeucoProjectStateStore
-  mcpToken: string | null
-  mcpPort: number | undefined
+  mcpToken: string
+  mcpPort: number
 }
 
 const buildTenant = (props: BuildTenantProps): LeucoTenant => {
@@ -173,17 +178,15 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectPath: props.project.path,
     projectId: props.project.id,
     projectName: props.project.name,
-    mcpEndpoint:
-      props.mcpToken !== null && props.mcpPort !== undefined
-        ? { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}` }
-        : null,
+    mcpEndpoint: { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}` },
     extraMcpServers: props.project.mcpServers,
   })
   ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
 
-  const childEnv: NodeJS.ProcessEnv = { ...props.env, CODEX_HOME: codexHome }
-  if (props.mcpToken !== null) {
-    childEnv[LEUCO_MCP_TOKEN_ENV] = props.mcpToken
+  const childEnv: NodeJS.ProcessEnv = {
+    ...props.env,
+    CODEX_HOME: codexHome,
+    [LEUCO_MCP_TOKEN_ENV]: props.mcpToken,
   }
 
   const codex = new LeucoCodexClient({
@@ -232,7 +235,7 @@ const ensureTenantConfigToml = (
     projectPath: string
     projectId: string
     projectName: string
-    mcpEndpoint: { url: string } | null
+    mcpEndpoint: { url: string }
     extraMcpServers: Record<string, McpServer>
   },
 ): void => {
@@ -245,6 +248,9 @@ const ensureTenantConfigToml = (
     "schedule_delete",
   ]
   const lines = [
+    `model = "gpt-5.5"`,
+    `model_reasoning_effort = "xhigh"`,
+    "",
     `approval_policy = "never"`,
     `sandbox_mode = "danger-full-access"`,
     "",
@@ -252,21 +258,10 @@ const ensureTenantConfigToml = (
     `trust_level = "trusted"`,
     "",
     `[mcp_servers.leuco]`,
+    `url = ${tomlString(tenant.mcpEndpoint.url)}`,
+    `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
+    "",
   ]
-
-  if (tenant.mcpEndpoint !== null) {
-    lines.push(
-      `url = ${tomlString(tenant.mcpEndpoint.url)}`,
-      `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
-      "",
-    )
-  } else {
-    lines.push(
-      `command = "leuco"`,
-      `args = ["mcp", "--project", ${tomlString(tenant.projectName)}]`,
-      "",
-    )
-  }
 
   for (const tool of autoApproveTools) {
     lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")

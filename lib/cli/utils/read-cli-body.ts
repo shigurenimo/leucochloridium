@@ -16,14 +16,18 @@ export const readCliBody = async (c: Context): Promise<CliBody> => {
   // every leuco CLI invocation was JSON-encoded); only a body that contains
   // bytes but isn't valid JSON should be reported, so a future client bug
   // doesn't silently render as "no args".
-  if (text.length === 0) return cliBodySchema.parse({})
+  if (text.length === 0) return { args: [], flags: {} }
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch (error) {
     throw new HTTPException(400, { message: `invalid CLI body: ${errorMessage(error)}` })
   }
-  return cliBodySchema.parse(raw)
+  const parsed = cliBodySchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new HTTPException(400, { message: `invalid CLI body: ${parsed.error.message}` })
+  }
+  return parsed.data
 }
 
 export const flagBool = (value: string | boolean | undefined): boolean => {

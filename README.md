@@ -28,8 +28,8 @@ leuco projects add .  # register the cwd as a leuco project
 leuco                 # starts the daemon (or prints status if already running)
 ```
 
-`leuco` (no args) starts the daemon in the background. If already running,
-shows the TUI dashboard.
+`leuco` (no args) starts the daemon in the background, or prints status
+when it is already running.
 
 ## Commands
 
@@ -44,7 +44,7 @@ leuco stop                stop daemon
 leuco restart             stop + start
 leuco status              daemon + project state
 leuco logs [-f]           print daemon log (-f to follow)
-leuco events              query event log (--type, --project, --limit, --json)
+leuco events              query event log (--preset, --type, --project, --limit, --json)
 leuco update [--check]    install latest version
 ```
 
@@ -93,7 +93,6 @@ Other:
 
 ```
 leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
-leuco mcp --project <p>
 leuco config [get <key> | set <key> <value>]
 leuco boot [install | uninstall]
 ```
@@ -121,7 +120,7 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 - One Slack thread maps to one Codex thread. Turns within a thread serialise;
   separate threads run in parallel.
 - Mention gating, ack reactions, and bot-message filtering are configurable
-  per channel (`ackMode: off | mention | always`, custom `ackIcons`).
+  per channel (`ackMode: off | mention | always`, default `off`, custom `ackIcons`).
 - Codex subagents (`.codex/agents/*.toml`) are managed by codex, not leuco.
 
 ## Filesystem layout
@@ -145,14 +144,18 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
 - [Bun](https://bun.sh) 1.3+
 - `codex` CLI on `PATH`, signed in via `codex login`
 - A Slack App in Socket Mode
-  - Bot scopes: `app_mentions:read`, `chat:write`, `reactions:write`
-  - Event subscriptions: `app_mention`, `message.channels` (optionally `reaction_added`)
+  - Bot-token apps: bot scopes `app_mentions:read`, `channels:history`, `im:history`,
+    `chat:write`, `reactions:write`; bot events `app_mention`, `message.channels`,
+    `message.im` (optionally `reaction_added`)
+  - User-token apps (`xoxp-*`, acting as the user): user scopes `channels:history`,
+    `im:history`, `im:read`, `chat:write`; user events `message.channels`,
+    `message.im` (optionally `message.groups`, `message.mpim`, reactions)
   - App-level token with `connections:write`
 
 ## Environment variables
 
 - `LEUCO_CODEX_BIN` -- Codex binary path (default: `codex`)
-- `LEUCO_PORT` -- HTTP gateway port (default: `7331`)
+- `LEUCO_PORT` -- HTTP gateway port, 1-65535 (default: `7331`)
 - `LEUCO_CWD` -- Override Codex working directory (default: project path)
 
 `.env.local` and `.env` are read from the cwd at CLI invocation. Existing
@@ -178,9 +181,19 @@ leuco events --json                       # raw JSON lines
 the event log.
 
 Event types: `tenant.started`, `tenant.stopped`, `engine.reconcile`,
-`engine.reconcile.failed`, `slack.event`, `turn.start`, `turn.complete`,
-`turn.error`, `codex.notification`, `schedule.fired`, `log`.
+`engine.reconcile.failed`, `slack.event`, `slack.connection`, `slack.error`,
+`turn.start`, `turn.complete`, `turn.error`, `codex.notification`,
+`schedule.fired`, `log`.
 See `lib/events/leuco-event-schema.ts`.
+
+Presets group common queries:
+
+```bash
+leuco events --preset turns       # codex turn lifecycle
+leuco events --preset errors      # turn errors + reconcile + slack errors
+leuco events --preset lifecycle   # tenant + reconcile + slack connection
+leuco events --preset schedule    # cron / one-shot firings
+```
 
 ## Library usage
 
@@ -206,6 +219,8 @@ leuco run               # foreground, logs to stdout
 Common causes when nothing happens on mention:
 
 - Slack App is missing the `app_mention` event subscription
+- Slack App is missing the `message.im` event subscription for DMs
+  - For user-token apps, `message.im` must be under user events, not bot events.
 - Bot is not invited to the channel (`/invite @yourbot`)
 - App-level token is missing `connections:write`
 - Channel has `ackMode: "off"` and the bot returned empty text

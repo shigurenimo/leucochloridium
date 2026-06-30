@@ -1,34 +1,63 @@
-import { WebClient } from "@slack/web-api"
+import type { LeucoSlackWebClient } from "@/channels/slack/leuco-slack-web-client"
 import type { SlackReply } from "@/channels/slack/slack-types"
-import type { WebClientPort } from "@/channels/slack/web-client-port"
 import { errorMessage } from "@/error-message"
 
 type Props = {
-  client: WebClientPort
+  client: LeucoSlackWebClient
   onLog?: (line: string) => void
 }
 
-/** Thin wrapper around `chat.postMessage` for thread replies and ephemeral status updates. */
+/** Thin wrapper around the outbound Slack Web API surface the channel plugin
+ * actually needs (reply, reaction, accessibility check). */
 export class LeucoSlackAdapter {
   constructor(private readonly props: Props) {
     Object.freeze(this)
   }
 
-  static fromBotToken(botToken: string, onLog?: (line: string) => void): LeucoSlackAdapter {
-    return new LeucoSlackAdapter({ client: new WebClient(botToken), onLog })
-  }
-
   async postReply(reply: SlackReply): Promise<void> {
-    await this.props.client.chat.postMessage({
+    await this.props.client.chatPostMessage({
       channel: reply.channel,
-      thread_ts: reply.threadTs,
+      threadTs: reply.threadTs,
       text: reply.text,
     })
   }
 
+  async hasBotReplyAfter(
+    channel: string,
+    threadTs: string,
+    messageTs: string,
+    botUserId: string,
+    options: { ignoredTexts?: readonly string[] } = {},
+  ): Promise<boolean> {
+    try {
+      const result = await this.props.client.conversationsReplies({
+        channel,
+        ts: threadTs,
+        oldest: messageTs,
+        inclusive: false,
+        limit: 100,
+      })
+      const ignoredTexts = new Set((options.ignoredTexts ?? []).map((text) => text.trim()))
+
+      return result.messages.some((message) => {
+        if (message.user !== botUserId) return false
+        const text = message.text ?? ""
+        if (ignoredTexts.has(text.trim())) return false
+        return true
+      })
+    } catch (err) {
+      if (this.props.onLog) {
+        this.props.onLog(
+          `[slack] conversations.replies failed (channel=${channel} ts=${threadTs}): ${errorMessage(err)}`,
+        )
+      }
+      return false
+    }
+  }
+
   async addReaction(channel: string, ts: string, name: string): Promise<void> {
     try {
-      await this.props.client.reactions.add({ channel, timestamp: ts, name })
+      await this.props.client.reactionsAdd({ channel, timestamp: ts, name })
     } catch (err) {
       // Idempotent reactions (`already_reacted`) are expected; everything else
       // (invalid_auth, channel_not_found, account_inactive, ratelimited, …)
@@ -40,7 +69,7 @@ export class LeucoSlackAdapter {
 
   async removeReaction(channel: string, ts: string, name: string): Promise<void> {
     try {
-      await this.props.client.reactions.remove({ channel, timestamp: ts, name })
+      await this.props.client.reactionsRemove({ channel, timestamp: ts, name })
     } catch (err) {
       this.logReactionFailure("remove", channel, ts, name, err)
     }
@@ -48,8 +77,8 @@ export class LeucoSlackAdapter {
 
   async canReadChannel(channel: string): Promise<boolean> {
     try {
-      const info = await this.props.client.conversations.info({ channel })
-      if (isPublicChannel(channel) && conversationIsNonMember(info)) {
+      const info = await this.props.client.conversationsInfo({ channel })
+      if (isPublicChannel(channel) && info.isMember === false) {
         if (this.props.onLog) {
           this.props.onLog(
             `[slack] conversations.info says bot is not a channel member (channel=${channel})`,
@@ -59,12 +88,16 @@ export class LeucoSlackAdapter {
       }
       return true
     } catch (err) {
+      const message = errorMessage(err)
       if (this.props.onLog) {
-        this.props.onLog(
-          `[slack] conversations.info failed (channel=${channel}): ${errorMessage(err)}`,
-        )
+        this.props.onLog(`[slack] conversations.info failed (channel=${channel}): ${message}`)
       }
-      return false
+      // Only treat known access-denied errors as a hard "skip this event".
+      // Transient errors (rate-limited, network blip, Slack 5xx) must NOT
+      // silently drop the inbound event — otherwise a brief Slack outage
+      // turns into universal "the bot ignored my mention".
+      if (isPermanentChannelDenial(message)) return false
+      return true
     }
   }
 
@@ -86,9 +119,14 @@ export class LeucoSlackAdapter {
 
 const isPublicChannel = (channel: string): boolean => channel.startsWith("C")
 
-const conversationIsNonMember = (info: unknown): boolean => {
-  if (typeof info !== "object" || info === null) return false
-  const channel = (info as { channel?: unknown }).channel
-  if (typeof channel !== "object" || channel === null) return false
-  return (channel as { is_member?: unknown }).is_member === false
+// Slack returns these error strings in the `error` field of the JSON envelope
+// when the bot genuinely cannot read the channel; the fetch client surfaces
+// them through `Error("slack <method>: <reason>")`. Anything else (network
+// failures, ratelimits, 5xx) we treat as transient and let the event through
+// — losing one mention to a flaky `conversations.info` is worse than letting
+// the agent decide whether to reply.
+const isPermanentChannelDenial = (message: string): boolean => {
+  return /channel_not_found|is_archived|missing_scope|not_authed|account_inactive|access_denied|not_in_channel|invalid_channel/i.test(
+    message,
+  )
 }

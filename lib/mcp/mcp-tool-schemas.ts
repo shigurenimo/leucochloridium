@@ -1,7 +1,16 @@
 import { z } from "zod"
 
+// Slack Web API method names are dotted identifiers like `chat.postMessage`,
+// `files.info`, `admin.users.list`. Restricting to this shape blocks path
+// traversal (`../admin.users.list`) and query injection (`files.info?token=…`)
+// at the schema layer before the value ever reaches the fetch client.
+const slackMethodPattern = /^[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*$/
+
 export const slackCallArgsSchema = z.object({
-  method: z.string().min(1, "must be a non-empty string"),
+  method: z
+    .string()
+    .min(1, "must be a non-empty string")
+    .regex(slackMethodPattern, "must be a dotted Slack API method name"),
   body: z.record(z.string(), z.unknown()).optional(),
   channel_name: z.string().optional(),
 })
@@ -21,9 +30,11 @@ export const slackDownloadFileArgsSchema = z
   })
 
 export const scheduleCreateArgsSchema = z.object({
-  name: z.string(),
-  run_at: z.string(),
-  prompt: z.string(),
+  name: z.string().min(1).max(200),
+  run_at: z.string().min(1).max(200),
+  // Cap to keep `~/.leuco/settings.json` (where this prompt is persisted) at
+  // a size the daemon can still read / atomic-write cheaply.
+  prompt: z.string().min(1).max(10_000),
   channel_name: z.string().optional(),
 })
 

@@ -93,6 +93,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
     expect(captured.turns[0]!.threadKey).toBe("schedule:11111111-1111-4111-8111-111111111111")
@@ -106,6 +107,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
   })
@@ -116,6 +118,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
     await plugin.tickOnce()
     await plugin.tickOnce()
 
@@ -128,6 +131,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
     expect(store.entries).toEqual([])
@@ -139,6 +143,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
     expect(store.entries).toHaveLength(1)
@@ -150,6 +155,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
   })
@@ -160,6 +166,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
     expect(captured.logs.some((l) => l.includes("bad cron"))).toBe(true)
@@ -175,6 +182,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(store.entries).toEqual([])
     const tracked = (plugin as unknown as { lastFiredMinute: Map<string, number> }).lastFiredMinute
@@ -204,6 +212,7 @@ describe("LeucoScheduleChannelPlugin", () => {
     }
 
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(calls).toBe(2)
     expect(captured.turns).toHaveLength(1)
@@ -218,6 +227,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
     expect(captured.turns[0]!.text).toContain("ping")
@@ -234,6 +244,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
   })
@@ -248,6 +259,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
+    await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
   })

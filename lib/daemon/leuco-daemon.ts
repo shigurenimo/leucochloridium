@@ -97,7 +97,7 @@ export class LeucoDaemon {
     // port. unref()/keepAwake() are after the write because both depend on
     // the pid being persisted first.
     try {
-      writeFileSync(status.pidPath, `${child.pid}\n`)
+      writeFileSync(status.pidPath, `${child.pid}\n`, { mode: 0o600 })
     } catch (error) {
       try {
         process.kill(child.pid, "SIGTERM")

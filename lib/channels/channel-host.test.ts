@@ -6,6 +6,7 @@ import { LeucoChannelHost } from "@/channels/channel-host"
 import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import type { Channel, Project } from "@/config/config-schema"
+import { PromptPreset } from "@/engine/prompt-presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -109,7 +110,11 @@ describe("LeucoChannelHost.buildForProject", () => {
         path: "/tmp/demo",
         enabled: true,
         useCommonInstructions: true,
-        prompts: ["friendly"],
+        prompts: [
+          PromptPreset.CORE,
+          PromptPreset.COMMUNICATION,
+          PromptPreset.COMMUNICATION_SLACK,
+        ],
         channels: [
           {
             id: "33333333-3333-4333-8333-333333333333",

@@ -45,6 +45,31 @@ describe("leucoEventSchema", () => {
     expect(parsed.success).toBe(true)
   })
 
+  it("accepts a slack.connection event", () => {
+    const parsed = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "slack.connection",
+      project: "p",
+      channel: "c",
+      status: "reconnecting",
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts a slack.error event", () => {
+    const parsed = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "slack.error",
+      project: "p",
+      channel: "c",
+      level: "warn",
+      action: "ws.close",
+      message: "socket closed",
+      error: null,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
   it("rejects unknown discriminator values", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,

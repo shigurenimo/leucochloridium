@@ -1,4 +1,4 @@
-import { WebClient } from "@slack/web-api"
+import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
 import type { Project, SlackChannel } from "@/config/config-schema"
 
 type Props = {
@@ -8,7 +8,8 @@ type Props = {
 }
 
 export const slackCall = async (props: Props): Promise<unknown> => {
-  const client = new WebClient(props.botToken)
+  const client = new LeucoFetchSlackWebClient({ botToken: props.botToken })
+
   return await client.apiCall(props.method, sanitiseBody(props.body))
 }
 

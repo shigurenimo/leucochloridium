@@ -69,7 +69,7 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
     enabled: true,
     botToken,
     appToken,
-    ackMode: "mention",
+    ackMode: "off",
     ackIcons: {
       progress: "hourglass_flowing_sand",
       success: "white_check_mark",

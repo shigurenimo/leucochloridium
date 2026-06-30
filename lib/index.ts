@@ -8,7 +8,6 @@ import { applyCwdShortcut } from "@/cli/utils/apply-cwd-shortcut"
 import { toRequest } from "@/cli/utils/to-request"
 import { LeucoDaemon } from "@/daemon/leuco-daemon"
 import { LeucoEnv } from "@/env/leuco-env"
-import { startMcpServer } from "@/mcp/start-mcp-server"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -28,25 +27,6 @@ const args = process.argv.slice(2)
 if (args[0] === "--version" || args[0] === "-v") {
   process.stdout.write(`${pkg.version}\n`)
   process.exit(0)
-}
-
-// stdio MCP entry. Spawned by codex via `[mcp_servers.leuco]` in each tenant's
-// CODEX_HOME config.toml; takes the project from flags so the server is locked
-// to that project's Slack tokens.
-if (args[0] === "mcp") {
-  const flag = (name: string): string | null => {
-    const idx = args.indexOf(`--${name}`)
-    if (idx < 0) return null
-    const value = args[idx + 1]
-    return typeof value === "string" ? value : null
-  }
-  const projectName = flag("project")
-  if (!projectName) {
-    process.stderr.write("usage: leuco mcp --project <name>\n")
-    process.exit(2)
-  }
-  await startMcpServer({ projectName })
-  await new Promise<void>(() => {})
 }
 
 const binPath = process.argv[1]

@@ -9,10 +9,13 @@ type Props = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
   buildTenant: (project: Project) => LeucoTenant
+  /** Production callers (runtime.ts) always supply both `port` and `mcpToken`.
+   * They are optional here only so tests can drive `engine.start()` /
+   * `engine.reconcile()` without bringing up a real Bun.serve gateway. */
   port?: number
+  mcpToken?: string
   onLog?: (line: string) => void
   bus?: LeucoEventBus
-  mcpToken?: string | null
 }
 
 type Logger = (line: string) => void
@@ -37,9 +40,10 @@ export class LeucoEngine {
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly mcpToken: string | null
+  private readonly mcpToken: string | undefined
   private gateway: LeucoGatewayServer | null = null
   private reconcileQueue: Promise<void> = Promise.resolve()
+  private stopped = false
 
   constructor(props: Props) {
     this.tenants = props.tenants
@@ -48,7 +52,7 @@ export class LeucoEngine {
     this.port = props.port
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
-    this.mcpToken = props.mcpToken ?? null
+    this.mcpToken = props.mcpToken
   }
 
   async start(): Promise<void> {
@@ -68,7 +72,7 @@ export class LeucoEngine {
       throw error
     }
 
-    if (this.port !== undefined) {
+    if (this.port !== undefined && this.mcpToken !== undefined) {
       this.gateway = new LeucoGatewayServer({
         engine: this,
         port: this.port,
@@ -92,7 +96,14 @@ export class LeucoEngine {
   }
 
   async stop(): Promise<void> {
+    if (this.stopped) return
+    this.stopped = true
     this.log("[leuco] shutting down")
+
+    // Drain any in-flight reconcile so it cannot mutate `this.tenants` after
+    // we null it out. Errors inside reconcile are already swallowed at the
+    // `reconcileQueue` site, so awaiting it is safe and cannot reject.
+    await this.reconcileQueue
 
     if (this.gateway) {
       await this.gateway.stop()
@@ -104,11 +115,15 @@ export class LeucoEngine {
     }
     this.tenants = []
 
-    await this.bus.stop()
+    this.bus.stop()
   }
 
   async reconcile(): Promise<void> {
-    const result = this.reconcileQueue.then(() => this.runReconcile())
+    if (this.stopped) return
+    const result = this.reconcileQueue.then(() => {
+      if (this.stopped) return
+      return this.runReconcile()
+    })
     this.reconcileQueue = result.then(
       () => undefined,
       () => undefined,

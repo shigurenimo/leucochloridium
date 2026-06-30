@@ -15,9 +15,18 @@ export type {
   ProcessSkip as SlackProcessSkip,
 } from "@/channels/slack/slack-event-processor"
 export { LeucoSlackEventProcessor } from "@/channels/slack/slack-event-processor"
-export { LeucoSlackListener } from "@/channels/slack/slack-listener"
+export { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
+export { LeucoFlumeSlackEventSource } from "@/channels/slack/leuco-flume-slack-event-source"
+export { LeucoMemorySlackEventSource } from "@/channels/slack/leuco-memory-slack-event-source"
+export { LeucoMemorySlackWebClient } from "@/channels/slack/leuco-memory-slack-web-client"
+export {
+  LeucoSlackEventSource,
+  type LeucoSlackEnvelope,
+  type LeucoSlackSourceLog,
+  type LeucoSlackSourceStatus,
+} from "@/channels/slack/leuco-slack-event-source"
+export { LeucoSlackWebClient } from "@/channels/slack/leuco-slack-web-client"
 export type { SlackMessage, SlackReply } from "@/channels/slack/slack-types"
-export type { WebClientPort } from "@/channels/slack/web-client-port"
 
 // Configuration (per-project JSON files)
 export { projectSchema } from "@/config/config-schema"

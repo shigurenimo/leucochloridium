@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { Project } from "@/config/config-schema"
 import { LeucoEngine } from "@/engine/engine"
+import { PromptPreset } from "@/engine/prompt-presets"
 import { LeucoTenant } from "@/engine/tenant"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import type { LeucoProjectStore } from "@/projects/project-store"
@@ -56,7 +57,7 @@ const makeProject = (name: string, enabled = true): Project => ({
   path: `/tmp/${name}`,
   enabled,
   useCommonInstructions: true,
-  prompts: ["friendly"],
+  prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [],
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },

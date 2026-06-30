@@ -11,19 +11,25 @@ import type {
 
 type Props = {
   botUserId: string | null
+  /** Hard cap on the dedup map; events older than the TTL are evicted lazily. */
   dedupCapacity?: number
+  /** TTL in ms. Slack redelivers within ~3s; 5 min is generous. */
+  dedupTtlMs?: number
+  /** Clock injection for tests. */
+  now?: () => number
 }
 
 export type ProcessSkip = { skip: true; reason: string }
 export type ProcessEmit = { skip: false; event: SlackEvent }
 export type ProcessResult = ProcessSkip | ProcessEmit
 
-const DEFAULT_DEDUP_CAPACITY = 1024
+const DEFAULT_DEDUP_CAPACITY = 10_000
+const DEFAULT_DEDUP_TTL_MS = 5 * 60 * 1000
 
 /**
  * Pure decision layer for Slack incoming events. Owns:
  *  - schema validation of raw event payloads
- *  - dedup (size-bounded LRU)
+ *  - dedup (time-windowed; key → expiresAt)
  *  - filtering of bot self-messages and subtype noise
  *  - normalization into a `SlackEvent` union
  *
@@ -33,12 +39,16 @@ const DEFAULT_DEDUP_CAPACITY = 1024
  */
 export class LeucoSlackEventProcessor {
   private readonly dedupCapacity: number
-  private readonly seenKeys = new Set<string>()
+  private readonly dedupTtlMs: number
+  private readonly now: () => number
+  private readonly seenKeys = new Map<string, number>()
   private botUserId: string | null
 
   constructor(props: Props) {
     this.botUserId = props.botUserId
     this.dedupCapacity = props.dedupCapacity ?? DEFAULT_DEDUP_CAPACITY
+    this.dedupTtlMs = props.dedupTtlMs ?? DEFAULT_DEDUP_TTL_MS
+    this.now = props.now ?? Date.now
   }
 
   /**
@@ -78,6 +88,9 @@ export class LeucoSlackEventProcessor {
     if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
     if (data.user === this.botUserId) return { skip: true, reason: "self message" }
+    if (isAddressedToAnotherUser(data.text ?? "", this.botUserId)) {
+      return { skip: true, reason: "addressed to another user" }
+    }
 
     return this.dispatchMessage(data, "message")
   }
@@ -121,7 +134,7 @@ export class LeucoSlackEventProcessor {
     }
 
     const rawText = data.text ?? ""
-    const mentioned = this.botUserId !== null && rawText.includes(`<@${this.botUserId}>`)
+    const mentioned = data.channel.startsWith("D") || slackTextMentionsUser(rawText, this.botUserId)
     const text = stripMention(rawText, this.botUserId)
     const threadTs = data.thread_ts ?? data.ts
 
@@ -140,12 +153,24 @@ export class LeucoSlackEventProcessor {
     return { skip: false, event: message }
   }
 
-  /** LRU dedup. Returns true when the key is fresh, false when already seen. */
+  /**
+   * Time-windowed dedup. Returns true when the key is fresh (not seen within
+   * the TTL), false when already seen. A capacity cap evicts the oldest entry
+   * if the map grows past the bound — this protects against bursts so large
+   * the TTL alone cannot keep up.
+   */
   private consume(key: string): boolean {
-    if (this.seenKeys.has(key)) return false
-    this.seenKeys.add(key)
+    const now = this.now()
+    const existing = this.seenKeys.get(key)
+    if (existing !== undefined && existing > now) return false
+
+    // Replacing the entry moves it to the tail of the Map's insertion order,
+    // which is what `keys().next().value` evicts when capacity is hit.
+    this.seenKeys.delete(key)
+    this.seenKeys.set(key, now + this.dedupTtlMs)
+
     if (this.seenKeys.size > this.dedupCapacity) {
-      const first = this.seenKeys.values().next().value
+      const first = this.seenKeys.keys().next().value
       if (typeof first === "string") this.seenKeys.delete(first)
     }
     return true
@@ -154,5 +179,23 @@ export class LeucoSlackEventProcessor {
 
 const stripMention = (text: string, botUserId: string | null): string => {
   if (botUserId === null) return text.trim()
-  return text.replace(new RegExp(`<@${botUserId}>`, "g"), "").trim()
+  return text.replace(slackMentionRegex(botUserId), "").trim()
+}
+
+export const slackTextMentionsUser = (text: string, userId: string | null): boolean => {
+  if (userId === null) return false
+  return slackMentionRegex(userId).test(text)
+}
+
+const slackMentionRegex = (userId: string): RegExp => {
+  return new RegExp(`<@${escapeRegExp(userId)}(?:\\|[^>]+)?>`, "g")
+}
+
+const isAddressedToAnotherUser = (text: string, botUserId: string): boolean => {
+  const firstToken = text.trimStart().match(/^<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/)
+  return firstToken !== null && firstToken[1] !== botUserId
+}
+
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

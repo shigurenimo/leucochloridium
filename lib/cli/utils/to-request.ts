@@ -4,18 +4,7 @@ const SHORT_FLAGS: Record<string, string> = {
   v: "version",
 }
 
-const TOP_LEAFS = new Set([
-  "run",
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "logs",
-  "events",
-  "update",
-  "doctor",
-  "kill",
-])
+const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "events", "update", "doctor", "kill"])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
 const NAMED_LEAFS = new Set([
@@ -96,10 +85,18 @@ export const toRequest = (args: string[]): CliRequest => {
     const arg = args[i]!
 
     if (arg.startsWith("--")) {
-      const key = arg.slice(2)
+      const body = arg.slice(2)
+      const eqIndex = body.indexOf("=")
+      if (eqIndex !== -1) {
+        flags[body.slice(0, eqIndex)] = body.slice(eqIndex + 1)
+        i++
+        continue
+      }
+
+      const key = body
       const next = args[i + 1]
 
-      if (typeof next === "string" && !next.startsWith("-")) {
+      if (typeof next === "string" && !isFlagToken(next)) {
         flags[key] = next
         i += 2
       } else {
@@ -209,4 +206,12 @@ const step = (stage: Stage, arg: string): StepDecision => {
   }
 
   return { kind: "positional" }
+}
+
+const isFlagToken = (token: string): boolean => {
+  if (!token.startsWith("-")) return false
+  if (token.length === 1) return false
+  const tail = token.slice(1)
+  if (tail.startsWith("-")) return true
+  return Number.isNaN(Number(token))
 }

@@ -14,7 +14,7 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
  * On timeout the codex child is restarted (in-flight turn dies with it) and
  * the project thread is re-resumed on the next call.
  */
-const TURN_TIMEOUT_MS = 10 * 60 * 1000
+const TURN_TIMEOUT_MS = 6 * 60 * 1000
 
 type Logger = (line: string) => void
 
@@ -269,6 +269,26 @@ export class LeucoTenant {
   }
 
   private async ensureThread(): Promise<string | Error> {
+    // If the codex child died (SIGSEGV / OOM / external kill / `app-server`
+    // exited cleanly) we surface a fresh respawn here instead of letting
+    // every subsequent turn fail with `codex client not started`. The
+    // persisted thread id survives, so the next ensureThread call will
+    // `resumeThread` it.
+    if (!this.codex.isRunning()) {
+      this.log(`[leuco] ${this.key}: codex child not running — respawning`)
+      this.codexThreadLive = false
+      const restart = await this.codex.start().catch((err: unknown) => err)
+      if (restart instanceof Error) {
+        return new Error(`codex respawn failed: ${errorMessage(restart)}`)
+      }
+      this.bus.emit({
+        ts: Date.now(),
+        type: "log",
+        level: "warn",
+        line: `[${this.key}] codex child respawned after exit`,
+      })
+    }
+
     if (this.codexThreadId !== null && this.codexThreadLive) return this.codexThreadId
 
     const developerInstructions = this.composeDeveloperInstructions()

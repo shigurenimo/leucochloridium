@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path"
 import { z } from "zod"
-import { PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
+import { PROMPT_PRESET_NAMES, PromptPreset } from "@/engine/prompt-presets"
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
@@ -29,11 +29,11 @@ const slackChannelSchema = z.object({
    * When the bot adds the in-progress / done / error reactions to the
    * incoming message:
    *   - "off": never (codex is fully responsible for any visible feedback)
-   *   - "mention": only when the bot is @-mentioned (default)
+   *   - "mention": only when the bot is @-mentioned
    *   - "always": every accepted message event
    * Reaction events themselves never trigger ack — they are silent regardless.
    */
-  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
+  ackMode: z.enum(["off", "mention", "always"]).default("off"),
   /** Override the emoji names used by the ack reactions. Slack reaction names without `:`. */
   ackIcons: ackIconsSchema,
 })
@@ -110,7 +110,13 @@ export const projectSchema = z.object({
   path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
   enabled: z.boolean().default(true),
   useCommonInstructions: z.boolean().default(true),
-  prompts: z.array(z.enum(PROMPT_PRESET_NAMES)).default(["friendly"]),
+  prompts: z
+    .array(z.enum(PROMPT_PRESET_NAMES))
+    .default([
+      PromptPreset.CORE,
+      PromptPreset.COMMUNICATION,
+      PromptPreset.COMMUNICATION_SLACK,
+    ]),
   channels: z.array(channelSchema).default([]),
   mcpServers: z.record(safeName, mcpServerSchema).default({}),
   state: projectStateSchema,

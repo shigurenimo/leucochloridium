@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { Project, ScheduleEntry } from "@/config/config-schema"
+import { PromptPreset } from "@/engine/prompt-presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -15,7 +16,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
   path: "/tmp/demo",
   enabled: true,
   useCommonInstructions: true,
-  prompts: ["friendly"],
+  prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [
     {
       id: "11111111-1111-4111-8111-111111111111",
@@ -182,7 +183,7 @@ describe("LeucoProjectStore", () => {
         path: "/tmp/legacy",
         enabled: true,
         useCommonInstructions: true,
-        prompts: ["friendly"],
+        prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
         channels: [],
         mcpServers: {},
       }),

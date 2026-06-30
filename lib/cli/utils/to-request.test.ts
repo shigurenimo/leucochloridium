@@ -103,9 +103,7 @@ describe("toRequest", () => {
   })
 
   it("expands project session reset", () => {
-    expect(toRequest(["projects", "azamino", "session"]).path).toBe(
-      "/projects/azamino/session",
-    )
+    expect(toRequest(["projects", "azamino", "session"]).path).toBe("/projects/azamino/session")
     expect(toRequest(["projects", "azamino", "session", "reset"]).path).toBe(
       "/projects/azamino/session/reset",
     )
@@ -168,5 +166,15 @@ describe("toRequest", () => {
 
   it("keeps removed project reset routed to a tombstone", () => {
     expect(toRequest(["projects", "p", "reset"]).path).toBe("/projects/p/reset")
+  })
+
+  it("parses --key=value form", () => {
+    const r = toRequest(["events", "--limit=50", "--project=foo"])
+    expect(r.parsed.flags).toEqual({ limit: "50", project: "foo" })
+  })
+
+  it("accepts a negative-number flag value", () => {
+    const r = toRequest(["events", "--offset", "-5"])
+    expect(r.parsed.flags).toEqual({ offset: "-5" })
   })
 })

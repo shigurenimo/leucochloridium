@@ -17,7 +17,6 @@ commands:
   config / machine-wide settings
   boot / macOS LaunchAgent
   slack / forward Slack API calls
-  mcp / stdio MCP server
 
 diagnosis (something is wrong?):
   leuco doctor              run all checks and report issues

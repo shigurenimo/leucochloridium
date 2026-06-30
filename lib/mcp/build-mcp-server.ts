@@ -77,8 +77,7 @@ const SLACK_DOWNLOAD_FILE_INPUT_SCHEMA = {
     },
     url: {
       type: "string",
-      description:
-        "Slack url_private or url_private_download. Mutually exclusive with `file_id`.",
+      description: "Slack url_private or url_private_download. Mutually exclusive with `file_id`.",
     },
     output_path: {
       type: "string",
@@ -338,16 +337,19 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
 
   const project = props.store.load(props.projectId)
 
+  // Mirror `resolveScheduleChannel`: only enabled schedule channels are
+  // addressable through MCP. Listing disabled channels would create the
+  // illusion that `schedule_create` / `schedule_delete` could target them too.
   const channels = project.channels.filter(
     (c): c is ScheduleChannel =>
-      c.type === "schedule" && (!channelNameArg || c.name === channelNameArg),
+      c.type === "schedule" && c.enabled && (!channelNameArg || c.name === channelNameArg),
   )
 
   if (channels.length === 0) {
     throw new Error(
       channelNameArg
-        ? `schedule channel '${channelNameArg}' not found in ${project.name}`
-        : `${project.name} has no schedule channel`,
+        ? `schedule channel '${channelNameArg}' not found (or disabled) in ${project.name}`
+        : `${project.name} has no enabled schedule channel`,
     )
   }
 
