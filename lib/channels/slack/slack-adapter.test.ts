@@ -51,6 +51,60 @@ describe("LeucoSlackAdapter.canReadChannel", () => {
 
     await expect(adapter.canReadChannel("D1")).resolves.toBe(false)
   })
+
+  it("caches a positive result and skips repeat conversations.info calls", async () => {
+    const client = new LeucoMemorySlackWebClient({
+      conversationsInfo: { isMember: true },
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+
+    expect(client.calls.conversationsInfo).toHaveLength(1)
+  })
+
+  it("caches a permanent denial", async () => {
+    const client = new LeucoMemorySlackWebClient({
+      conversationsInfo: () => {
+        throw new Error("slack conversations.info: channel_not_found")
+      },
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(false)
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(false)
+
+    expect(client.calls.conversationsInfo).toHaveLength(1)
+  })
+
+  it("does not cache transient conversations.info failures", async () => {
+    const client = new LeucoMemorySlackWebClient({
+      conversationsInfo: () => {
+        throw new Error("slack conversations.info http 503 Service Unavailable")
+      },
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+
+    expect(client.calls.conversationsInfo).toHaveLength(2)
+  })
+
+  it("re-checks the channel once the cache TTL expires", async () => {
+    const clock = { nowMs: 0 }
+    const client = new LeucoMemorySlackWebClient({
+      conversationsInfo: { isMember: true },
+    })
+    const adapter = new LeucoSlackAdapter({ client, now: () => clock.nowMs })
+
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+    clock.nowMs = 5 * 60 * 1000 + 1
+    await expect(adapter.canReadChannel("C1")).resolves.toBe(true)
+
+    expect(client.calls.conversationsInfo).toHaveLength(2)
+  })
 })
 
 describe("LeucoSlackAdapter.hasBotReplyAfter", () => {

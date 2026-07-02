@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
@@ -78,6 +87,8 @@ export class LeucoDaemon {
     const stateDir = this.paths.daemonDir()
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
 
+    rotateLogIfLarge(status.logPath)
+
     const logFd = openSync(status.logPath, "a")
 
     const child = spawn(process.execPath, [props.binPath, "run"], {
@@ -97,7 +108,7 @@ export class LeucoDaemon {
     // port. unref()/keepAwake() are after the write because both depend on
     // the pid being persisted first.
     try {
-      writeFileSync(status.pidPath, `${child.pid}\n`, { mode: 0o600 })
+      this.writePidExclusive(status.pidPath, child.pid)
     } catch (error) {
       try {
         process.kill(child.pid, "SIGTERM")
@@ -111,6 +122,30 @@ export class LeucoDaemon {
     this.maybeKeepAwake(child.pid)
 
     return { pid: child.pid, logPath: status.logPath }
+  }
+
+  /**
+   * `wx` refuses to overwrite an existing pid file, shrinking the
+   * check-then-spawn race: when two `leuco start` calls run concurrently the
+   * loser of this write gets an EEXIST instead of silently clobbering the
+   * winner's pid. A stale file left by a crashed daemon (status() said "not
+   * running") is removed once, then the exclusive write is retried.
+   */
+  private writePidExclusive(pidPath: string, pid: number): void {
+    try {
+      writeFileSync(pidPath, `${pid}\n`, { mode: 0o600, flag: "wx" })
+      return
+    } catch (error) {
+      if (!isErrnoCode(error, "EEXIST")) throw error
+    }
+
+    const holder = readPid(pidPath)
+    if (holder !== null && holder !== pid && pidIsAlive(holder)) {
+      throw new Error(`leuco already running (pid ${holder})`)
+    }
+
+    removePidFile(pidPath)
+    writeFileSync(pidPath, `${pid}\n`, { mode: 0o600, flag: "wx" })
   }
 
   /**
@@ -200,7 +235,9 @@ const readPid = (path: string): number | null => {
   try {
     const text = readFileSync(path, "utf8").trim()
     const pid = Number.parseInt(text, 10)
-    return Number.isFinite(pid) ? pid : null
+    // 0 / negative pids address process groups — a corrupted pid file must
+    // never make stop() SIGTERM the caller's whole group or every process.
+    return Number.isInteger(pid) && pid > 0 ? pid : null
   } catch {
     return null
   }
@@ -218,6 +255,24 @@ const pidIsAlive = (pid: number): boolean => {
 
 const isNodeErrno = (error: unknown): error is NodeJS.ErrnoException => {
   return error instanceof Error && "code" in error
+}
+
+const isErrnoCode = (error: unknown, code: string): boolean => {
+  return isNodeErrno(error) && error.code === code
+}
+
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024
+
+/** Cap the append-only daemon log: past 10MB the old log moves to `<log>.1`
+ * (replacing the previous backup) so a long-lived daemon cannot eat the disk. */
+const rotateLogIfLarge = (logPath: string): void => {
+  try {
+    const stat = statSync(logPath)
+    if (stat.size < LOG_ROTATE_BYTES) return
+    renameSync(logPath, `${logPath}.1`)
+  } catch {
+    // missing log (fresh install) or unrotatable — appending still works
+  }
 }
 
 const removePidFile = (path: string): void => {

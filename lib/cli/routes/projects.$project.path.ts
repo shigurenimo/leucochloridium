@@ -32,16 +32,16 @@ export const projectsPathHandler = factory.createHandlers(async (c) => {
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
 
   if (key === "home" || key === "codex") {
-    return c.text(`${paths.projectHome(project.id)}\n`)
+    return c.text(paths.projectHome(project.id))
   }
   if (key === "agents") {
-    return c.text(`${join(paths.projectHome(project.id), "AGENTS.md")}\n`)
+    return c.text(join(paths.projectHome(project.id), "AGENTS.md"))
   }
   if (key === "runtime" || key === "project") {
-    return c.text(`${paths.projectDir(project.id)}\n`)
+    return c.text(paths.projectDir(project.id))
   }
   if (key === "repo") {
-    return c.text(`${project.path}\n`)
+    return c.text(project.path)
   }
 
   throw new HTTPException(400, { message: `unknown project path key: ${key}` })

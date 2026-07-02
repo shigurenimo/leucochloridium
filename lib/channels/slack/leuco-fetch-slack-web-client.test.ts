@@ -115,6 +115,38 @@ describe("LeucoFetchSlackWebClient", () => {
       limit: "100",
     })
   })
+
+  it("retries once after a 429 honoring retry-after", async () => {
+    const responses = [
+      new Response("rate limited", { status: 429, headers: { "Retry-After": "0" } }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    ]
+    const fetchMock = vi.fn(async () => {
+      const next = responses.shift()
+      if (next === undefined) throw new Error("unexpected extra fetch")
+      return next
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
+    await client.chatPostMessage({ channel: "C1", threadTs: null, text: "hi" })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("gives up when the single retry is rate limited again", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response("rate limited", { status: 429, headers: { "Retry-After": "0" } }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
+
+    await expect(
+      client.chatPostMessage({ channel: "C1", threadTs: null, text: "hi" }),
+    ).rejects.toThrow("http 429")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })
 
 const onlyFetchCall = (

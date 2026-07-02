@@ -1,4 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from "node:fs"
 import { dirname } from "node:path"
 
 type Props = {
@@ -12,8 +22,11 @@ type Props = {
 
 /**
  * Write a JSON file atomically: serialise into a temp file in the same
- * directory, optionally chmod it, then `renameSync` over the destination so
- * a crash mid-write leaves the existing file intact rather than truncated.
+ * directory, fsync it, optionally chmod it, then `renameSync` over the
+ * destination. The rename protects against a crash mid-write; the fsync
+ * protects against power loss, where the rename's metadata could otherwise
+ * hit disk before the temp file's data blocks — leaving an empty or torn
+ * settings.json (all projects + Slack tokens).
  *
  * Used wherever a partial write would lose data — settings.json (tokens),
  * agents/state.json (codex thread id), global settings.json. Same-directory
@@ -29,10 +42,14 @@ export const atomicWriteJson = (props: Props): string => {
     // Create with the restrictive mode so the temp file never exists with
     // world-readable bits before the chmod — settings.json holds Slack tokens.
     // The explicit chmodSync still runs to override umask, which can clear bits
-    // off the `writeFileSync` mode.
-    writeFileSync(tempPath, `${JSON.stringify(props.data, null, 2)}\n`, {
-      mode: props.mode,
-    })
+    // off the open() mode.
+    const fd = openSync(tempPath, "w", props.mode)
+    try {
+      writeSync(fd, `${JSON.stringify(props.data, null, 2)}\n`)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
     if (props.mode !== undefined) chmodSync(tempPath, props.mode)
     renameSync(tempPath, props.path)
     return props.path

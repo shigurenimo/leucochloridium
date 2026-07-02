@@ -22,6 +22,8 @@ export const statusHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
   if (flagBool(body.flags.help)) return c.text(help)
 
+  // Always answer 200 with the YAML on stdout (the help advertises yq
+  // piping); the x-cli-exit header carries the advertised 0/1 exit code.
   const { text, isRunning } = formatStatus(c.var.daemon)
-  return c.text(text, isRunning ? 200 : 503)
+  return c.text(text, 200, { "x-cli-exit": isRunning ? "0" : "1" })
 })

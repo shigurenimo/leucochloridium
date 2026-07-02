@@ -1,8 +1,8 @@
 import { HTTPException } from "hono/http-exception"
+import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { validateLeucoName } from "@/cli/utils/validate-name"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> rename / change a project's display name
@@ -27,12 +27,12 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })
   }
 
-  validateLeucoName(newName, "project name")
+  assertRoutableName(newName, "project name")
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
 
-  store.save({ ...project, name: newName })
+  store.updateProject(project.id, (fresh) => ({ ...fresh, name: newName }))
 
   const reload = c.var.daemon.reload()
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"

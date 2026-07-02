@@ -134,7 +134,7 @@ export const eventsHandler = factory.createHandlers(async (c) => {
     }),
   })
 
-  const limit = typeof body.flags.limit === "string" ? Math.max(1, Number(body.flags.limit)) : 20
+  const limit = parseLimitFlag(body.flags.limit)
   const projectFilter = typeof body.flags.project === "string" ? body.flags.project : undefined
   const asJson = flagBool(body.flags.json)
 
@@ -185,3 +185,13 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   const lines = sorted.map((entry) => formatEvent(entry.event))
   return c.text(lines.join("\n"))
 })
+
+const parseLimitFlag = (raw: string | boolean | undefined): number => {
+  if (typeof raw !== "string") return 20
+
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new HTTPException(400, { message: `--limit must be a positive integer (got "${raw}")` })
+  }
+  return parsed
+}

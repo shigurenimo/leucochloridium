@@ -11,6 +11,7 @@ import {
   projectSchema,
 } from "@/config/config-schema"
 import { atomicWriteJson } from "@/fs/atomic-write-json"
+import { withFileLock } from "@/fs/with-file-lock"
 import { globalSettingsSchema } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
@@ -70,13 +71,15 @@ export class LeucoProjectStore {
   }
 
   list(): Project[] {
-    const settings = this.readSettings()
-    const migrated = this.migratePerProjectFiles(settings.projects)
-    if (migrated !== null) {
-      this.writeSettings({ ...settings, projects: migrated })
-      return migrated
-    }
-    return settings.projects
+    return this.withSettingsLock(() => {
+      const settings = this.readSettings()
+      const migrated = this.migratePerProjectFiles(settings.projects)
+      if (migrated !== null) {
+        this.writeSettings({ ...settings, projects: migrated })
+        return migrated
+      }
+      return settings.projects
+    })
   }
 
   load(projectId: string): Project {
@@ -105,26 +108,54 @@ export class LeucoProjectStore {
   }
 
   save(project: Project): string {
-    const settings = this.readSettings()
-    const index = settings.projects.findIndex((p) => p.id === project.id)
-    const next = settings.projects.slice()
+    return this.withSettingsLock(() => {
+      const settings = this.readSettings()
+      const index = settings.projects.findIndex((p) => p.id === project.id)
+      const next = settings.projects.slice()
 
-    if (index >= 0) {
-      next[index] = project
-    } else {
-      next.push(project)
-    }
+      if (index >= 0) {
+        next[index] = project
+      } else {
+        next.push(project)
+      }
 
-    const projectDir = this.paths.projectDir(project.id)
-    if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true })
+      const projectDir = this.paths.projectDir(project.id)
+      if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true })
 
-    return this.writeSettings({ ...settings, projects: next })
+      return this.writeSettings({ ...settings, projects: next })
+    })
+  }
+
+  /**
+   * Read-modify-write a single project inside the settings lock. Prefer this
+   * over `load()` → mutate → `save()` in any caller that can race the daemon
+   * (which persists codexThreadId / scheduleLastFiredAt at its own cadence):
+   * the transform always sees the freshest on-disk project, so it cannot
+   * write back a stale snapshot.
+   */
+  updateProject(projectId: string, transform: (project: Project) => Project): Project {
+    return this.withSettingsLock(() => {
+      const settings = this.readSettings()
+      const found = settings.projects.find((p) => p.id === projectId)
+      if (!found) throw new Error(`project not found: ${projectId}`)
+
+      const updated = transform(found)
+      if (updated.id !== projectId) {
+        throw new Error("updateProject: transform must not change the project id")
+      }
+
+      const next = settings.projects.map((p) => (p.id === projectId ? updated : p))
+      this.writeSettings({ ...settings, projects: next })
+      return updated
+    })
   }
 
   remove(projectId: string): void {
-    const settings = this.readSettings()
-    const next = settings.projects.filter((p) => p.id !== projectId)
-    this.writeSettings({ ...settings, projects: next })
+    this.withSettingsLock(() => {
+      const settings = this.readSettings()
+      const next = settings.projects.filter((p) => p.id !== projectId)
+      this.writeSettings({ ...settings, projects: next })
+    })
 
     rmSync(this.paths.projectDir(projectId), { recursive: true, force: true })
   }
@@ -162,16 +193,33 @@ export class LeucoProjectStore {
     channelName: string
     entryIdOrName: string
   }): string {
-    return this.mutateScheduleChannel(input, (channel) => {
-      const before = channel.entries.length
-      const next = channel.entries.filter(
-        (e) => e.id !== input.entryIdOrName && e.name !== input.entryIdOrName,
-      )
-      if (next.length === before) {
+    this.updateProject(input.projectId, (project) => {
+      const channel = findScheduleChannel(project, input.channelName)
+
+      const removedIds = channel.entries
+        .filter((e) => e.id === input.entryIdOrName || e.name === input.entryIdOrName)
+        .map((e) => e.id)
+      if (removedIds.length === 0) {
         throw new Error(`schedule entry not found: ${input.entryIdOrName}`)
       }
-      return { ...channel, entries: next }
+
+      const nextEntries = channel.entries.filter((e) => !removedIds.includes(e.id))
+      const nextChannels: Channel[] = project.channels.map((c) =>
+        c.name === channel.name ? { ...channel, entries: nextEntries } : c,
+      )
+
+      // Drop the fired-at marks for the removed entries so state does not
+      // accumulate dead UUID keys forever.
+      const nextLastFiredAt = { ...project.state.scheduleLastFiredAt }
+      for (const removedId of removedIds) delete nextLastFiredAt[removedId]
+
+      return {
+        ...project,
+        channels: nextChannels,
+        state: { ...project.state, scheduleLastFiredAt: nextLastFiredAt },
+      }
     })
+    return this.paths.settingsPath()
   }
 
   updateScheduleEntry(input: {
@@ -202,35 +250,36 @@ export class LeucoProjectStore {
   }
 
   private writeSettings(settings: z.infer<typeof globalSettingsSchema>): string {
+    // Validate on write, not just on read. Without this, one unvalidated
+    // caller (e.g. a route that skips name validation) can persist a shape
+    // every later readSettings() rejects — bricking every command until the
+    // file is fixed by hand.
+    const validated = globalSettingsSchema.parse(settings)
+
     return atomicWriteJson({
       path: this.paths.settingsPath(),
-      data: settings,
+      data: validated,
       mode: 0o600,
     })
+  }
+
+  private withSettingsLock<T>(fn: () => T): T {
+    return withFileLock({ lockPath: `${this.paths.settingsPath()}.lock` }, fn)
   }
 
   private mutateScheduleChannel(
     input: { projectId: string; channelName: string },
     transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable,
   ): string {
-    const project = this.load(input.projectId)
-
-    const channelIndex = project.channels.findIndex((c) => c.name === input.channelName)
-    if (channelIndex < 0) {
-      throw new Error(`channel '${input.channelName}' not found in ${project.name}`)
-    }
-
-    const channel = project.channels[channelIndex]!
-    if (channel.type !== "schedule") {
-      throw new Error(`channel '${input.channelName}' is not a schedule channel`)
-    }
-
-    const updated = transform(channel)
-
-    const nextChannels: Channel[] = project.channels.slice()
-    nextChannels[channelIndex] = updated
-
-    return this.save({ ...project, channels: nextChannels })
+    this.updateProject(input.projectId, (project) => {
+      const channel = findScheduleChannel(project, input.channelName)
+      const updated = transform(channel)
+      const nextChannels: Channel[] = project.channels.map((c) =>
+        c.name === channel.name ? updated : c,
+      )
+      return { ...project, channels: nextChannels }
+    })
+    return this.paths.settingsPath()
   }
 
   // ---------------------------------------------------------------------------
@@ -262,29 +311,40 @@ export class LeucoProjectStore {
 
       if (migrated === null) migrated = existing.slice()
 
+      // Read the legacy state BEFORE loadOrMigrate: a v0 directory (no id in
+      // settings.json) gets renamed to its new UUID inside loadOrMigrate, so
+      // every path computed from `entry.name` is dead afterwards. Cleanup
+      // below re-derives paths from the post-rename directory name — deleting
+      // at the stale path was a no-op that left the id-less settings.json in
+      // place, and every subsequent list() re-migrated it under a fresh UUID
+      // (one duplicate project per call).
+      const legacyState = hasState ? readLegacyState(legacyStatePath) : null
+      let finalDirName = entry.name
+
       if (hasSettings) {
-        for (const project of this.loadOrMigrate(entry.name)) {
+        const outcome = this.loadOrMigrate(entry.name)
+        finalDirName = outcome.dirName
+        for (const project of outcome.projects) {
           if (!byId.has(project.id)) {
-            const state = hasState ? readLegacyState(legacyStatePath) : project.state
-            const withState = { ...project, state }
+            const withState = legacyState !== null ? { ...project, state: legacyState } : project
             migrated.push(withState)
             byId.set(project.id, withState)
           }
         }
-        rmSync(legacySettingsPath, { force: true })
       }
 
-      if (hasState) {
-        const existing = byId.get(entry.name)
-        if (existing !== undefined && isEmptyState(existing.state)) {
-          const state = readLegacyState(legacyStatePath)
-          const patched = { ...existing, state }
-          const index = migrated.findIndex((p) => p.id === existing.id)
+      if (legacyState !== null) {
+        const registered = byId.get(entry.name)
+        if (registered !== undefined && isEmptyState(registered.state)) {
+          const patched = { ...registered, state: legacyState }
+          const index = migrated.findIndex((p) => p.id === registered.id)
           if (index >= 0) migrated[index] = patched
-          byId.set(existing.id, patched)
+          byId.set(registered.id, patched)
         }
-        rmSync(legacyStatePath, { force: true })
       }
+
+      rmSync(this.paths.projectSettingsPath(finalDirName), { force: true })
+      rmSync(this.paths.projectStatePath(finalDirName), { force: true })
     }
 
     return migrated
@@ -296,9 +356,11 @@ export class LeucoProjectStore {
    *   v0 → v1: legacy `name`-keyed directory → UUID id.
    *   v1 → v2: flatten `agents[]` into the project.
    *
-   * Returns an array because a multi-agent project splits into N projects.
+   * Returns the projects plus the directory name they now live under —
+   * a v0 directory is renamed to the generated UUID here, so callers must
+   * not reuse paths derived from the pre-migration name.
    */
-  private loadOrMigrate(dirName: string): Project[] {
+  private loadOrMigrate(dirName: string): { projects: Project[]; dirName: string } {
     const path = this.paths.projectSettingsPath(dirName)
     const raw: unknown = JSON.parse(readFileSync(path, "utf8"))
     const json = migrationShape.parse(raw)
@@ -324,18 +386,18 @@ export class LeucoProjectStore {
     const currentVersion = json.version ?? 1
 
     if (currentVersion >= CURRENT_SCHEMA_VERSION) {
-      return [projectSchema.parse(json)]
+      return { projects: [projectSchema.parse(json)], dirName: id }
     }
 
     // --- v1 → v2: flatten agents[] into project ---
 
     const agents = json.agents ?? []
     if (agents.length === 0) {
-      return [this.buildV2Project(id, json, null)]
+      return { projects: [this.buildV2Project(id, json, null)], dirName: id }
     }
 
     if (agents.length === 1) {
-      return [this.buildV2Project(id, json, agents[0]!)]
+      return { projects: [this.buildV2Project(id, json, agents[0]!)], dirName: id }
     }
 
     const results: Project[] = []
@@ -364,7 +426,7 @@ export class LeucoProjectStore {
       }
     }
 
-    return results
+    return { projects: results, dirName: id }
   }
 
   /**
@@ -429,6 +491,17 @@ export class LeucoProjectStore {
       renameSync(legacy, target)
     }
   }
+}
+
+const findScheduleChannel = (project: Project, channelName: string): ScheduleChannelWritable => {
+  const channel = project.channels.find((c) => c.name === channelName)
+  if (!channel) {
+    throw new Error(`channel '${channelName}' not found in ${project.name}`)
+  }
+  if (channel.type !== "schedule") {
+    throw new Error(`channel '${channelName}' is not a schedule channel`)
+  }
+  return channel
 }
 
 const legacyStateSchema = z.object({

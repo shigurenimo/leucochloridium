@@ -17,12 +17,21 @@ const cwd = process.cwd()
 
 const env = new LeucoEnv({ env: process.env })
 
-const envFiles = {
-  local: env.loadFile(join(cwd, ".env.local")),
-  base: env.loadFile(join(cwd, ".env")),
-}
-
 const args = process.argv.slice(2)
+
+// Load cwd .env files ONLY for the foreground `leuco run`. Every other
+// command spawns or signals the long-lived daemon with `process.env`, and an
+// unconditional load would bake whatever directory the user happened to run
+// `leuco start` from — including unrelated secrets — into the daemon and
+// every tenant's codex child.
+const skippedEnvFile = { path: "", loaded: false, keys: [] as string[] }
+const envFiles =
+  args[0] === "run"
+    ? {
+        local: env.loadFile(join(cwd, ".env.local")),
+        base: env.loadFile(join(cwd, ".env")),
+      }
+    : { local: skippedEnvFile, base: skippedEnvFile }
 
 if (args[0] === "--version" || args[0] === "-v") {
   process.stdout.write(`${pkg.version}\n`)
@@ -41,8 +50,7 @@ const daemon = new LeucoDaemon({ paths })
 const projectStore = new LeucoProjectStore({ paths })
 
 // When the user is inside a registered project's cwd, allow the shorter
-// `leuco agents …` / `leuco channels …` form by injecting the project name
-// before parsing.
+// `leuco channels …` form by injecting `projects <name>` before parsing.
 const argsAfterShortcut = applyCwdShortcut(args, cwd, projectStore)
 
 const cli = factory.createApp()
@@ -92,4 +100,11 @@ const text = await res.text()
 
 if (text) {
   process.stdout.write(`${text}\n`)
+}
+
+// Routes whose body must stay pipeable on stdout even when they signal
+// failure (status / doctor) return 200 plus this header instead of a 5xx.
+const cliExit = res.headers.get("x-cli-exit")
+if (cliExit !== null && cliExit !== "0") {
+  process.exit(Number.parseInt(cliExit, 10) || 1)
 }

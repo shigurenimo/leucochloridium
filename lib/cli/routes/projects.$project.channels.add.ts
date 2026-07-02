@@ -1,6 +1,7 @@
 import { HTTPException } from "hono/http-exception"
 import { randomUUID } from "node:crypto"
 import type { Context } from "hono"
+import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import { factory, type Env } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { type CliBody, flagBool, readCliBody } from "@/cli/utils/read-cli-body"
@@ -47,7 +48,12 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
     })
   }
 
-  const channelName = typeof body.flags.name === "string" ? body.flags.name : "slack"
+  // Validate before saving: readSettings() re-parses names against safeName
+  // on every load, so persisting an invalid name would brick every command.
+  const channelName = assertRoutableName(
+    typeof body.flags.name === "string" ? body.flags.name : "slack",
+    "channel name",
+  )
   const botToken = (await resolveTokenFlag(body.flags["bot-token"])) ?? ""
   const appToken = (await resolveTokenFlag(body.flags["app-token"])) ?? ""
   validateSlackTokens({ botToken, appToken })
@@ -77,7 +83,8 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
     },
   }
 
-  const saved = store.save({ ...project, channels: [...project.channels, next] })
+  store.updateProject(project.id, (fresh) => ({ ...fresh, channels: [...fresh.channels, next] }))
+  const saved = store.getPaths().settingsPath()
 
   const tail =
     botToken.length > 0 && appToken.length > 0
@@ -107,7 +114,10 @@ const validateSlackTokens = (input: { botToken: string; appToken: string }): voi
 }
 
 const addScheduleChannel = async (c: Context<Env>, body: CliBody, projectName: string) => {
-  const channelName = typeof body.flags.name === "string" ? body.flags.name : "schedule"
+  const channelName = assertRoutableName(
+    typeof body.flags.name === "string" ? body.flags.name : "schedule",
+    "channel name",
+  )
 
   const store = new LeucoProjectStore({ paths: new LeucoPaths() })
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
@@ -127,7 +137,7 @@ const addScheduleChannel = async (c: Context<Env>, body: CliBody, projectName: s
     entries: [],
   }
 
-  store.save({ ...project, channels: [...project.channels, next] })
+  store.updateProject(project.id, (fresh) => ({ ...fresh, channels: [...fresh.channels, next] }))
 
   return c.text(
     `added channel "${channelName}" (schedule, id: ${channelId})\nadd entries with \`leuco projects ${projectName} channels ${channelName} schedules add\`.`,

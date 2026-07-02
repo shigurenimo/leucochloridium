@@ -8,6 +8,7 @@ import {
   type SlackHistorySlice,
   type SlackSearchMessages,
 } from "@/channels/slack/leuco-slack-web-client"
+import { slackRateLimitDelayMs } from "@/channels/slack/slack-rate-limit-delay"
 
 type Props = {
   botToken: string
@@ -173,12 +174,8 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     return { messages }
   }
 
-  private async callOk(
-    method: string,
-    body: Record<string, unknown>,
-    encoding: "json" | "form" = FORM_ENCODED_METHODS.has(method) ? "form" : "json",
-  ): Promise<unknown> {
-    const raw = encoding === "form" ? await this.postForm(method, body) : await this.post(method, body)
+  private async callOk(method: string, body: Record<string, unknown>): Promise<unknown> {
+    const raw = await this.apiCall(method, body)
     if (typeof raw !== "object" || raw === null) {
       throw new Error(`slack ${method}: response is not an object`)
     }
@@ -192,7 +189,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   }
 
   private async post(method: string, body: Record<string, unknown>): Promise<unknown> {
-    const response = await fetch(`${SLACK_API_BASE}/${method}`, {
+    return await this.fetchSlackApi(method, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.props.botToken}`,
@@ -200,12 +197,6 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       },
       body: JSON.stringify(body),
     })
-
-    if (!response.ok) {
-      throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
-    }
-
-    return await response.json()
   }
 
   private async postForm(method: string, body: Record<string, unknown>): Promise<unknown> {
@@ -215,7 +206,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       params.set(key, formValue(value))
     }
 
-    const response = await fetch(`${SLACK_API_BASE}/${method}`, {
+    return await this.fetchSlackApi(method, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.props.botToken}`,
@@ -223,7 +214,22 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       },
       body: params.toString(),
     })
+  }
 
+  /** POST once; on a 429 honor Retry-After and retry exactly once. No general
+   * retry loop — a second 429 surfaces as the plain http error. */
+  private async fetchSlackApi(method: string, init: RequestInit): Promise<unknown> {
+    const response = await fetch(`${SLACK_API_BASE}/${method}`, init)
+    if (response.status !== 429) return await this.parseHttpResponse(method, response)
+
+    const delayMs = slackRateLimitDelayMs(response.headers.get("retry-after"))
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+
+    const retried = await fetch(`${SLACK_API_BASE}/${method}`, init)
+    return await this.parseHttpResponse(method, retried)
+  }
+
+  private async parseHttpResponse(method: string, response: Response): Promise<unknown> {
     if (!response.ok) {
       throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
     }

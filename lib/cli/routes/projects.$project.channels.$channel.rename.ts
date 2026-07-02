@@ -1,8 +1,8 @@
 import { HTTPException } from "hono/http-exception"
+import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import { factory } from "@/cli/cli-factory"
 import { findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { validateLeucoName } from "@/cli/utils/validate-name"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> channels <c> rename / change a channel's identifier
@@ -27,7 +27,7 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: `new name is identical to current name (${oldName})` })
   }
 
-  validateLeucoName(newName, "channel name")
+  assertRoutableName(newName, "channel name")
 
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
@@ -40,10 +40,10 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
     })
   }
 
-  store.save({
-    ...project,
-    channels: project.channels.map((ch) => (ch.name === oldName ? { ...ch, name: newName } : ch)),
-  })
+  store.updateProject(project.id, (fresh) => ({
+    ...fresh,
+    channels: fresh.channels.map((ch) => (ch.name === oldName ? { ...ch, name: newName } : ch)),
+  }))
 
   const lines = [`renamed channel "${oldName}" to "${newName}"`]
   const reloaded = c.var.daemon.reload()

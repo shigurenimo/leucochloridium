@@ -47,11 +47,17 @@ export const updateHandler = factory.createHandlers(async (c) => {
   }
 
   daemon.stop()
-  const started = daemon.start({ binPath: c.var.binPath, env: process.env })
-  if (started instanceof Error) {
-    return c.text(`leuco: updated to ${latest}, but daemon restart failed: ${started.message}`, 500)
+  // daemon.start throws on failure; wrap the message so the user still learns
+  // the update itself succeeded and only the restart needs a manual retry.
+  try {
+    const started = daemon.start({ binPath: c.var.binPath, env: process.env })
+    return c.text(`leuco: updated to ${latest}, daemon restarted (pid ${started.pid})`)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new HTTPException(500, {
+      message: `updated to ${latest}, but daemon restart failed: ${message}. run \`leuco start\` manually.`,
+    })
   }
-  return c.text(`leuco: updated to ${latest}, daemon restarted (pid ${started.pid})`)
 })
 
 const fetchLatestVersion = async (): Promise<string | Error> => {

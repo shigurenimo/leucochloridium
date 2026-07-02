@@ -4,12 +4,38 @@ const SHORT_FLAGS: Record<string, string> = {
   v: "version",
 }
 
-const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "events", "update", "doctor", "kill"])
+/**
+ * Flags that never take a value. A bare value-taking flag greedily consumes
+ * the next non-flag token, so `--force restart` would otherwise swallow the
+ * `restart` leaf (flags.force="restart" → flagBool false, command unrouted).
+ */
+const BOOLEAN_FLAGS = new Set([
+  "help",
+  "force",
+  "follow",
+  "version",
+  "json",
+  "fix",
+  "cascade",
+  "check",
+])
+
+const TOP_LEAFS = new Set([
+  "run",
+  "start",
+  "stop",
+  "restart",
+  "status",
+  "logs",
+  "events",
+  "update",
+  "doctor",
+  "kill",
+])
 const PROJECT_LEAFS = new Set(["list", "create", "add"])
 const CHANNEL_LEAFS = new Set(["list", "add"])
-const NAMED_LEAFS = new Set([
+const PROJECT_NAMED_LEAFS = new Set([
   "remove",
-  "show",
   "rename",
   "relocate",
   "start",
@@ -17,6 +43,13 @@ const NAMED_LEAFS = new Set([
   "restart",
   "reset",
   "path",
+])
+const CHANNEL_NAMED_LEAFS = new Set([
+  "remove",
+  "rename",
+  "start",
+  "stop",
+  "restart",
   "set-tokens",
   "download-file",
 ])
@@ -63,12 +96,13 @@ export type CliRequest = {
  *   leuco projects <name> channels <name> <named-leaf>        → /projects/<name>/channels/<name>/<leaf>
  *   leuco projects <name> channels <name> schedules <leaf>    → /projects/<name>/channels/<name>/schedules/<leaf>
  *
- * `top-leafs`: run | start | stop | restart | status | logs | update
+ * `top-leafs`: run | start | stop | restart | status | logs | events | update | doctor | kill
  * `project-leafs`: list | create | add
  * `channel-leafs`: list | add
  * `config-leafs`: list | get | set
  * `boot-leafs`: install | uninstall | status
- * `named-leafs` (after a name): remove | show | rename | relocate | start | stop | restart | reset | set-tokens
+ * project `named-leafs`: remove | rename | relocate | start | stop | restart | reset | path
+ * channel `named-leafs`: remove | rename | start | stop | restart | set-tokens | download-file
  *
  * Anything past the recognised leaf becomes positional `args`. `--key value`
  * and bare `--flag` populate `flags`; single-letter `-x` expands via SHORT_FLAGS.
@@ -96,7 +130,7 @@ export const toRequest = (args: string[]): CliRequest => {
       const key = body
       const next = args[i + 1]
 
-      if (typeof next === "string" && !isFlagToken(next)) {
+      if (!BOOLEAN_FLAGS.has(key) && typeof next === "string" && !isFlagToken(next)) {
         flags[key] = next
         i += 2
       } else {
@@ -178,7 +212,7 @@ const step = (stage: Stage, arg: string): StepDecision => {
   }
 
   if (stage === "named-project") {
-    if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (PROJECT_NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     if (arg === "session") return { kind: "segment", next: "project-session" }
     if (arg === "channels") return { kind: "segment", next: "channels" }
     return { kind: "positional" }
@@ -195,7 +229,7 @@ const step = (stage: Stage, arg: string): StepDecision => {
   }
 
   if (stage === "named-channel") {
-    if (NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (CHANNEL_NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
     if (arg === "schedules") return { kind: "segment", next: "schedules" }
     return { kind: "positional" }
   }

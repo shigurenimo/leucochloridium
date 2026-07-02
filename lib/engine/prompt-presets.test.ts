@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-  LeucoPromptPresets,
-  PROMPT_PRESET_NAMES,
-  PromptPreset,
-} from "@/engine/prompt-presets"
+import { LeucoPromptPresets, PROMPT_PRESET_NAMES, PromptPreset } from "@/engine/prompt-presets"
 
 describe("LeucoPromptPresets", () => {
   it("registers CORE, COMMUNICATION, and COMMUNICATION_SLACK as known presets", () => {

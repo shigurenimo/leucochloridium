@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto"
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -16,6 +17,7 @@ import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { tomlString } from "@/engine/codex/toml-string"
 import { LeucoEngine } from "@/engine/engine"
 import { LeucoPromptPresets } from "@/engine/prompt-presets"
+import { tenantConfigSignature } from "@/engine/tenant-config-signature"
 import { LeucoTenant } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { LeucoPaths } from "@/paths/leuco-paths"
@@ -62,6 +64,9 @@ export class LeucoRuntime {
     const baseLog = buildProps.onLog ?? ((line: string) => process.stdout.write(`${line}\n`))
     const paths = new LeucoPaths({ home: buildProps.home })
     const bus = new LeucoEventBus({ eventLogPath: paths.daemonEventLogPath() })
+    // events.db stores full Slack message bodies; keep it as tight as
+    // settings.json instead of inheriting the umask (typically 644).
+    hardenEventLogPermissions(paths.daemonEventLogPath())
 
     const onLog: Logger = (line) => {
       baseLog(line)
@@ -72,27 +77,18 @@ export class LeucoRuntime {
     const projectStateStore = new LeucoProjectStateStore({ projectStore })
     const projects = projectStore.list()
 
-    const mcpToken = randomBytes(32).toString("hex")
-    const mcpPort = buildProps.port
-
-    const tenants: LeucoTenant[] = []
-    for (const project of projects) {
-      if (!project.enabled) continue
-      tenants.push(
-        buildTenant({
-          project,
-          paths,
-          env: buildProps.env,
-          codexBin: buildProps.codexBin,
-          onLog,
-          bus,
-          projectStore,
-          projectStateStore,
-          mcpToken,
-          mcpPort,
-        }),
-      )
+    // One bearer token per project, generated lazily and held for the daemon
+    // lifetime: tenant A's codex child cannot present its token against
+    // tenant B's `/mcp/:project` route.
+    const mcpTokens = new Map<string, string>()
+    const mcpTokenForProject = (projectId: string): string => {
+      const existing = mcpTokens.get(projectId)
+      if (existing !== undefined) return existing
+      const fresh = randomBytes(32).toString("hex")
+      mcpTokens.set(projectId, fresh)
+      return fresh
     }
+    const mcpPort = buildProps.port
 
     const buildTenantFn = (project: Project): LeucoTenant =>
       buildTenant({
@@ -104,9 +100,15 @@ export class LeucoRuntime {
         bus,
         projectStore,
         projectStateStore,
-        mcpToken,
+        mcpToken: mcpTokenForProject(project.id),
         mcpPort,
       })
+
+    const tenants: LeucoTenant[] = []
+    for (const project of projects) {
+      if (!project.enabled) continue
+      tenants.push(buildTenantFn(project))
+    }
 
     const engine = new LeucoEngine({
       tenants,
@@ -115,7 +117,7 @@ export class LeucoRuntime {
       projectStore,
       buildTenant: buildTenantFn,
       bus,
-      mcpToken,
+      mcpTokenForProject: (projectId) => mcpTokens.get(projectId) ?? null,
     })
 
     return new LeucoRuntime({
@@ -212,6 +214,10 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
+    agentSpec: {
+      model: props.project.model ?? undefined,
+      developerInstructions: props.project.developerInstructions ?? undefined,
+    },
     codex,
     plugins,
     onLog: props.onLog,
@@ -220,7 +226,18 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
     presets,
+    configSignature: tenantConfigSignature(props.project),
   })
+}
+
+const hardenEventLogPermissions = (eventLogPath: string): void => {
+  for (const path of [eventLogPath, `${eventLogPath}-wal`, `${eventLogPath}-shm`]) {
+    try {
+      chmodSync(path, 0o600)
+    } catch {
+      // sidecar files appear lazily; permissions are re-applied on next boot
+    }
+  }
 }
 
 const ensureCodexHome = (paths: LeucoPaths, projectId: string): string => {
@@ -271,12 +288,14 @@ const ensureTenantConfigToml = (
     if (name === "leuco") continue
     lines.push(
       `[mcp_servers.${name}]`,
-      `command = ${tomlKeyString(server.command)}`,
+      `command = ${tomlString(server.command)}`,
       `args = ${tomlStringArray(server.args)}`,
     )
     const envEntries = Object.entries(server.env)
     if (envEntries.length > 0) {
-      const inline = envEntries.map(([key, value]) => `${key} = ${tomlKeyString(value)}`).join(", ")
+      // Keys are validated as env-var names by the schema; values still need
+      // full TOML string quoting.
+      const inline = envEntries.map(([key, value]) => `${key} = ${tomlString(value)}`).join(", ")
       lines.push(`env = { ${inline} }`)
     }
     lines.push("")
@@ -289,10 +308,18 @@ const ensureAuthSymlink = (codexHome: string, source: string): void => {
   if (!existsSync(source)) return
 
   const target = join(codexHome, "auth.json")
-  if (existsSync(target) || isSymlink(target)) {
+
+  if (isSymlink(target)) {
     if (currentSymlinkTarget(target) === source) return
     unlinkSync(target)
+    symlinkSync(source, target)
+    return
   }
+
+  // A REGULAR auth.json means this tenant logged in separately on purpose —
+  // replacing it with the shared symlink would destroy those credentials.
+  if (existsSync(target)) return
+
   symlinkSync(source, target)
 }
 
@@ -313,10 +340,6 @@ const currentSymlinkTarget = (path: string): string | null => {
   }
 }
 
-const tomlKeyString = (value: string): string => {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-}
-
 const tomlStringArray = (values: string[]): string => {
-  return `[${values.map(tomlKeyString).join(", ")}]`
+  return `[${values.map(tomlString).join(", ")}]`
 }

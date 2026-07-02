@@ -34,6 +34,9 @@ type Props = {
   plugins: ChannelPlugin[]
   useCommonInstructions?: boolean
   presets?: string[]
+  /** `tenantConfigSignature(project)` at build time; reconcile compares it
+   * against the freshly loaded project to decide whether to rebuild. */
+  configSignature?: string
   onLog?: Logger
   bus?: LeucoEventBus
 }
@@ -61,6 +64,7 @@ export class LeucoTenant {
   readonly projectId: string
   readonly projectName: string
   readonly projectPath: string
+  readonly configSignature: string | null
   private readonly agentSpec: TenantAgentSpec
   private readonly codex: CodexClientPort
   private readonly plugins: ChannelPlugin[]
@@ -73,11 +77,13 @@ export class LeucoTenant {
   private codexThreadLive = false
   private pendingTurns: PendingTurn[] = []
   private turnInflight = false
+  private stopped = false
 
   constructor(props: Props) {
     this.projectId = props.projectId
     this.projectName = props.projectName
     this.projectPath = props.projectPath
+    this.configSignature = props.configSignature ?? null
     this.agentSpec = props.agentSpec ?? {}
     this.codex = props.codex
     this.plugins = props.plugins
@@ -116,6 +122,7 @@ export class LeucoTenant {
   }
 
   async start(): Promise<void> {
+    this.stopped = false
     this.log(`[leuco] starting codex app-server for ${this.key}`)
     await this.codex.start()
 
@@ -152,6 +159,12 @@ export class LeucoTenant {
   }
 
   async stop(): Promise<void> {
+    // Must be set before codex.stop(): the drain loop otherwise takes the
+    // next queued batch after the in-flight turn dies, sees the codex child
+    // gone, and ensureThread re-spawns it — an orphan codex process nobody
+    // owns after this tenant is discarded (reconcile rebuilds, shutdown).
+    this.stopped = true
+
     for (const plugin of this.plugins) {
       await plugin.stop().catch((err: unknown) => {
         this.log(`[leuco] plugin ${plugin.name} stop: ${errorMessage(err)}`)
@@ -161,6 +174,11 @@ export class LeucoTenant {
     await this.codex.stop().catch((err: unknown) => {
       this.log(`[leuco] codex stop (${this.key}): ${errorMessage(err)}`)
     })
+
+    const abandoned = this.pendingTurns.splice(0)
+    for (const pending of abandoned) {
+      pending.resolve(new Error(`tenant ${this.key} stopped before the turn ran`))
+    }
 
     this.bus.emit({
       ts: Date.now(),
@@ -182,6 +200,14 @@ export class LeucoTenant {
     try {
       while (this.pendingTurns.length > 0) {
         const batch = this.pendingTurns.splice(0)
+
+        if (this.stopped) {
+          for (const pending of batch) {
+            pending.resolve(new Error(`tenant ${this.key} stopped before the turn ran`))
+          }
+          continue
+        }
+
         const reply = await this.executeBatchedTurn(batch).catch((err: unknown) =>
           err instanceof Error ? err : new Error(String(err)),
         )
@@ -260,15 +286,21 @@ export class LeucoTenant {
       this.log(`[leuco] ${this.key}: ${reply.message}; restarting codex child`)
       this.codexThreadLive = false
       await this.codex.stop().catch(() => undefined)
-      await this.codex.start().catch((err: unknown) => {
-        this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorMessage(err)}`)
-      })
+      if (!this.stopped) {
+        await this.codex.start().catch((err: unknown) => {
+          this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorMessage(err)}`)
+        })
+      }
     }
 
     return reply
   }
 
   private async ensureThread(): Promise<string | Error> {
+    if (this.stopped) {
+      return new Error(`tenant ${this.key} is stopped`)
+    }
+
     // If the codex child died (SIGSEGV / OOM / external kill / `app-server`
     // exited cleanly) we surface a fresh respawn here instead of letting
     // every subsequent turn fail with `codex client not started`. The

@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs"
 import { atomicWriteJson } from "@/fs/atomic-write-json"
-import { type GlobalSettings, globalSettingsSchema } from "@/global-settings/global-settings-schema"
+import { withFileLock } from "@/fs/with-file-lock"
+import {
+  GLOBAL_SETTINGS_KEYS,
+  type GlobalSettings,
+  globalSettingsSchema,
+} from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 type Props = {
@@ -39,11 +44,13 @@ export class LeucoGlobalSettingsStore {
 
   save(settings: GlobalSettings): string | Error {
     try {
-      return atomicWriteJson({
-        path: this.paths.settingsPath(),
-        data: settings,
-        mode: 0o600,
-      })
+      return withFileLock({ lockPath: `${this.paths.settingsPath()}.lock` }, () =>
+        atomicWriteJson({
+          path: this.paths.settingsPath(),
+          data: settings,
+          mode: 0o600,
+        }),
+      )
     } catch (err) {
       if (err instanceof Error) return err
       return new Error(String(err))
@@ -55,20 +62,38 @@ export class LeucoGlobalSettingsStore {
       return new Error("use `leuco projects` to manage projects")
     }
 
-    const current = this.load()
-    if (current instanceof Error) return current
-
-    const coerced = coerceCliValue(rawValue)
-    const next: Record<string, unknown> = { ...current, [key]: coerced }
-
-    const parsed = globalSettingsSchema.safeParse(next)
-    if (!parsed.success) {
-      return new Error(`invalid ${key}=${rawValue}: ${parsed.error.message}`)
+    // The schema keeps unknown keys (passthrough, for forward compatibility),
+    // so a typo like `keepAwak` would otherwise persist as junk and report
+    // success while changing nothing. Reject unknown keys explicitly.
+    const knownKeys = GLOBAL_SETTINGS_KEYS.filter((k) => k !== "projects")
+    if (!knownKeys.some((k) => k === key)) {
+      return new Error(`unknown setting '${key}' (valid keys: ${knownKeys.join(", ")})`)
     }
 
-    const saved = this.save(parsed.data)
-    if (saved instanceof Error) return saved
-    return parsed.data
+    try {
+      return withFileLock({ lockPath: `${this.paths.settingsPath()}.lock` }, () => {
+        const current = this.load()
+        if (current instanceof Error) throw current
+
+        const coerced = coerceCliValue(rawValue)
+        const next: Record<string, unknown> = { ...current, [key]: coerced }
+
+        const parsed = globalSettingsSchema.safeParse(next)
+        if (!parsed.success) {
+          throw new Error(`invalid ${key}=${rawValue}: ${parsed.error.message}`)
+        }
+
+        atomicWriteJson({
+          path: this.paths.settingsPath(),
+          data: parsed.data,
+          mode: 0o600,
+        })
+        return parsed.data
+      })
+    } catch (err) {
+      if (err instanceof Error) return err
+      return new Error(String(err))
+    }
   }
 }
 

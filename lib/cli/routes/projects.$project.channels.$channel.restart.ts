@@ -1,7 +1,8 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { findChannel, resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
+import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
 import type { Project } from "@/config/config-schema"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -26,27 +27,39 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
-    return c.text(selfProjectGuardMessage(projectName, `restart channel "${channelName}" for`), 400)
+    throw new HTTPException(400, {
+      message: selfProjectGuardMessage(projectName, `restart channel "${channelName}" for`),
+    })
   }
 
   const channel = findChannel(project, channelName)
 
   const wasEnabled = channel.enabled
 
-  const setChannelEnabled = (enabled: boolean): Project => ({
-    ...project,
-    channels: project.channels.map((ch) => (ch.name === channelName ? { ...ch, enabled } : ch)),
-  })
+  // Patch through updateProject so the daemon's concurrent state writes
+  // (codexThreadId, scheduleLastFiredAt) are never rolled back by a stale
+  // snapshot of the whole project.
+  const setChannelEnabled = (enabled: boolean): void => {
+    store.updateProject(project.id, (fresh): Project => {
+      return {
+        ...fresh,
+        channels: fresh.channels.map((ch) => (ch.name === channelName ? { ...ch, enabled } : ch)),
+      }
+    })
+  }
 
-  store.save(setChannelEnabled(false))
+  setChannelEnabled(false)
   c.var.daemon.reload()
 
-  await sleepReconcileGap()
+  const confirmedDown = await waitForTenantDown(project.id)
 
-  store.save(setChannelEnabled(true))
+  setChannelEnabled(true)
   const reload = c.var.daemon.reload()
 
   const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
-  return c.text(`restarted channel "${channelName}"${tail} ${reloadMsg}`)
+  const warn = confirmedDown
+    ? ""
+    : "\nwarning: tenant did not stop within 10s; the restart may not have taken effect"
+  return c.text(`restarted channel "${channelName}"${tail} ${reloadMsg}${warn}`)
 })

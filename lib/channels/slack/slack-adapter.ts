@@ -5,11 +5,25 @@ import { errorMessage } from "@/error-message"
 type Props = {
   client: LeucoSlackWebClient
   onLog?: (line: string) => void
+  /** Clock injection for tests. */
+  now?: () => number
 }
+
+type ChannelAccessCacheEntry = {
+  allowed: boolean
+  expiresAt: number
+}
+
+const CHANNEL_ACCESS_TTL_MS = 5 * 60 * 1000
+const CHANNEL_ACCESS_CACHE_CAPACITY = 500
 
 /** Thin wrapper around the outbound Slack Web API surface the channel plugin
  * actually needs (reply, reaction, accessibility check). */
 export class LeucoSlackAdapter {
+  // Object.freeze is shallow, so the frozen field can keep holding mutable
+  // Map state — only reassignment of the field itself is prevented.
+  private readonly channelAccessCache = new Map<string, ChannelAccessCacheEntry>()
+
   constructor(private readonly props: Props) {
     Object.freeze(this)
   }
@@ -76,6 +90,9 @@ export class LeucoSlackAdapter {
   }
 
   async canReadChannel(channel: string): Promise<boolean> {
+    const cached = this.channelAccessCache.get(channel)
+    if (cached !== undefined && cached.expiresAt > this.now()) return cached.allowed
+
     try {
       const info = await this.props.client.conversationsInfo({ channel })
       if (isPublicChannel(channel) && info.isMember === false) {
@@ -84,9 +101,9 @@ export class LeucoSlackAdapter {
             `[slack] conversations.info says bot is not a channel member (channel=${channel})`,
           )
         }
-        return false
+        return this.rememberChannelAccess(channel, false)
       }
-      return true
+      return this.rememberChannelAccess(channel, true)
     } catch (err) {
       const message = errorMessage(err)
       if (this.props.onLog) {
@@ -95,10 +112,32 @@ export class LeucoSlackAdapter {
       // Only treat known access-denied errors as a hard "skip this event".
       // Transient errors (rate-limited, network blip, Slack 5xx) must NOT
       // silently drop the inbound event — otherwise a brief Slack outage
-      // turns into universal "the bot ignored my mention".
-      if (isPermanentChannelDenial(message)) return false
+      // turns into universal "the bot ignored my mention". Only the
+      // definitive denial is cached; the transient fallthrough is not, so
+      // the next event re-checks.
+      if (isPermanentChannelDenial(message)) return this.rememberChannelAccess(channel, false)
       return true
     }
+  }
+
+  private rememberChannelAccess(channel: string, allowed: boolean): boolean {
+    // Re-inserting moves the key to the tail of the Map's insertion order, so
+    // `keys().next().value` below always evicts the oldest entry.
+    this.channelAccessCache.delete(channel)
+    this.channelAccessCache.set(channel, {
+      allowed,
+      expiresAt: this.now() + CHANNEL_ACCESS_TTL_MS,
+    })
+
+    if (this.channelAccessCache.size > CHANNEL_ACCESS_CACHE_CAPACITY) {
+      const oldest = this.channelAccessCache.keys().next().value
+      if (typeof oldest === "string") this.channelAccessCache.delete(oldest)
+    }
+    return allowed
+  }
+
+  private now(): number {
+    return this.props.now !== undefined ? this.props.now() : Date.now()
   }
 
   private logReactionFailure(

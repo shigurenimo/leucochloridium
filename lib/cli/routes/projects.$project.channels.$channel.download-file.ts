@@ -1,3 +1,4 @@
+import { resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
 import { slackDownloadFile } from "@/actions/slack/slack-download-file"
 import { slackResolveFileDownloadUrl } from "@/actions/slack/slack-resolve-file-download-url"
@@ -19,10 +20,14 @@ export const channelsDownloadFileHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
   if (flagBool(body.flags.help)) return c.text(help)
 
-  const outputPath = flagString(body.flags.out)
-  if (!outputPath) {
+  const rawOutputPath = flagString(body.flags.out)
+  if (!rawOutputPath) {
     throw new HTTPException(400, { message: "--out is required" })
   }
+  // Resolve against the caller's cwd like every other path-taking route —
+  // a relative --out must not land in whatever directory the process
+  // happens to run in when LEUCO_CWD points elsewhere.
+  const outputPath = resolve(c.var.cwd, rawOutputPath)
 
   const projectName = c.req.param("project")!
   const channelName = c.req.param("channel")!
@@ -38,7 +43,7 @@ export const channelsDownloadFileHandler = factory.createHandlers(async (c) => {
     outputPath,
   })
 
-  return c.text(`saved: ${result.outputPath}\nsize: ${result.size}\n`)
+  return c.text(`saved: ${result.outputPath}\nsize: ${result.size}`)
 })
 
 type ResolveSlackBotTokenProps = {

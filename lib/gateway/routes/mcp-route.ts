@@ -13,14 +13,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  */
 export const mcpHandler = factory.createHandlers(async (c) => {
   const deps = c.var.deps
-  if (deps.mcpToken === null) {
+  if (deps.mcpTokenForProject === null) {
     throw new HTTPException(503, { message: "mcp endpoint disabled" })
-  }
-
-  const header = c.req.header("authorization") ?? ""
-  const presented = header.startsWith("Bearer ") ? header.slice(7) : ""
-  if (!bearerMatches(presented, deps.mcpToken)) {
-    throw new HTTPException(401, { message: "unauthorized" })
   }
 
   const projectId = c.req.param("project")
@@ -29,6 +23,19 @@ export const mcpHandler = factory.createHandlers(async (c) => {
   }
   if (!UUID_PATTERN.test(projectId)) {
     throw new HTTPException(400, { message: "project must be a uuid" })
+  }
+
+  // Tokens are scoped per project: tenant A's codex child must not be able
+  // to drive tenant B's Slack tokens / schedules through this route.
+  const expected = deps.mcpTokenForProject(projectId)
+  if (expected === null) {
+    throw new HTTPException(401, { message: "unauthorized" })
+  }
+
+  const header = c.req.header("authorization") ?? ""
+  const presented = header.startsWith("Bearer ") ? header.slice(7) : ""
+  if (!bearerMatches(presented, expected)) {
+    throw new HTTPException(401, { message: "unauthorized" })
   }
 
   const server = buildMcpServer({ projectId })

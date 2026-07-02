@@ -103,7 +103,10 @@ const checkDaemon = (pidPath: string, logPath: string): Record<string, Check> =>
   if (existsSync(logPath)) {
     const logStat = statSync(logPath)
     const ageSec = (Date.now() - logStat.mtimeMs) / 1000
-    checks.log = ageSec < 600 ? ok(`log active (${Math.round(ageSec)}s ago)`) : warn(`log stale (${Math.round(ageSec)}s since last write)`)
+    checks.log =
+      ageSec < 600
+        ? ok(`log active (${Math.round(ageSec)}s ago)`)
+        : warn(`log stale (${Math.round(ageSec)}s since last write)`)
   } else {
     checks.log = warn("log file missing")
   }
@@ -180,13 +183,22 @@ const checkSettings = (settingsPath: string): Record<string, Check> => {
   return checks
 }
 
-const checkProject = (paths: LeucoPaths, project: {
-  id: string
-  name: string
-  path: string
-  enabled: boolean
-  channels: Array<{ name: string; type: string; enabled: boolean; botToken?: string; appToken?: string }>
-}): ProjectReport => {
+const checkProject = (
+  paths: LeucoPaths,
+  project: {
+    id: string
+    name: string
+    path: string
+    enabled: boolean
+    channels: Array<{
+      name: string
+      type: string
+      enabled: boolean
+      botToken?: string
+      appToken?: string
+    }>
+  },
+): ProjectReport => {
   const checks: Record<string, Check> = {}
 
   if (existsSync(project.path)) {
@@ -272,11 +284,15 @@ const checkProject = (paths: LeucoPaths, project: {
 }
 
 /**
- * Find orphaned `codex app-server` processes. A codex app-server is orphaned
- * when the leuco daemon is not running but the child process is still alive.
- * Also catches codex processes whose parent pid is 1 (reparented to init/launchd).
+ * Find orphaned `codex app-server` processes. Only processes that have been
+ * reparented to init/launchd (ppid 1) count as zombies: a codex whose parent
+ * is still alive belongs to someone — the leuco daemon, another tool, or a
+ * terminal session — and `--fix` must not SIGTERM it.
  */
-const findZombieCodexProcesses = (daemonPid: number | null, isDaemonRunning: boolean): ZombieProcess[] => {
+const findZombieCodexProcesses = (
+  daemonPid: number | null,
+  isDaemonRunning: boolean,
+): ZombieProcess[] => {
   try {
     const result = Bun.spawnSync(["pgrep", "-f", "codex app-server"], {
       timeout: 5000,
@@ -292,19 +308,20 @@ const findZombieCodexProcesses = (daemonPid: number | null, isDaemonRunning: boo
       .map((line) => Number.parseInt(line.trim(), 10))
       .filter((pid) => Number.isFinite(pid))
 
-    if (isDaemonRunning && daemonPid !== null) {
-      return pids
-        .filter((pid) => !isChildOf(pid, daemonPid))
-        .map((pid) => ({ pid, command: getProcessCommand(pid) }))
-    }
-
-    return pids.map((pid) => ({ pid, command: getProcessCommand(pid) }))
+    return pids
+      .filter((pid) => {
+        const ppid = parentPidOf(pid)
+        if (ppid === null) return false
+        if (isDaemonRunning && daemonPid !== null && ppid === daemonPid) return false
+        return ppid === 1
+      })
+      .map((pid) => ({ pid, command: getProcessCommand(pid) }))
   } catch {
     return []
   }
 }
 
-const isChildOf = (pid: number, parentPid: number): boolean => {
+const parentPidOf = (pid: number): number | null => {
   try {
     const result = Bun.spawnSync(["ps", "-o", "ppid=", "-p", String(pid)], {
       timeout: 3000,
@@ -312,9 +329,9 @@ const isChildOf = (pid: number, parentPid: number): boolean => {
       stderr: "pipe",
     })
     const ppid = Number.parseInt(result.stdout.toString().trim(), 10)
-    return ppid === parentPid
+    return Number.isFinite(ppid) ? ppid : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -346,7 +363,11 @@ const killZombies = (zombies: ZombieProcess[]): number[] => {
   return killed
 }
 
-const checkZombies = (daemonPid: number | null, isDaemonRunning: boolean, fix: boolean): ZombieReport => {
+const checkZombies = (
+  daemonPid: number | null,
+  isDaemonRunning: boolean,
+  fix: boolean,
+): ZombieReport => {
   const zombies = findZombieCodexProcesses(daemonPid, isDaemonRunning)
 
   if (zombies.length === 0) {
@@ -365,7 +386,9 @@ const checkZombies = (daemonPid: number | null, isDaemonRunning: boolean, fix: b
   }
 
   return {
-    check: error(`${zombies.length} orphaned codex process(es): ${pidList} — run \`leuco doctor --fix\` to kill`),
+    check: error(
+      `${zombies.length} orphaned codex process(es): ${pidList} — run \`leuco doctor --fix\` to kill`,
+    ),
     processes: zombies,
     killed: [],
   }
@@ -441,6 +464,9 @@ export const doctorHandler = factory.createHandlers(async (c) => {
 
   report.status = worstStatus(allChecks(report))
 
+  // The report must land on stdout even when it contains errors (that is
+  // when it is most needed, and the help advertises yq piping). x-cli-exit
+  // tells index.ts to print the body to stdout while still exiting non-zero.
   const hasError = report.status === "error"
-  return c.text(renderYaml(report), hasError ? 503 : 200)
+  return c.text(renderYaml(report), 200, { "x-cli-exit": hasError ? "1" : "0" })
 })

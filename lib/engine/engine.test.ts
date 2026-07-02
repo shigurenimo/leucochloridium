@@ -57,6 +57,8 @@ const makeProject = (name: string, enabled = true): Project => ({
   path: `/tmp/${name}`,
   enabled,
   useCommonInstructions: true,
+  model: null,
+  developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [],
   mcpServers: {},
@@ -359,8 +361,20 @@ describe("LeucoEngine introspection", () => {
 
     const summary = engine.listProjects()
     expect(summary).toEqual([
-      { name: "alpha", path: "/tmp/alpha", enabled: true, tenantRunning: true },
-      { name: "bravo", path: "/tmp/bravo", enabled: false, tenantRunning: false },
+      {
+        id: "00000000-0000-4000-8000-0000000alpha",
+        name: "alpha",
+        path: "/tmp/alpha",
+        enabled: true,
+        tenantRunning: true,
+      },
+      {
+        id: "00000000-0000-4000-8000-0000000bravo",
+        name: "bravo",
+        path: "/tmp/bravo",
+        enabled: false,
+        tenantRunning: false,
+      },
     ])
   })
 

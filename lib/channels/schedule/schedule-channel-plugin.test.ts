@@ -58,11 +58,11 @@ const makeStore = (
   return store
 }
 
-const buildPlugin = (store: ScheduleStorePort, fixedNow: Date): LeucoScheduleChannelPlugin => {
+const buildPlugin = (store: ScheduleStorePort, now: () => Date): LeucoScheduleChannelPlugin => {
   return new LeucoScheduleChannelPlugin({
     name: "cron",
     store,
-    now: () => fixedNow,
+    now,
     setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
     clearIntervalFn: () => {},
   })
@@ -89,7 +89,7 @@ const isoEntry = (overrides: Partial<ScheduleEntry> = {}): ScheduleEntry => ({
 describe("LeucoScheduleChannelPlugin", () => {
   it("fires a cron entry when its expression matches the current minute", async () => {
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -103,7 +103,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("does not fire a cron entry whose expression does not match", async () => {
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 31))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 31))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -114,7 +114,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("does not double-fire a cron entry within the same minute", async () => {
     const store = makeStore([cronEntry()])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30, 0))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30, 0))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -127,7 +127,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("fires a one-shot entry when runAt is past and removes it", async () => {
     const store = makeStore([isoEntry({ runAt: "2026-05-07T09:00:00Z" })])
-    const plugin = buildPlugin(store, new Date("2026-05-07T09:01:00Z"))
+    const plugin = buildPlugin(store, () => new Date("2026-05-07T09:01:00Z"))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -139,7 +139,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("does not fire a one-shot whose runAt is still in the future", async () => {
     const store = makeStore([isoEntry({ runAt: "2026-05-07T10:00:00Z" })])
-    const plugin = buildPlugin(store, new Date("2026-05-07T09:00:00Z"))
+    const plugin = buildPlugin(store, () => new Date("2026-05-07T09:00:00Z"))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -151,7 +151,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("skips disabled entries", async () => {
     const store = makeStore([cronEntry({ enabled: false })])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -162,7 +162,7 @@ describe("LeucoScheduleChannelPlugin", () => {
 
   it("logs and skips entries with malformed cron", async () => {
     const store = makeStore([cronEntry({ runAt: "not a cron" })])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -178,7 +178,7 @@ describe("LeucoScheduleChannelPlugin", () => {
       runAt: "2026-05-07T08:59:00Z",
     })
     const store = makeStore([oneShot])
-    const plugin = buildPlugin(store, new Date("2026-05-07T09:00:00Z"))
+    const plugin = buildPlugin(store, () => new Date("2026-05-07T09:00:00Z"))
 
     const { ctx } = makeCtx()
     await plugin.start(ctx)
@@ -197,7 +197,7 @@ describe("LeucoScheduleChannelPlugin", () => {
       cronEntry({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "fails", runAt: "* * * * *" }),
       cronEntry({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "ok", runAt: "* * * * *" }),
     ])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
 
     const { ctx: baseCtx, captured } = makeCtx()
     let calls = 0
@@ -223,7 +223,7 @@ describe("LeucoScheduleChannelPlugin", () => {
     // now wakes up at 12:00 on day three — a 09:30 catch-up should land.
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
     store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 4, 5, 9, 30).getTime()
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 12, 0))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -237,10 +237,10 @@ describe("LeucoScheduleChannelPlugin", () => {
   })
 
   it("does not catch up entries that have never fired", async () => {
-    // No `lastFiredAt` → the plugin treats this as a fresh agent and only
-    // fires on the current minute. Catch-up requires a prior baseline.
+    // No `lastFiredAt` and no evaluated pass yet → the plugin treats this as
+    // a fresh agent and only evaluates the current minute on its first pass.
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 12, 0))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
@@ -255,12 +255,131 @@ describe("LeucoScheduleChannelPlugin", () => {
     // catch-up fires (not seven).
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
     store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 3, 30, 9, 30).getTime()
-    const plugin = buildPlugin(store, new Date(2026, 4, 7, 12, 0))
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 12, 0))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
     await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
+  })
+
+  it("does not re-fire a cron entry after its turn fails", async () => {
+    // Regression: lastFiredAt used to advance only on success, so the
+    // catch-up walk re-discovered the same minute every tick — a retry storm.
+    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
+    store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 4, 6, 9, 30).getTime()
+
+    let nowValue = new Date(2026, 4, 7, 9, 30)
+    const plugin = buildPlugin(store, () => nowValue)
+
+    const { ctx: baseCtx } = makeCtx()
+    let calls = 0
+    const ctx: ChannelPluginContext = {
+      ...baseCtx,
+      runTextTurn: async () => {
+        calls++
+        return new Error("boom")
+      },
+    }
+
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+
+    expect(calls).toBe(1)
+    expect(store.lastFiredAt[store.entries[0]!.id]).toBe(nowValue.getTime())
+
+    nowValue = new Date(2026, 4, 7, 9, 31)
+    await plugin.tickOnce()
+    nowValue = new Date(2026, 4, 7, 9, 32)
+    await plugin.tickOnce()
+
+    expect(calls).toBe(1)
+  })
+
+  it("evaluates minutes that fell between ticks", async () => {
+    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
+    let nowValue = new Date(2026, 4, 7, 9, 28)
+    const plugin = buildPlugin(store, () => nowValue)
+
+    const { ctx, captured } = makeCtx()
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+    expect(captured.turns).toEqual([])
+
+    // A slow turn can hold the tick past 09:30; the next tick lands at 09:33
+    // and must still fire the missed 09:30 match even without a persisted
+    // lastFiredAt baseline.
+    nowValue = new Date(2026, 4, 7, 9, 33)
+    await plugin.tickOnce()
+
+    expect(captured.turns).toHaveLength(1)
+
+    nowValue = new Date(2026, 4, 7, 9, 34)
+    await plugin.tickOnce()
+    expect(captured.turns).toHaveLength(1)
+  })
+
+  it("fires at most once per entry per pass across a long gap", async () => {
+    const store = makeStore([cronEntry()])
+    let nowValue = new Date(2026, 4, 7, 9, 0)
+    const plugin = buildPlugin(store, () => nowValue)
+
+    const { ctx, captured } = makeCtx()
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+    expect(captured.turns).toHaveLength(1)
+
+    // Ten matching minutes were missed; a single catch-up turn covers them.
+    nowValue = new Date(2026, 4, 7, 9, 10)
+    await plugin.tickOnce()
+
+    expect(captured.turns).toHaveLength(2)
+  })
+
+  it("stop awaits the in-flight tick and suppresses further fires", async () => {
+    const entryA = cronEntry({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "a" })
+    const entryB = cronEntry({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "b" })
+    const store = makeStore([entryA, entryB])
+    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
+
+    const { ctx: baseCtx } = makeCtx()
+    let releaseTurn = () => {}
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    let turnCalls = 0
+    const ctx: ChannelPluginContext = {
+      ...baseCtx,
+      runTextTurn: async () => {
+        turnCalls++
+        await turnGate
+        return ""
+      },
+    }
+
+    await plugin.start(ctx)
+    expect(turnCalls).toBe(1)
+
+    let stopResolved = false
+    const stopPromise = plugin.stop().then(() => {
+      stopResolved = true
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(stopResolved).toBe(false)
+
+    releaseTurn()
+    await stopPromise
+
+    expect(stopResolved).toBe(true)
+    // Entry B was next in the pass; the stopped flag must bail before it fires.
+    expect(turnCalls).toBe(1)
+    expect(store.lastFiredAt[entryB.id]).toBeUndefined()
+
+    await plugin.tickOnce()
+    expect(turnCalls).toBe(1)
   })
 })

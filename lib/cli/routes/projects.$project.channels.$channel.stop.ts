@@ -25,12 +25,12 @@ export const channelsStopHandler = factory.createHandlers(async (c) => {
     return c.text(`channel "${channelName}" is already disabled`)
   }
 
-  store.save({
-    ...project,
-    channels: project.channels.map((ch) =>
+  store.updateProject(project.id, (fresh) => ({
+    ...fresh,
+    channels: fresh.channels.map((ch) =>
       ch.name === channelName ? { ...ch, enabled: false } : ch,
     ),
-  })
+  }))
 
   const reload = c.var.daemon.reload()
   const reloadMsg = reload.signalled ? `(daemon reloaded)` : "(daemon not running)"

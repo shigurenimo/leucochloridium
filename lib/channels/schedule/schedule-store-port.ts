@@ -13,12 +13,12 @@ export type ScheduleStorePort = {
   /** Remove one entry from settings.json after a one-shot fires. Throws on store error. */
   removeEntry(entryId: string): void
   /**
-   * Epoch ms of the entry's last successful fire, or `null` when the entry
-   * has never fired (or its agent had no state.json yet). Returning `null`
-   * is treated by the plugin as "no catch-up" — only one catch-up is
-   * triggered per restart.
+   * Epoch ms of the entry's last fire decision (written before the turn
+   * runs, regardless of turn outcome), or `null` when the entry has never
+   * fired (or its agent had no state.json yet). Returning `null` is treated
+   * by the plugin as "no across-restart catch-up" for that entry.
    */
   getLastFiredAt(entryId: string): number | null
-  /** Record a fire so the next catch-up evaluation has a lower bound. */
+  /** Record a fire decision so catch-up windows have a lower bound. */
   markFired(entryId: string, firedAt: number): void
 }

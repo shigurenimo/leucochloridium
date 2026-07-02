@@ -74,7 +74,17 @@ const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, schedule
 const mcpServerSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-  env: z.record(z.string(), z.string()).default({}),
+  // Keys become bare TOML keys in the tenant's config.toml inline `env`
+  // table — an unconstrained key (spaces, `=`, newlines) would corrupt the
+  // file and silently break the tenant's codex start.
+  env: z
+    .record(
+      z
+        .string()
+        .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an env var name ([A-Za-z_][A-Za-z0-9_]*)"),
+      z.string(),
+    )
+    .default({}),
 })
 
 /**
@@ -110,13 +120,13 @@ export const projectSchema = z.object({
   path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
   enabled: z.boolean().default(true),
   useCommonInstructions: z.boolean().default(true),
+  /** Optional codex model override passed to `thread/start`. null = codex default. */
+  model: z.string().min(1).nullable().default(null),
+  /** Optional per-project instructions appended after the preamble and presets. */
+  developerInstructions: z.string().min(1).nullable().default(null),
   prompts: z
     .array(z.enum(PROMPT_PRESET_NAMES))
-    .default([
-      PromptPreset.CORE,
-      PromptPreset.COMMUNICATION,
-      PromptPreset.COMMUNICATION_SLACK,
-    ]),
+    .default([PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK]),
   channels: z.array(channelSchema).default([]),
   mcpServers: z.record(safeName, mcpServerSchema).default({}),
   state: projectStateSchema,

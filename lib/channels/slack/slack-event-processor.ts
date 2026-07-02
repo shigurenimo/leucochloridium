@@ -88,7 +88,11 @@ export class LeucoSlackEventProcessor {
     if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
     if (data.user === this.botUserId) return { skip: true, reason: "self message" }
-    if (isAddressedToAnotherUser(data.text ?? "", this.botUserId)) {
+
+    // DMs always reach the agent — a DM opening with someone else's mention
+    // ("<@U123> をアサインして") is still a request to the bot.
+    const isDirectMessage = data.channel.startsWith("D")
+    if (!isDirectMessage && isAddressedToAnotherUser(data.text ?? "", this.botUserId)) {
       return { skip: true, reason: "addressed to another user" }
     }
 
@@ -129,7 +133,10 @@ export class LeucoSlackEventProcessor {
     },
     source: "app_mention" | "message",
   ): ProcessResult {
-    if (!this.consume(`msg:${data.ts}`)) {
+    // Slack ts is only unique per channel, so the key needs both. The
+    // `app_mention` and `message` events for the same post share channel+ts
+    // and must keep deduping against each other.
+    if (!this.consume(`msg:${data.channel}:${data.ts}`)) {
       return { skip: true, reason: `dedup ts=${data.ts}` }
     }
 

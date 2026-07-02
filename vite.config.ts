@@ -9,6 +9,11 @@ export default defineConfig({
   },
   test: {
     setupFiles: ["./vitest.setup.ts"],
+    server: {
+      deps: {
+        inline: ["@interactive-inc/claude-funnel"],
+      },
+    },
   },
   fmt: {
     semi: false,

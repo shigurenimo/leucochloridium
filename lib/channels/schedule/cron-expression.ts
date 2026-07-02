@@ -8,12 +8,18 @@
  *   - `<n>`         exact integer
  *   - `<a>-<b>`     inclusive range
  *   - `*\/<n>`      every n values from the field's minimum
+ *   - `<n>/<s>`     from n to the field's maximum, step s (Vixie semantics)
  *   - `<a>,<b>,..`  comma list of any of the above (no nested commas)
  *
  * Day-of-week uses 0..6 with 0 = Sunday. Match semantics: when both
  * day-of-month and day-of-week are restricted, a date matches if EITHER
  * matches — the standard Vixie cron behavior. When one is `*`, only the
- * other constrains the day.
+ * other constrains the day. A `*\/<n>` step counts as a RESTRICTED field
+ * for this OR rule even though its base is `*`.
+ *
+ * Matching uses machine-local wall-clock time. Across DST transitions this
+ * means nonexistent local times (spring-forward) skip that day, and repeated
+ * local times (fall-back) can match — and thus fire — twice.
  *
  * Parse failures throw — callers wrap in try/catch (e.g. schedule plugin's
  * tickOnce) so a single malformed entry does not stall the loop.
@@ -126,8 +132,13 @@ const expandPart = (
 
   const span = expandBase(base, range, label)
 
+  // Vixie cron: a single value with a step (`5/2`) means "from 5 to the
+  // field's maximum, step 2" — not just [5]. Ranges and `*` keep their span.
+  const isSingleValueBase = base !== "*" && !base.includes("-")
+  const to = stepText !== undefined && isSingleValueBase ? range.max : span.to
+
   const values: number[] = []
-  for (let v = span.from; v <= span.to; v += step) values.push(v)
+  for (let v = span.from; v <= to; v += step) values.push(v)
 
   const wildcard = base === "*" && step === 1
   return { values, wildcard }

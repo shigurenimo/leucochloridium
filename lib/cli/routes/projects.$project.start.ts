@@ -23,7 +23,7 @@ export const projectsStartHandler = factory.createHandlers(async (c) => {
     return c.text(`project "${projectName}" is already enabled`)
   }
 
-  store.save({ ...project, enabled: true })
+  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
 
   const reload = c.var.daemon.reload()
   const reloadMsg = reload.signalled

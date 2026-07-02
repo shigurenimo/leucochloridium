@@ -5,7 +5,7 @@ import type { LeucoEngine } from "@/engine/engine"
 type Props = {
   engine: LeucoEngine
   port: number
-  mcpToken: string
+  mcpTokenForProject: (projectId: string) => string | null
   selfPid?: number
   onLog?: (line: string) => void
 }
@@ -20,7 +20,7 @@ export class LeucoGatewayServer {
   private readonly port: number
   private readonly selfPid: number
   private readonly onLog: ((line: string) => void) | undefined
-  private readonly mcpToken: string
+  private readonly mcpTokenForProject: (projectId: string) => string | null
   private server: Server | null = null
 
   constructor(props: Props) {
@@ -28,7 +28,7 @@ export class LeucoGatewayServer {
     this.port = props.port
     this.selfPid = props.selfPid ?? process.pid
     this.onLog = props.onLog
-    this.mcpToken = props.mcpToken
+    this.mcpTokenForProject = props.mcpTokenForProject
   }
 
   start(): Server {
@@ -37,7 +37,7 @@ export class LeucoGatewayServer {
     const app = buildGatewayApp({
       selfPid: this.selfPid,
       engine: this.engine,
-      mcpToken: this.mcpToken,
+      mcpTokenForProject: this.mcpTokenForProject,
     })
 
     // Bind to loopback only. The MCP route is bearer-protected, but `/status`,

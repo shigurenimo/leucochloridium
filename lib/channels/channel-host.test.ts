@@ -110,11 +110,9 @@ describe("LeucoChannelHost.buildForProject", () => {
         path: "/tmp/demo",
         enabled: true,
         useCommonInstructions: true,
-        prompts: [
-          PromptPreset.CORE,
-          PromptPreset.COMMUNICATION,
-          PromptPreset.COMMUNICATION_SLACK,
-        ],
+        model: null,
+        developerInstructions: null,
+        prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
         channels: [
           {
             id: "33333333-3333-4333-8333-333333333333",

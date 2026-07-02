@@ -1,10 +1,11 @@
 import { existsSync, renameSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
+import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { validateLeucoName } from "@/cli/utils/validate-name"
+import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
 import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -40,6 +41,12 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore()
   const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
 
+  // Relocate stops the whole daemon and moves the repo the agent is running
+  // in — from inside the project's own codex session that is self-termination.
+  if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
+    throw new HTTPException(400, { message: selfProjectGuardMessage(oldName, "relocate") })
+  }
+
   if (newPath === project.path) {
     throw new HTTPException(400, {
       message: `new path is identical to current path (${project.path})`,
@@ -67,7 +74,7 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   if (shouldRename) {
     const candidate = basename(newPath)
     if (candidate !== project.name) {
-      validateLeucoName(candidate, "project name")
+      assertRoutableName(candidate, "project name")
       newName = candidate
     }
   }
@@ -81,7 +88,7 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   try {
     renameSync(project.path, newPath)
     try {
-      store.save({ ...project, path: newPath, name: newName })
+      store.updateProject(project.id, (fresh) => ({ ...fresh, path: newPath, name: newName }))
     } catch (saveError) {
       // settings.json write failed after the directory move succeeded — roll
       // back the rename so the on-disk repo matches the persisted record.

@@ -39,15 +39,19 @@ const DEFAULT_INTERVAL_MS = 60_000
 const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
 
 /**
- * Timer-driven channel. On each minute tick the plugin re-reads its entry
- * list (so CLI/MCP mutations are picked up without a daemon restart) and,
- * for every enabled entry, decides whether to fire:
+ * Timer-driven channel. On each pass the plugin re-reads its entry list (so
+ * CLI/MCP mutations are picked up without a daemon restart) and, for every
+ * enabled entry, decides whether to fire:
  *
- *   - cron expression (whitespace inside `runAt`): fire when the parsed
- *     fields match the current minute; resilient to multiple ticks within
- *     the same minute via the in-memory `lastFiredMinute` map.
+ *   - cron expression (whitespace inside `runAt`): evaluated against every
+ *     wall-clock minute since the previous completed pass — not just the
+ *     current one — so minutes skipped by a slow turn holding the tick,
+ *     interval drift, or sleep still fire. Entries with a persisted
+ *     `lastFiredAt` additionally catch up across daemon restarts. Both
+ *     windows share the 24h lookback cap and fire at most one turn per
+ *     entry per pass.
  *   - ISO 8601 timestamp: fire once when the parsed time has passed and
- *     remove the entry from settings.json after a successful turn dispatch.
+ *     remove the entry from settings.json regardless of turn outcome.
  *
  * The plugin never posts directly to the user — like the Slack channel, it
  * forwards through `ctx.runTextTurn` and lets codex decide whether to call
@@ -65,7 +69,13 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
   private ctx: ChannelPluginContext | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly lastFiredMinute = new Map<string, number>()
-  private tickInFlight = false
+  private inflightTick: Promise<void> | null = null
+  private stopped = false
+  /** Minute epoch the last completed pass evaluated up to (inclusive). Null
+   * until the first pass finishes. Each pass covers the cron minutes in
+   * `(lastEvaluatedMinuteEpoch, currentMinute]`, so minutes the interval
+   * skipped are still evaluated instead of silently lost. */
+  private lastEvaluatedMinuteEpoch: number | null = null
   /** Promise for the startup catch-up tick. Tests await this to drive a
    * deterministic first run; production fires-and-forgets to avoid blocking
    * daemon ready on a slow first turn. */
@@ -81,6 +91,7 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
   }
 
   async start(ctx: ChannelPluginContext): Promise<void> {
+    this.stopped = false
     this.ctx = ctx
     ctx.onLog(`[${this.name}] schedule channel ready (tick=${this.intervalMs}ms)`)
 
@@ -104,10 +115,19 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
+
     if (this.timer !== null) {
       this.clearIntervalFn(this.timer)
       this.timer = null
     }
+
+    // A tick can be mid-`runTextTurn` when stop is called. Awaiting it here
+    // keeps a zombie tick from dispatching turns and writing to the store
+    // after reconcile has already started a replacement plugin.
+    const inflight = this.inflightTick
+    if (inflight !== null) await inflight
+
     this.ctx = null
   }
 
@@ -117,21 +137,21 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
 
   /**
    * Public for tests: drive the loop without spinning up a real interval.
-   * Re-entrant calls are short-circuited so a slow `runTextTurn` (up to 10
-   * minutes) inside the previous tick cannot interleave with the next
-   * interval and double-fire the same entry via the catch-up branch.
+   * Re-entrant calls are short-circuited via `inflightTick` so a slow
+   * `runTextTurn` (up to 10 minutes) inside the previous tick cannot
+   * interleave with the next interval and double-fire the same entry.
    */
   async tickOnce(): Promise<void> {
     const ctx = this.ctx
     if (!ctx) return
-    if (this.tickInFlight) return
+    if (this.stopped) return
+    if (this.inflightTick !== null) return
 
-    this.tickInFlight = true
-    try {
-      await this.tickOnceInner(ctx)
-    } finally {
-      this.tickInFlight = false
-    }
+    this.inflightTick = this.tickOnceInner(ctx).finally(() => {
+      this.inflightTick = null
+    })
+
+    await this.inflightTick
   }
 
   private async tickOnceInner(ctx: ChannelPluginContext): Promise<void> {
@@ -154,66 +174,97 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     const minuteEpoch = Math.floor(now.getTime() / 60_000)
 
     for (const entry of entries) {
+      if (this.stopped) return
       if (!entry.enabled) continue
-
-      // 1. Catch-up firing for cron entries: when the daemon was down (or
-      //    the machine was asleep) across a minute the cron expression
-      //    would have matched, fire once on the next tick so daily / hourly
-      //    schedules don't silently skip. Capped at 24h; one-shots already
-      //    catch up implicitly via the `ts <= now` branch.
-      const catchupFired = await this.maybeCatchUp(entry, now, minuteEpoch, ctx)
-
       if (this.lastFiredMinute.get(entry.id) === minuteEpoch) continue
 
-      const decision = decideFire(entry, now, ctx)
-      if (decision === "skip") {
-        if (catchupFired) this.lastFiredMinute.set(entry.id, minuteEpoch)
+      if (looksLikeCron(entry.runAt)) {
+        await this.evaluateCron(entry, now, ctx)
         continue
       }
 
-      this.lastFiredMinute.set(entry.id, minuteEpoch)
-      await this.fire(entry, ctx, decision)
+      await this.evaluateOneShot(entry, now, ctx)
     }
+
+    this.lastEvaluatedMinuteEpoch = minuteEpoch
   }
 
-  private async maybeCatchUp(
+  /**
+   * Walk the entry's unevaluated minutes newest-first and fire on the first
+   * match. At most one turn per entry per pass regardless of how many
+   * minutes in the window matched — the prompt is identical anyway, and one
+   * event per skipped minute would flood the bus when the gap is long.
+   */
+  private async evaluateCron(
     entry: ScheduleEntry,
     now: Date,
-    minuteEpoch: number,
     ctx: ChannelPluginContext,
-  ): Promise<boolean> {
-    if (!looksLikeCron(entry.runAt)) return false
-
-    const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
-    if (lastFiredAt === null) return false
-
-    // Parse once outside the minute loop — the cron string is invariant across
-    // the catch-up window so re-parsing per minute is pure overhead (up to
-    // 1440 invocations at the 24h cap).
+  ): Promise<void> {
     let expr: ReturnType<typeof parseCronExpression>
     try {
       expr = parseCronExpression(entry.runAt)
-    } catch {
-      return false
+    } catch (err) {
+      ctx.onLog(
+        `[${this.name}] entry ${entry.name} has bad cron '${entry.runAt}': ${errorMessage(err)}`,
+      )
+      return
     }
 
-    const cutoff = Math.max(lastFiredAt, now.getTime() - CATCHUP_MAX_LOOKBACK_MS)
-    const currentMinuteStart = minuteEpoch * 60_000
+    const minuteEpoch = Math.floor(now.getTime() / 60_000)
+    const windowStartMs = this.cronWindowStartMs(entry, now)
 
-    // Walk minutes between (cutoff, current minute] looking for a single
-    // missed match. One catch-up fire per gap is enough — the prompt is
-    // identical anyway, and emitting one event per skipped minute would
-    // flood the bus when the gap is long.
-    let cursor = currentMinuteStart - 60_000
-    while (cursor > cutoff) {
+    let cursor = minuteEpoch * 60_000
+    while (cursor > windowStartMs) {
       if (cronMatches(expr, new Date(cursor))) {
+        if (this.stopped) return
         this.lastFiredMinute.set(entry.id, minuteEpoch)
         await this.fire(entry, ctx, "cron")
-        return true
+        return
       }
       cursor -= 60_000
     }
-    return false
+  }
+
+  /**
+   * Exclusive lower bound (epoch ms) of the minutes `evaluateCron` still owes
+   * this entry. Union of the in-memory window (minutes after the last
+   * completed pass) and the persisted `lastFiredAt` (across-restart catch-up),
+   * capped at the 24h lookback. `lastFiredAt` is written at fire-decision
+   * time, so a minute that already fired sits at or below the bound and the
+   * strict `>` walk in `evaluateCron` cannot re-fire it. An entry with
+   * neither bound (never fired, first pass) gets the current minute only.
+   */
+  private cronWindowStartMs(entry: ScheduleEntry, now: Date): number {
+    const currentMinuteStartMs = Math.floor(now.getTime() / 60_000) * 60_000
+    const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
+
+    const boundsMs: number[] = []
+    if (this.lastEvaluatedMinuteEpoch !== null) {
+      boundsMs.push(this.lastEvaluatedMinuteEpoch * 60_000)
+    }
+    if (lastFiredAt !== null) boundsMs.push(lastFiredAt)
+
+    if (boundsMs.length === 0) return currentMinuteStartMs - 60_000
+
+    return Math.max(Math.min(...boundsMs), now.getTime() - CATCHUP_MAX_LOOKBACK_MS)
+  }
+
+  private async evaluateOneShot(
+    entry: ScheduleEntry,
+    now: Date,
+    ctx: ChannelPluginContext,
+  ): Promise<void> {
+    const ts = Date.parse(entry.runAt)
+    if (Number.isNaN(ts)) {
+      ctx.onLog(`[${this.name}] entry ${entry.name} has unparseable runAt: '${entry.runAt}'`)
+      return
+    }
+
+    if (ts > now.getTime()) return
+    if (this.stopped) return
+
+    this.lastFiredMinute.set(entry.id, Math.floor(now.getTime() / 60_000))
+    await this.fire(entry, ctx, "one-shot")
   }
 
   private async fire(
@@ -232,29 +283,26 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
       kind,
     })
 
+    if (kind === "cron") {
+      // Persist at fire-decision time, not after the turn. Advancing only on
+      // success left `lastFiredAt` stale when the turn failed, so every
+      // subsequent tick re-discovered the same missed minute and re-fired for
+      // up to the 24h cap — a retry storm. The failure itself stays visible
+      // through the turn error log and turn.* events.
+      try {
+        this.props.store.markFired(entry.id, this.now().getTime())
+      } catch (err) {
+        ctx.onLog(`[${this.name}] entry ${entry.name} failed to mark fired: ${errorMessage(err)}`)
+      }
+    }
+
     const threadKey = `schedule:${entry.id}`
     const text = formatPrompt(this.name, entry)
     ctx.onLog(`[${this.name}] firing ${entry.name} (${kind})`)
 
     const reply = await ctx.runTextTurn(threadKey, text)
-    const turnFailed = reply instanceof Error
-    if (turnFailed) {
+    if (reply instanceof Error) {
       ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
-    }
-
-    if (kind === "cron") {
-      // Only advance `lastFiredAt` on success. If the turn failed, leaving the
-      // mark stale keeps the failure visible to the catch-up window on the
-      // next daemon start instead of silently masking a broken cron.
-      if (!turnFailed) {
-        try {
-          this.props.store.markFired(entry.id, Date.now())
-        } catch (err) {
-          ctx.onLog(
-            `[${this.name}] entry ${entry.name} fired but failed to mark: ${errorMessage(err)}`,
-          )
-        }
-      }
     }
 
     if (kind === "one-shot") {
@@ -269,32 +317,6 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
       }
     }
   }
-}
-
-const decideFire = (
-  entry: ScheduleEntry,
-  now: Date,
-  ctx: ChannelPluginContext,
-): "cron" | "one-shot" | "skip" => {
-  if (looksLikeCron(entry.runAt)) {
-    let expr: ReturnType<typeof parseCronExpression>
-    try {
-      expr = parseCronExpression(entry.runAt)
-    } catch (err) {
-      ctx.onLog(
-        `[schedule] entry ${entry.name} has bad cron '${entry.runAt}': ${errorMessage(err)}`,
-      )
-      return "skip"
-    }
-    return cronMatches(expr, now) ? "cron" : "skip"
-  }
-
-  const ts = Date.parse(entry.runAt)
-  if (Number.isNaN(ts)) {
-    ctx.onLog(`[schedule] entry ${entry.name} has unparseable runAt: '${entry.runAt}'`)
-    return "skip"
-  }
-  return ts <= now.getTime() ? "one-shot" : "skip"
 }
 
 const formatPrompt = (channelName: string, entry: ScheduleEntry): string => {

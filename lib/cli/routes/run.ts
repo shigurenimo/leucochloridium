@@ -42,12 +42,12 @@ export const runHandler = factory.createHandlers(async (c) => {
   }
 
   let stopping = false
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
     if (stopping) return
     stopping = true
     process.stdout.write(`\n[leuco] received ${signal}\n`)
     await runtime.stop()
-    process.exit(0)
+    process.exit(exitCode)
   }
 
   process.on("SIGINT", () => {
@@ -76,9 +76,11 @@ export const runHandler = factory.createHandlers(async (c) => {
   process.on("unhandledRejection", (reason) => {
     process.stderr.write(`[leuco] unhandledRejection: ${errorMessage(reason)}\n`)
     // Node's default for unhandledRejection is also abort (since v15), and
-    // attaching this listener replaces the default. Exit so launchd restarts
-    // us instead of running with poisoned promise state.
-    void shutdown("unhandledRejection").then(() => process.exit(1))
+    // attaching this listener replaces the default. Exit non-zero so launchd
+    // restarts us instead of running with poisoned promise state. The exit
+    // code rides through shutdown() itself — a chained .then(exit(1)) would
+    // never run because shutdown exits the process.
+    void shutdown("unhandledRejection", 1)
   })
 
   try {

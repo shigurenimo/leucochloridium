@@ -1,4 +1,5 @@
 import type { Project } from "@/config/config-schema"
+import { tenantConfigSignature } from "@/engine/tenant-config-signature"
 import type { LeucoTenant } from "@/engine/tenant"
 import { errorMessage } from "@/error-message"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
@@ -9,11 +10,12 @@ type Props = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
   buildTenant: (project: Project) => LeucoTenant
-  /** Production callers (runtime.ts) always supply both `port` and `mcpToken`.
-   * They are optional here only so tests can drive `engine.start()` /
-   * `engine.reconcile()` without bringing up a real Bun.serve gateway. */
+  /** Production callers (runtime.ts) always supply both `port` and
+   * `mcpTokenForProject`. They are optional here only so tests can drive
+   * `engine.start()` / `engine.reconcile()` without bringing up a real
+   * Bun.serve gateway. */
   port?: number
-  mcpToken?: string
+  mcpTokenForProject?: (projectId: string) => string | null
   onLog?: (line: string) => void
   bus?: LeucoEventBus
 }
@@ -27,6 +29,7 @@ export type ThreadEntry = {
 }
 
 export type EngineProjectSummary = {
+  id: string
   name: string
   path: string
   enabled: boolean
@@ -40,7 +43,7 @@ export class LeucoEngine {
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly mcpToken: string | undefined
+  private readonly mcpTokenForProject: ((projectId: string) => string | null) | undefined
   private gateway: LeucoGatewayServer | null = null
   private reconcileQueue: Promise<void> = Promise.resolve()
   private stopped = false
@@ -52,7 +55,7 @@ export class LeucoEngine {
     this.port = props.port
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
-    this.mcpToken = props.mcpToken
+    this.mcpTokenForProject = props.mcpTokenForProject
   }
 
   async start(): Promise<void> {
@@ -72,12 +75,12 @@ export class LeucoEngine {
       throw error
     }
 
-    if (this.port !== undefined && this.mcpToken !== undefined) {
+    if (this.port !== undefined && this.mcpTokenForProject !== undefined) {
       this.gateway = new LeucoGatewayServer({
         engine: this,
         port: this.port,
         onLog: this.log,
-        mcpToken: this.mcpToken,
+        mcpTokenForProject: this.mcpTokenForProject,
       })
       try {
         this.gateway.start()
@@ -142,11 +145,10 @@ export class LeucoEngine {
       return
     }
 
-    const targetById = new Map<string, { project: Project; pluginSig: string }>()
+    const targetById = new Map<string, { project: Project; signature: string }>()
     for (const project of projects) {
       if (!project.enabled) continue
-      const sig = enabledChannelSignature(project)
-      targetById.set(project.id, { project, pluginSig: sig })
+      targetById.set(project.id, { project, signature: tenantConfigSignature(project) })
     }
 
     const removed: string[] = []
@@ -162,16 +164,15 @@ export class LeucoEngine {
         continue
       }
 
-      const currentSig = tenant.listPlugins().slice().sort().join(",")
-      const nameChanged = tenant.key !== target.project.name
-      if (currentSig === target.pluginSig && !nameChanged) {
+      if (!this.tenantNeedsRebuild(tenant, target)) {
         keep.push(tenant)
         continue
       }
 
-      const reason = nameChanged
-        ? `renamed ${tenant.key} → ${target.project.name}`
-        : `channel set changed (was [${currentSig}] now [${target.pluginSig}])`
+      const reason =
+        tenant.key !== target.project.name
+          ? `renamed ${tenant.key} → ${target.project.name}`
+          : "config changed (path / channels / tokens / prompts / mcpServers)"
       this.log(`[leuco] reconcile: ${reason}; rebuilding`)
       await this.safeStop(tenant)
 
@@ -200,6 +201,23 @@ export class LeucoEngine {
     }
 
     this.bus.emit({ ts: Date.now(), type: "engine.reconcile", added, removed })
+  }
+
+  private tenantNeedsRebuild(
+    tenant: LeucoTenant,
+    target: { project: Project; signature: string },
+  ): boolean {
+    if (tenant.key !== target.project.name) return true
+
+    // Tenants built by runtime.ts carry the full config fingerprint, so token
+    // / path / prompt changes are picked up. Test-built tenants without one
+    // fall back to comparing the enabled-channel-name set.
+    if (tenant.configSignature !== null) {
+      return tenant.configSignature !== target.signature
+    }
+
+    const currentSig = tenant.listPlugins().slice().sort().join(",")
+    return currentSig !== enabledChannelSignature(target.project)
   }
 
   private async tryBuildAndStart(project: Project, keyForLog: string): Promise<LeucoTenant | null> {
@@ -243,6 +261,7 @@ export class LeucoEngine {
 
     const runningIds = new Set(this.tenants.map((t) => t.projectId))
     return projects.map((project) => ({
+      id: project.id,
       name: project.name,
       path: project.path,
       enabled: project.enabled,

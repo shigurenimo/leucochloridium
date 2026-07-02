@@ -1,7 +1,8 @@
+import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { sleepReconcileGap } from "@/cli/utils/reconcile-gap"
+import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -25,20 +26,27 @@ export const projectsRestartHandler = factory.createHandlers(async (c) => {
   const store = new LeucoProjectStore()
   const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
   if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
-    return c.text(selfProjectGuardMessage(projectName, "restart"), 400)
+    throw new HTTPException(400, { message: selfProjectGuardMessage(projectName, "restart") })
   }
 
   const wasEnabled = project.enabled
 
-  store.save({ ...project, enabled: false })
+  // Patch `enabled` through updateProject rather than writing the snapshot
+  // read above: the daemon persists codexThreadId / scheduleLastFiredAt at
+  // its own cadence, and saving a stale whole-project object would roll that
+  // state back (losing the conversation thread the help text promises to keep).
+  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: false }))
   c.var.daemon.reload()
 
-  await sleepReconcileGap()
+  const confirmedDown = await waitForTenantDown(project.id)
 
-  store.save({ ...project, enabled: true })
+  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
   const reload = c.var.daemon.reload()
 
   const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
-  return c.text(`restarted project "${projectName}"${tail} ${reloadMsg}`)
+  const warn = confirmedDown
+    ? ""
+    : "\nwarning: tenant did not stop within 10s; the restart may not have taken effect"
+  return c.text(`restarted project "${projectName}"${tail} ${reloadMsg}${warn}`)
 })

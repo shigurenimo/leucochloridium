@@ -76,6 +76,23 @@ describe("LeucoSlackEventProcessor.processAppMention", () => {
     if (second.skip) expect(second.reason).toContain("dedup")
   })
 
+  it("dedups the message event for the same post as an earlier app_mention", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const mention = proc.processAppMention(baseMention({ ts: "42" }))
+    const message = proc.processMessage(baseMessage({ ts: "42" }))
+    expect(mention.skip).toBe(false)
+    expect(message.skip).toBe(true)
+    if (message.skip) expect(message.reason).toContain("dedup")
+  })
+
+  it("does not dedup the same ts across different channels", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const first = proc.processAppMention(baseMention({ channel: "C1", ts: "42" }))
+    const second = proc.processAppMention(baseMention({ channel: "C2", ts: "42" }))
+    expect(first.skip).toBe(false)
+    expect(second.skip).toBe(false)
+  })
+
   it("skips app_mention when the user is the bot itself", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
     const result = proc.processAppMention(baseMention({ user: "UBOT" }))
@@ -114,7 +131,9 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
 
   it("treats direct messages as mentioned without an explicit bot mention", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
-    const event = expectMessage(proc.processMessage(baseMessage({ channel: "D1", text: "hello dm" })))
+    const event = expectMessage(
+      proc.processMessage(baseMessage({ channel: "D1", text: "hello dm" })),
+    )
     expect(event.mentioned).toBe(true)
     expect(event.text).toBe("hello dm")
   })
@@ -133,6 +152,15 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
     const result = proc.processMessage(baseMessage({ text: "<@UOTHER> hi" }))
     expect(result.skip).toBe(true)
     if (result.skip) expect(result.reason).toContain("addressed")
+  })
+
+  it("emits a DM even when it opens with another user's mention", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const event = expectMessage(
+      proc.processMessage(baseMessage({ channel: "D1", text: "<@UOTHER> をアサインして" })),
+    )
+    expect(event.mentioned).toBe(true)
+    expect(event.text).toBe("<@UOTHER> をアサインして")
   })
 
   it("skips bot self-messages", () => {

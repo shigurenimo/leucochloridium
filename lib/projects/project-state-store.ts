@@ -27,21 +27,19 @@ export class LeucoProjectStateStore {
   }
 
   setCodexThreadId(projectId: string, codexThreadId: string | null): void {
-    const project = this.projectStore.load(projectId)
-    this.projectStore.save({
+    this.projectStore.updateProject(projectId, (project) => ({
       ...project,
       state: { ...project.state, codexThreadId },
-    })
+    }))
   }
 
   markScheduleEntryFired(projectId: string, entryId: string, firedAt: number): void {
-    const project = this.projectStore.load(projectId)
-    this.projectStore.save({
+    this.projectStore.updateProject(projectId, (project) => ({
       ...project,
       state: {
         ...project.state,
         scheduleLastFiredAt: { ...project.state.scheduleLastFiredAt, [entryId]: firedAt },
       },
-    })
+    }))
   }
 }

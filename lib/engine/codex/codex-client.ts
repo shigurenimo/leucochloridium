@@ -114,7 +114,9 @@ export class LeucoCodexClient {
       }
     })
 
+    let settleExit: () => void = () => undefined
     this.exitPromise = new Promise((resolve) => {
+      settleExit = resolve
       child.once("exit", (code, signal) => {
         const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`
         const exitError = new Error(`codex app-server exited (${reason})`)
@@ -129,6 +131,14 @@ export class LeucoCodexClient {
     child.once("error", (err) => {
       protocol.fail(err)
       this.abortInFlightTurns(err)
+      // A spawn failure (ENOENT etc.) never emits `exit`, so without this the
+      // dead client stays "running" forever: isRunning() true blocks the
+      // tenant's respawn path and stop() waits a full kill-escalation cycle.
+      if (child.pid === undefined) {
+        this.child = null
+        this.protocol = null
+        settleExit()
+      }
     })
 
     this.child = child
@@ -263,7 +273,10 @@ export class LeucoCodexClient {
 
       const teardown = (): void => {
         this.notificationHandler = previous
-        if (previous) protocol.onNotification(previous)
+        // Always restore (even to null) — leaving the turn handler installed
+        // would keep appending deltas of later turns to this settled promise's
+        // arrays.
+        protocol.onNotification(previous)
         this.turnAborters.delete(aborter)
       }
 
@@ -298,6 +311,12 @@ export class LeucoCodexClient {
             reject(new Error(message))
             return
           }
+          if (turn.status === "interrupted") {
+            // Partial text from an interrupted turn is not a completed answer;
+            // surfacing it as success would let a half-formed reply flow on.
+            reject(new Error(turn.error?.message ?? "turn interrupted before completion"))
+            return
+          }
           const finalText =
             completedTexts.length > 0 ? completedTexts.join("\n\n") : deltas.join("")
           resolve(finalText)
@@ -311,7 +330,7 @@ export class LeucoCodexClient {
       // `startTurn` always resolves (errors are folded into `| Error`), so a
       // single `.then` is enough — settling here rejects the outer promise
       // when codex never sends `turn/completed`. Without this `runTextTurn`
-      // would hang until the tenant's 10 minute wall-clock kicks in.
+      // would hang until the tenant's wall-clock timeout kicks in.
       this.startTurn(params).then((result) => {
         if (result instanceof Error) {
           teardown()

@@ -44,6 +44,7 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
 
 const TIMEOUT_REPLY_TEXT =
   "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
+const FAILURE_REPLY_TEXT = "すみません、処理に失敗しました。もう一度メンションしてください。"
 const ACTIVE_THREAD_CAPACITY = 500
 
 /**
@@ -91,7 +92,9 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     }
 
     if (this.props.usesUserToken) {
-      ctx.onLog(`[${this.name}] using xoxp token for Slack Web API; inbound events are Socket Mode only`)
+      ctx.onLog(
+        `[${this.name}] using xoxp token for Slack Web API; inbound events are Socket Mode only`,
+      )
     }
 
     ctx.onLog(`[${this.name}] connecting to Slack (Socket Mode)`)
@@ -277,7 +280,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     const threadKey = `${this.name}:${msg.channel}:${msg.threadTs}`
     const reactionTs = msg.ts
     const wantsAck = this.shouldAck(msg)
-    const wantsTimeoutReply = this.shouldSendTimeoutReply(msg)
+    const wantsFailureReply = this.shouldSendFailureReply(msg)
     const icons = this.props.ackIcons ?? DEFAULT_ACK_ICONS
 
     if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
@@ -286,7 +289,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     if (monologue instanceof Error) {
       ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
-      if (wantsTimeoutReply) await this.postTimeoutReplyIfNeeded(msg)
+      if (wantsFailureReply) await this.postFailureReplyIfNeeded(msg, monologue)
     } else {
       logMonologue(ctx.onLog, this.name, msg.ts, monologue)
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
@@ -304,7 +307,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     return msg.mentioned
   }
 
-  private shouldSendTimeoutReply(msg: SlackMessageEvent): boolean {
+  private shouldSendFailureReply(msg: SlackMessageEvent): boolean {
     return msg.mentioned || msg.channel.startsWith("D")
   }
 
@@ -318,10 +321,15 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
     })
   }
 
-  private async postTimeoutReplyIfNeeded(msg: SlackMessageEvent): Promise<void> {
+  private async postFailureReplyIfNeeded(msg: SlackMessageEvent, error: Error): Promise<void> {
     if (!this.adapter) return
     if (await this.hasVisibleBotReplyAfter(msg)) return
-    await this.postReplySafely(msg, TIMEOUT_REPLY_TEXT)
+
+    // "立て直しました" is only true for the timeout path, where the tenant
+    // actually restarted the codex child. Every other failure gets a plain
+    // apology so the text never claims a recovery that did not happen.
+    const isTimeout = error.message.startsWith("codex turn timed out")
+    await this.postReplySafely(msg, isTimeout ? TIMEOUT_REPLY_TEXT : FAILURE_REPLY_TEXT)
   }
 
   private async postReplySafely(msg: SlackMessageEvent, text: string): Promise<boolean> {
@@ -415,12 +423,17 @@ const attr = (value: string): string => {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")
 }
 
-/** Defang any literal `</slack-event>` inside the body so a crafted message
- * cannot inject extra envelopes the model would see as separate events
- * (prompt-injection vector). The replacement is visible and self-explanatory
- * so the human reading the log understands the substitution. */
+/** Defang any literal `<slack-event ...>` / `</slack-event>` inside the body
+ * so a crafted message cannot inject extra envelopes the model would see as
+ * separate events (prompt-injection vector). Opening tags matter as much as
+ * closing ones: a fake opening tag combines with the real closing tag to
+ * forge an envelope with attacker-controlled attributes. The replacement is
+ * visible and self-explanatory so the human reading the log understands the
+ * substitution. */
 const escapeEnvelopeBody = (text: string): string => {
-  return text.replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
+  return text
+    .replace(/<slack-event/gi, "&lt;slack-event")
+    .replace(/<\/slack-event>/gi, "&lt;/slack-event&gt;")
 }
 
 const MONOLOGUE_LOG_LIMIT = 200

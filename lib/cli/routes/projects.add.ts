@@ -2,7 +2,7 @@ import { basename, resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
-import { validateLeucoName } from "@/cli/utils/validate-name"
+import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import type { Project } from "@/config/config-schema"
 import { PromptPreset } from "@/engine/prompt-presets"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -24,7 +24,7 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
   const rawPath = body.args[0]
   const path = rawPath ? resolve(c.var.cwd, rawPath) : c.var.cwd
   const name = flagString(body.flags.name) ?? basename(path)
-  validateLeucoName(name, "project name")
+  assertRoutableName(name, "project name")
 
   const store = new LeucoProjectStore()
   const list = store.list()
@@ -42,11 +42,9 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
     version: 2,
     enabled: true,
     useCommonInstructions: true,
-    prompts: [
-      PromptPreset.CORE,
-      PromptPreset.COMMUNICATION,
-      PromptPreset.COMMUNICATION_SLACK,
-    ],
+    model: null,
+    developerInstructions: null,
+    prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
     channels: [],
     mcpServers: {},
     state: { codexThreadId: null, scheduleLastFiredAt: {} },

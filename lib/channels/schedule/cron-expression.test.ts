@@ -50,6 +50,19 @@ describe("parseCronExpression", () => {
     expect(expr.hour.values).toEqual([9, 13, 17])
   })
 
+  it("expands single value with step to the field max", () => {
+    const expr = ok("5/2 * * * *")
+    const expected: number[] = []
+    for (let v = 5; v <= 59; v += 2) expected.push(v)
+    expect(expr.minute.values).toEqual(expected)
+    expect(expr.minute.wildcard).toBe(false)
+  })
+
+  it("expands hour single value with step", () => {
+    const expr = ok("0 3/5 * * *")
+    expect(expr.hour.values).toEqual([3, 8, 13, 18, 23])
+  })
+
   it("dedupes and sorts comma list", () => {
     const expr = ok("30,5,5,15 * * * *")
     expect(expr.minute.values).toEqual([5, 15, 30])

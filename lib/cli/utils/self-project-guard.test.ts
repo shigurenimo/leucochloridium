@@ -11,6 +11,8 @@ const project: Project = {
   channels: [],
   prompts: [],
   useCommonInstructions: true,
+  model: null,
+  developerInstructions: null,
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },
 }

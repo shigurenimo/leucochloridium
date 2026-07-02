@@ -55,10 +55,12 @@ export const channelsSetTokensHandler = factory.createHandlers(async (c) => {
 
   const next: Channel = { ...channel, botToken: nextBotToken, appToken: nextAppToken }
 
-  store.save({
-    ...project,
-    channels: project.channels.map((ch) => (ch.name === channelName ? next : ch)),
-  })
+  // updateProject re-reads inside the settings lock, so a concurrent daemon
+  // state write cannot clobber the new tokens (and vice versa).
+  store.updateProject(project.id, (fresh) => ({
+    ...fresh,
+    channels: fresh.channels.map((ch) => (ch.name === channelName ? next : ch)),
+  }))
 
   const updated: string[] = []
   if (typeof botFlag === "string") updated.push("botToken")

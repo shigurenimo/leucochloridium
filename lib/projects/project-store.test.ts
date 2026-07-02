@@ -16,6 +16,8 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
   path: "/tmp/demo",
   enabled: true,
   useCommonInstructions: true,
+  model: null,
+  developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [
     {

@@ -11,5 +11,6 @@ export const statusHandler = factory.createHandlers((c) => {
     plugins: deps.engine.listPlugins(),
     codexRunning: deps.engine.isCodexRunning(),
     threads: deps.engine.listThreads(),
+    projects: deps.engine.listProjects(),
   })
 })

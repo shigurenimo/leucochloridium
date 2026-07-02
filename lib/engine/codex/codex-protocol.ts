@@ -44,7 +44,7 @@ export class LeucoCodexProtocol {
     this.onLog = props.onLog ?? (() => undefined)
   }
 
-  onNotification(handler: NotificationHandler): void {
+  onNotification(handler: NotificationHandler | null): void {
     this.notificationHandler = handler
   }
 
@@ -99,6 +99,18 @@ export class LeucoCodexProtocol {
       return
     }
 
+    // A server-initiated REQUEST (id + method) must get an answer: the zod
+    // union would strip the id and treat it as a notification, and codex
+    // would then wait on the reply forever. approval_policy="never" means we
+    // never expect these — decline explicitly instead of hanging the child.
+    const serverRequestId = extractServerRequestId(json)
+    if (serverRequestId !== null) {
+      const method = (json as { method: string }).method
+      this.onLog(`[codex server-request declined] ${method}`)
+      this.respondMethodNotSupported(serverRequestId, method)
+      return
+    }
+
     const result = jsonRpcIncomingSchema.safeParse(json)
     if (!result.success) {
       this.onLog(`[codex unknown] ${line}`)
@@ -122,6 +134,29 @@ export class LeucoCodexProtocol {
       this.notificationHandler(msg.method, msg.params)
     }
   }
+
+  private respondMethodNotSupported(id: number | string, method: string): void {
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `method not supported by leuco client: ${method}` },
+    })
+    try {
+      this.writer(`${payload}\n`)
+    } catch (err) {
+      this.onLog(`[codex request reply failed] ${errorMessage(err)}`)
+    }
+  }
+}
+
+const extractServerRequestId = (json: unknown): number | string | null => {
+  if (typeof json !== "object" || json === null) return null
+  if (!("id" in json) || !("method" in json)) return null
+
+  const candidate = json as { id: unknown; method: unknown }
+  if (typeof candidate.method !== "string") return null
+  if (typeof candidate.id === "number" || typeof candidate.id === "string") return candidate.id
+  return null
 }
 
 const tryParse = (line: string): unknown => {
