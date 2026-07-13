@@ -29,6 +29,7 @@ import { schedulesListHandler } from "@/cli/routes/projects.$project.channels.$c
 import { schedulesRemoveHandler } from "@/cli/routes/projects.$project.channels.$channel.schedules.remove"
 import { help as projectsNamedHelp } from "@/cli/routes/projects.$project.help"
 import { projectsPathHandler } from "@/cli/routes/projects.$project.path"
+import { projectsCwdHandler } from "@/cli/routes/projects.$project.cwd"
 import { projectsRelocateHandler } from "@/cli/routes/projects.$project.relocate"
 import { projectsRemoveHandler } from "@/cli/routes/projects.$project.remove"
 import { projectsRenameHandler } from "@/cli/routes/projects.$project.rename"
@@ -42,6 +43,7 @@ import { restartHandler } from "@/cli/routes/restart"
 import { rootHandler } from "@/cli/routes/root"
 import { runHandler } from "@/cli/routes/run"
 import { slackCallHandler } from "@/cli/routes/slack.call"
+import { slackDmHandler } from "@/cli/routes/slack.dm"
 import { help as slackHelp } from "@/cli/routes/slack.help"
 import { startHandler } from "@/cli/routes/start"
 import { statusHandler } from "@/cli/routes/status"
@@ -103,6 +105,7 @@ export const app = base
   .post("/projects/:project/restart", ...projectsRestartHandler)
   .post("/projects/:project/reset", ...projectsResetHandler)
   .post("/projects/:project/path", ...projectsPathHandler)
+  .post("/projects/:project/cwd", ...projectsCwdHandler)
   .post("/projects/:project/session", ...projectsSessionHandler)
   .post("/projects/:project/session/reset", ...projectsSessionResetHandler)
 
@@ -124,6 +127,7 @@ export const app = base
 
   .post("/slack", ...groupHelpHandler(slackHelp))
   .post("/slack/call", ...slackCallHandler)
+  .post("/slack/dm", ...slackDmHandler)
 
   .post("/config", ...configListHandler)
   .post("/config/list", ...configListHandler)

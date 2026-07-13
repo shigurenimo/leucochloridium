@@ -2,7 +2,7 @@ import { z } from "zod"
 import { DEFAULT_LEUCO_PORT, cliEnvSchema } from "@/env/cli-env-schema"
 
 const POLL_INTERVAL_MS = 150
-const DEFAULT_TIMEOUT_MS = 10_000
+const DEFAULT_TIMEOUT_MS = 15_000
 
 const statusProjectsSchema = z
   .object({
@@ -18,8 +18,8 @@ const statusProjectsSchema = z
  * the full 5s codex SIGTERM grace), the re-enable landed first and "restarted"
  * was a silent no-op, leaving e.g. a rotated MCP token unpicked.
  *
- * Returns true when the tenant is confirmed down (or the daemon/gateway is
- * unreachable — nothing to wait for), false on timeout.
+ * Returns true only when the tenant is confirmed down. A temporarily
+ * unreachable gateway remains unknown and is retried until timeout.
  */
 export const waitForTenantDown = async (
   projectId: string,
@@ -30,7 +30,7 @@ export const waitForTenantDown = async (
 
   while (Date.now() < deadline) {
     const running = await tenantRunning(port, projectId)
-    if (running !== true) return true
+    if (running === false) return true
     await sleep(POLL_INTERVAL_MS)
   }
   return false

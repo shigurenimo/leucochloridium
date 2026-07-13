@@ -51,6 +51,12 @@ export const agentMessageDeltaSchema = z.object({
   delta: z.string(),
 })
 
+/** `item/commandExecution/outputDelta` notification params. */
+export const commandExecutionOutputDeltaSchema = z.object({
+  itemId: z.string().optional(),
+  delta: z.string(),
+})
+
 /** `item/completed` — only the agentMessage variant carries the final text we care about. */
 export const itemCompletedSchema = z.object({
   item: z

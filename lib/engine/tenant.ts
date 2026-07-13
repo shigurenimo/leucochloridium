@@ -14,7 +14,7 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
  * On timeout the codex child is restarted (in-flight turn dies with it) and
  * the project thread is re-resumed on the next call.
  */
-const TURN_TIMEOUT_MS = 6 * 60 * 1000
+const TURN_TIMEOUT_MS = 10 * 60 * 1000
 
 type Logger = (line: string) => void
 
@@ -165,15 +165,22 @@ export class LeucoTenant {
     // owns after this tenant is discarded (reconcile rebuilds, shutdown).
     this.stopped = true
 
-    for (const plugin of this.plugins) {
-      await plugin.stop().catch((err: unknown) => {
+    // Begin closing every ingress first, but do not wait for a plugin whose
+    // in-flight handler is itself waiting on codex. Stopping codex settles
+    // those turns, after which the plugin shutdown promises can finish.
+    const pluginStops = this.plugins.map(async (plugin) => {
+      try {
+        await plugin.stop()
+      } catch (err) {
         this.log(`[leuco] plugin ${plugin.name} stop: ${errorMessage(err)}`)
-      })
-    }
+      }
+    })
 
     await this.codex.stop().catch((err: unknown) => {
       this.log(`[leuco] codex stop (${this.key}): ${errorMessage(err)}`)
     })
+
+    await Promise.all(pluginStops)
 
     const abandoned = this.pendingTurns.splice(0)
     for (const pending of abandoned) {
@@ -282,7 +289,7 @@ export class LeucoTenant {
     const reply = await Promise.race([replyPromise, timeoutPromise])
     if (timer) clearTimeout(timer)
 
-    if (reply instanceof Error && reply.message.startsWith("codex turn timed out")) {
+    if (reply instanceof Error && isRestartableTurnError(reply)) {
       this.log(`[leuco] ${this.key}: ${reply.message}; restarting codex child`)
       this.codexThreadLive = false
       await this.codex.stop().catch(() => undefined)
@@ -389,4 +396,11 @@ export class LeucoTenant {
 const truncate = (text: string, max: number): string => {
   if (text.length <= max) return text
   return `${text.slice(0, max - 1)}…`
+}
+
+const isRestartableTurnError = (error: Error): boolean => {
+  return (
+    error.message.startsWith("codex turn timed out") ||
+    error.message.startsWith("codex command output exceeded")
+  )
 }

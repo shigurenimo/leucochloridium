@@ -49,9 +49,9 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
   }
 
   setChannelEnabled(false)
-  c.var.daemon.reload()
+  const stopReload = c.var.daemon.reload()
 
-  const confirmedDown = await waitForTenantDown(project.id)
+  const confirmedDown = stopReload.signalled ? await waitForTenantDown(project.id) : true
 
   setChannelEnabled(true)
   const reload = c.var.daemon.reload()

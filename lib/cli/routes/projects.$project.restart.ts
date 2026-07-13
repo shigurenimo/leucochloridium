@@ -36,9 +36,9 @@ export const projectsRestartHandler = factory.createHandlers(async (c) => {
   // its own cadence, and saving a stale whole-project object would roll that
   // state back (losing the conversation thread the help text promises to keep).
   store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: false }))
-  c.var.daemon.reload()
+  const stopReload = c.var.daemon.reload()
 
-  const confirmedDown = await waitForTenantDown(project.id)
+  const confirmedDown = stopReload.signalled ? await waitForTenantDown(project.id) : true
 
   store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
   const reload = c.var.daemon.reload()

@@ -7,7 +7,6 @@ import {
   readlinkSync,
   symlinkSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
@@ -19,7 +18,9 @@ import { LeucoEngine } from "@/engine/engine"
 import { LeucoPromptPresets } from "@/engine/prompt-presets"
 import { tenantConfigSignature } from "@/engine/tenant-config-signature"
 import { LeucoTenant } from "@/engine/tenant"
+import { DEFAULT_LEUCO_PORT } from "@/env/cli-env-schema"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
+import { atomicWriteText } from "@/fs/atomic-write-text"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -28,12 +29,8 @@ type Logger = (line: string) => void
 
 type Props = {
   env: NodeJS.ProcessEnv
-  /** Gateway port. Required in production so codex children can reach the
-   * daemon's HTTP MCP route at `/mcp/<projectId>`. The legacy `leuco mcp`
-   * stdio fallback was removed. CLI always supplies the port via
-   * `cliEnvSchema` (default 7331). Library embedders MUST supply it too —
-   * skipping it leaves tenants without MCP. */
-  port: number
+  /** Gateway port for `/mcp/<projectId>`. Defaults to the CLI port (7331). */
+  port?: number
   home?: string
   codexBin?: string
   onLog?: Logger
@@ -88,7 +85,7 @@ export class LeucoRuntime {
       mcpTokens.set(projectId, fresh)
       return fresh
     }
-    const mcpPort = buildProps.port
+    const mcpPort = buildProps.port ?? DEFAULT_LEUCO_PORT
 
     const buildTenantFn = (project: Project): LeucoTenant =>
       buildTenant({
@@ -112,7 +109,7 @@ export class LeucoRuntime {
 
     const engine = new LeucoEngine({
       tenants,
-      port: buildProps.port,
+      port: mcpPort,
       onLog,
       projectStore,
       buildTenant: buildTenantFn,
@@ -265,7 +262,7 @@ const ensureTenantConfigToml = (
     "schedule_delete",
   ]
   const lines = [
-    `model = "gpt-5.5"`,
+    `model = "gpt-5.6-terra"`,
     `model_reasoning_effort = "xhigh"`,
     "",
     `approval_policy = "never"`,
@@ -301,7 +298,7 @@ const ensureTenantConfigToml = (
     lines.push("")
   }
 
-  writeFileSync(path, lines.join("\n"))
+  atomicWriteText({ path, text: lines.join("\n"), mode: 0o600 })
 }
 
 const ensureAuthSymlink = (codexHome: string, source: string): void => {

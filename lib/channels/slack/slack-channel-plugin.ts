@@ -11,6 +11,7 @@ import {
   type ProcessResult,
 } from "@/channels/slack/slack-event-processor"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
+import { formatTurnFailureReply } from "@/channels/slack/format-turn-failure-reply"
 import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
 import { errorMessage } from "@/error-message"
 
@@ -42,9 +43,6 @@ const DEFAULT_ACK_ICONS: SlackAckIcons = {
   error: "x",
 }
 
-const TIMEOUT_REPLY_TEXT =
-  "遅れてすみません。処理が詰まったので立て直しました。もう一度メンションしてください。"
-const FAILURE_REPLY_TEXT = "すみません、処理に失敗しました。もう一度メンションしてください。"
 const ACTIVE_THREAD_CAPACITY = 500
 
 /**
@@ -324,12 +322,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   private async postFailureReplyIfNeeded(msg: SlackMessageEvent, error: Error): Promise<void> {
     if (!this.adapter) return
     if (await this.hasVisibleBotReplyAfter(msg)) return
-
-    // "立て直しました" is only true for the timeout path, where the tenant
-    // actually restarted the codex child. Every other failure gets a plain
-    // apology so the text never claims a recovery that did not happen.
-    const isTimeout = error.message.startsWith("codex turn timed out")
-    await this.postReplySafely(msg, isTimeout ? TIMEOUT_REPLY_TEXT : FAILURE_REPLY_TEXT)
+    await this.postReplySafely(msg, formatTurnFailureReply(error))
   }
 
   private async postReplySafely(msg: SlackMessageEvent, text: string): Promise<boolean> {

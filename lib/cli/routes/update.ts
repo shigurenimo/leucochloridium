@@ -64,6 +64,7 @@ const fetchLatestVersion = async (): Promise<string | Error> => {
   try {
     const res = await fetch("https://registry.npmjs.org/leuco/latest", {
       headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) return new Error(`registry returned ${res.status}`)
     const json: unknown = await res.json()

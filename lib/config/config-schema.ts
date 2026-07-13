@@ -62,6 +62,34 @@ const scheduleChannelSchema = z.object({
 
 const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, scheduleChannelSchema])
 
+const DEFAULT_PROMPTS = [
+  PromptPreset.CORE,
+  PromptPreset.COMMUNICATION,
+  PromptPreset.COMMUNICATION_SLACK,
+]
+
+const appendUniquePrompt = (out: unknown[], prompt: string): void => {
+  if (!out.includes(prompt)) out.push(prompt)
+}
+
+const migratePromptPresets = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value
+
+  const migrated: unknown[] = []
+  for (const prompt of value) {
+    if (prompt === "friendly") {
+      for (const defaultPrompt of DEFAULT_PROMPTS) appendUniquePrompt(migrated, defaultPrompt)
+      continue
+    }
+    if (typeof prompt === "string") {
+      appendUniquePrompt(migrated, prompt)
+      continue
+    }
+    migrated.push(prompt)
+  }
+  return migrated
+}
+
 /**
  * One extra stdio MCP server to attach to this project's codex, on top of the
  * built-in `leuco` server. leuco stays agnostic about what the server does:
@@ -125,8 +153,8 @@ export const projectSchema = z.object({
   /** Optional per-project instructions appended after the preamble and presets. */
   developerInstructions: z.string().min(1).nullable().default(null),
   prompts: z
-    .array(z.enum(PROMPT_PRESET_NAMES))
-    .default([PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK]),
+    .preprocess(migratePromptPresets, z.array(z.enum(PROMPT_PRESET_NAMES)))
+    .default(DEFAULT_PROMPTS),
   channels: z.array(channelSchema).default([]),
   mcpServers: z.record(safeName, mcpServerSchema).default({}),
   state: projectStateSchema,

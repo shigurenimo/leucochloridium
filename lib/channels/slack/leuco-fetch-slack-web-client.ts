@@ -12,9 +12,14 @@ import { slackRateLimitDelayMs } from "@/channels/slack/slack-rate-limit-delay"
 
 type Props = {
   botToken: string
+  requestTimeoutMs?: number
+  fetchFn?: FetchPort
 }
 
+type FetchPort = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
 const SLACK_API_BASE = "https://slack.com/api"
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 /**
  * Raw-fetch implementation of `LeucoSlackWebClient`. Calls
@@ -219,18 +224,52 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   /** POST once; on a 429 honor Retry-After and retry exactly once. No general
    * retry loop — a second 429 surfaces as the plain http error. */
   private async fetchSlackApi(method: string, init: RequestInit): Promise<unknown> {
-    const response = await fetch(`${SLACK_API_BASE}/${method}`, init)
-    if (response.status !== 429) return await this.parseHttpResponse(method, response)
+    const first = await this.fetchAttempt(method, init, true)
+    const retryAfterMs = first.retryAfterMs
+    if (retryAfterMs === null) return first.value
 
-    const delayMs = slackRateLimitDelayMs(response.headers.get("retry-after"))
-    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs))
 
-    const retried = await fetch(`${SLACK_API_BASE}/${method}`, init)
-    return await this.parseHttpResponse(method, retried)
+    const retried = await this.fetchAttempt(method, init, false)
+    return retried.value
+  }
+
+  private async fetchAttempt(
+    method: string,
+    init: RequestInit,
+    captureRateLimit: boolean,
+  ): Promise<{ retryAfterMs: number | null; value: unknown }> {
+    const timeoutMs = this.props.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const fetchFn = this.props.fetchFn ?? globalThis.fetch
+      const response = await fetchFn(`${SLACK_API_BASE}/${method}`, {
+        ...init,
+        signal: controller.signal,
+      })
+
+      if (captureRateLimit && response.status === 429) {
+        const retryAfterMs = slackRateLimitDelayMs(response.headers.get("retry-after"))
+        await response.body?.cancel().catch(() => undefined)
+        return { retryAfterMs, value: undefined }
+      }
+
+      const value = await this.parseHttpResponse(method, response)
+      return { retryAfterMs: null, value }
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`slack ${method} timed out after ${timeoutMs}ms`)
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async parseHttpResponse(method: string, response: Response): Promise<unknown> {
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
       throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
     }
 

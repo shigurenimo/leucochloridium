@@ -102,6 +102,12 @@ describe("toRequest", () => {
     expect(r.parsed.args).toEqual(["agents"])
   })
 
+  it("maps project cwd changes with the directory as positional data", () => {
+    const r = toRequest(["projects", "cocolococo-hiract", "cwd", "/tmp/worktree"])
+    expect(r.path).toBe("/projects/cocolococo-hiract/cwd")
+    expect(r.parsed.args).toEqual(["/tmp/worktree"])
+  })
+
   it("expands project session reset", () => {
     expect(toRequest(["projects", "azamino", "session"]).path).toBe("/projects/azamino/session")
     expect(toRequest(["projects", "azamino", "session", "reset"]).path).toBe(
@@ -113,6 +119,13 @@ describe("toRequest", () => {
     expect(toRequest(["boot", "install"]).path).toBe("/boot/install")
     expect(toRequest(["boot", "uninstall"]).path).toBe("/boot/uninstall")
     expect(toRequest(["boot", "status"]).path).toBe("/boot/status")
+  })
+
+  it("expands Slack DM diagnostics with the conversation ID as positional data", () => {
+    const r = toRequest(["slack", "dm", "D0123ABC", "--project", "cocolococo-hiract"])
+    expect(r.path).toBe("/slack/dm")
+    expect(r.parsed.args).toEqual(["D0123ABC"])
+    expect(r.parsed.flags).toEqual({ project: "cocolococo-hiract" })
   })
 
   it("collects --key value flags interspersed with segments", () => {

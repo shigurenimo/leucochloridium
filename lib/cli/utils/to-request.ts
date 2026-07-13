@@ -43,6 +43,7 @@ const PROJECT_NAMED_LEAFS = new Set([
   "restart",
   "reset",
   "path",
+  "cwd",
 ])
 const CHANNEL_NAMED_LEAFS = new Set([
   "remove",
@@ -55,7 +56,7 @@ const CHANNEL_NAMED_LEAFS = new Set([
 ])
 const PROJECT_SESSION_LEAFS = new Set(["reset"])
 const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
-const SLACK_LEAFS = new Set(["call"])
+const SLACK_LEAFS = new Set(["call", "dm"])
 const CONFIG_LEAFS = new Set(["list", "get", "set"])
 const BOOT_LEAFS = new Set(["install", "uninstall", "status"])
 

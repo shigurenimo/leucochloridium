@@ -55,6 +55,13 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("`thread_ts`")
   })
 
+  it("asks agents to keep local command output bounded", () => {
+    const out = new LeucoSystemPromptBuilder(baseProps).build()
+    expect(out).toContain("## Local command hygiene")
+    expect(out).toContain("Keep shell output bounded")
+    expect(out).toContain("`rg -m`")
+  })
+
   it("appends per-agent instructions after a separator", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,

@@ -57,6 +57,7 @@ leuco projects add [<path>]             register an existing repo
 leuco projects <p> remove [--cascade]
 leuco projects <p> rename <new>
 leuco projects <p> relocate <new-path>
+leuco projects <p> cwd <path>              change Codex working directory only
 leuco projects <p> start
 leuco projects <p> stop
 leuco projects <p> restart
@@ -93,6 +94,7 @@ Other:
 
 ```
 leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
+leuco slack dm <conversation-id> --project <p> [--limit <N>] [--json]
 leuco config [get <key> | set <key> <value>]
 leuco boot [install | uninstall]
 ```
@@ -117,10 +119,14 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
   `~/.leuco/projects/<id>/.codex/`. `auth.json` is symlinked from
   `~/.codex/auth.json` so all tenants share the user's codex login while
   keeping memories isolated.
-- One Slack thread maps to one Codex thread. Turns within a thread serialise;
-  separate threads run in parallel.
-- Mention gating, ack reactions, and bot-message filtering are configurable
-  per channel (`ackMode: off | mention | always`, default `off`, custom `ackIcons`).
+- Each project keeps one shared Codex thread so its project context survives
+  across Slack channels and threads. Turns are serialised and messages that
+  arrive during an in-flight turn are batched into the next turn.
+- Every accepted Socket Mode message reaches the tenant; the built-in prompt
+  decides whether to reply. Ack reactions are configurable per channel
+  (`ackMode: off | mention | always`, default `off`, custom `ackIcons`).
+- A turn has a 10-minute wall-clock limit. On timeout the Codex child is
+  stopped and restarted before the tenant accepts the next batch.
 - Codex subagents (`.codex/agents/*.toml`) are managed by codex, not leuco.
 
 ## Filesystem layout
@@ -136,7 +142,7 @@ Slack (Socket Mode) --> leuco daemon --> codex app-server (one per project)
     <uuid>/
       .codex/                            CODEX_HOME for this tenant
         auth.json                        symlink -> ~/.codex/auth.json
-        config.toml                      project trust + mcp_servers.leuco
+        config.toml                      project trust + MCP config (chmod 600)
 ```
 
 ## Requirements
@@ -224,6 +230,16 @@ Common causes when nothing happens on mention:
 - Bot is not invited to the channel (`/invite @yourbot`)
 - App-level token is missing `connections:write`
 - Channel has `ackMode: "off"` and the bot returned empty text
+
+For a direct-message reply that is missing, use its `D...` conversation ID:
+
+```bash
+leuco slack dm D0123ABC --project myapp
+```
+
+The command compares Slack history with Socket Mode delivery, the Codex turn,
+and visible bot replies. A `socket_event_missing` result means Slack has the
+DM but has not delivered `message.im` to the daemon.
 
 ## License
 

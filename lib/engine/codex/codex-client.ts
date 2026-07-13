@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { LeucoCodexProtocol } from "@/engine/codex/codex-protocol"
 import {
   agentMessageDeltaSchema,
+  commandExecutionOutputDeltaSchema,
   itemCompletedSchema,
   threadStartResultSchema,
 } from "@/engine/codex/codex-schemas"
@@ -33,6 +34,7 @@ type Props = {
   clientName?: string
   clientTitle?: string
   clientVersion?: string
+  commandOutputLimitChars?: number
 }
 
 /**
@@ -49,6 +51,7 @@ export class LeucoCodexClient {
   private readonly clientName: string
   private readonly clientTitle: string
   private readonly clientVersion: string
+  private readonly commandOutputLimitChars: number
 
   private child: ChildProcessWithoutNullStreams | null = null
   private protocol: LeucoCodexProtocol | null = null
@@ -71,6 +74,7 @@ export class LeucoCodexClient {
     this.clientName = props.clientName ?? "leuco"
     this.clientTitle = props.clientTitle ?? "leucochloridium"
     this.clientVersion = props.clientVersion ?? "0.1.0"
+    this.commandOutputLimitChars = props.commandOutputLimitChars ?? COMMAND_OUTPUT_LIMIT_CHARS
     if (props.onAnyNotification !== undefined) {
       this.notificationHandler = props.onAnyNotification
     }
@@ -264,6 +268,7 @@ export class LeucoCodexClient {
     return new Promise<string>((resolve, reject) => {
       const deltas: string[] = []
       const completedTexts: string[] = []
+      let commandOutputChars = 0
       const previous = this.notificationHandler
 
       const aborter = (err: Error): void => {
@@ -286,6 +291,24 @@ export class LeucoCodexClient {
         if (method === "item/agentMessage/delta") {
           const parsed = agentMessageDeltaSchema.safeParse(raw)
           if (parsed.success) deltas.push(parsed.data.delta)
+          return
+        }
+
+        if (method === "item/commandExecution/outputDelta") {
+          const parsed = commandExecutionOutputDeltaSchema.safeParse(raw)
+          if (!parsed.success) return
+          commandOutputChars += parsed.data.delta.length
+          if (commandOutputChars <= this.commandOutputLimitChars) return
+
+          const item = parsed.data.itemId ? ` from ${parsed.data.itemId}` : ""
+          const err = new Error(
+            `codex command output exceeded ${this.commandOutputLimitChars} chars${item}`,
+          )
+          teardown()
+          void this.stop().then(
+            () => reject(err),
+            () => reject(err),
+          )
           return
         }
 
@@ -348,6 +371,8 @@ export class LeucoCodexClient {
 }
 
 const INITIALIZE_TIMEOUT_MS = 30_000
+
+const COMMAND_OUTPUT_LIMIT_CHARS = 200_000
 
 const STOP_TERM_GRACE_MS = 5_000
 const STOP_KILL_GRACE_MS = 5_000

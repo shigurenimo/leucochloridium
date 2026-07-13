@@ -236,7 +236,19 @@ const checkProject = (
   }
 
   const configToml = join(codexHome, "config.toml")
-  checks.configToml = existsSync(configToml) ? ok(configToml) : error(`${configToml} missing`)
+  if (existsSync(configToml)) {
+    checks.configToml = ok(configToml)
+    try {
+      const mode = (statSync(configToml).mode & 0o777).toString(8).padStart(4, "0")
+      checks.configTomlPermissions = mode === "0600" ? ok("0600") : error(`${mode} — expected 0600`)
+    } catch (err) {
+      checks.configTomlPermissions = error(
+        `stat failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  } else {
+    checks.configToml = error(`${configToml} missing`)
+  }
 
   const channelReports = project.channels.map((ch) => {
     const channelChecks: Record<string, Check> = {}
@@ -253,8 +265,8 @@ const checkProject = (
         ? ok(`set (${ch.appToken!.slice(0, 8)}…)`)
         : error("missing — socket mode requires an app-level token")
 
-      if (hasBotToken && !ch.botToken!.startsWith("xoxb-")) {
-        channelChecks.botTokenFormat = warn("expected xoxb- prefix")
+      if (hasBotToken && !ch.botToken!.startsWith("xoxb-") && !ch.botToken!.startsWith("xoxp-")) {
+        channelChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
       }
 
       if (hasAppToken && !ch.appToken!.startsWith("xapp-")) {

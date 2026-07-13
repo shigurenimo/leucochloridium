@@ -48,9 +48,9 @@ export const resetProjectSession = async (
   }
 
   store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: false }))
-  c.var.daemon.reload()
+  const stopReload = c.var.daemon.reload()
 
-  const confirmedDown = await waitForTenantDown(project.id)
+  const confirmedDown = stopReload.signalled ? await waitForTenantDown(project.id) : true
 
   store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
   const reload = c.var.daemon.reload()

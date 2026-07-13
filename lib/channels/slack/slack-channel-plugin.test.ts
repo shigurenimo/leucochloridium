@@ -178,10 +178,12 @@ describe("LeucoSlackChannelPlugin", () => {
     await plugin.stop()
 
     expect(webClient.calls.chatPostMessage).toHaveLength(1)
-    expect(webClient.calls.chatPostMessage[0]?.text).toContain("立て直しました")
+    expect(webClient.calls.chatPostMessage[0]?.text).toContain("codex turn timed out after 600s")
+    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("restarted")
+    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("遅れてすみません")
   })
 
-  it("posts a generic failure reply for non-timeout turn errors", async () => {
+  it("posts the underlying turn error for API failures", async () => {
     const ts = `${Math.floor(Date.now() / 1000) + 1}.0`
     const eventSource = new LeucoMemorySlackEventSource()
     const webClient = new LeucoMemorySlackWebClient({
@@ -193,7 +195,8 @@ describe("LeucoSlackChannelPlugin", () => {
       webClient,
       usesUserToken: true,
     })
-    const { ctx } = makeCtx(() => new Error("codex exited unexpectedly"))
+    const apiError = "OpenAI API rate limit exceeded: 429 requests"
+    const { ctx } = makeCtx(() => new Error(apiError))
 
     await plugin.start(ctx)
     await eventSource.emit({
@@ -206,8 +209,35 @@ describe("LeucoSlackChannelPlugin", () => {
     await plugin.stop()
 
     expect(webClient.calls.chatPostMessage).toHaveLength(1)
-    expect(webClient.calls.chatPostMessage[0]?.text).toContain("処理に失敗しました")
-    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("立て直しました")
+    expect(webClient.calls.chatPostMessage[0]?.text).toContain(apiError)
+    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("遅れてすみません")
+    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("処理に失敗しました")
+  })
+
+  it("redacts credentials from failure replies", async () => {
+    const ts = `${Math.floor(Date.now() / 1000) + 1}.0`
+    const eventSource = new LeucoMemorySlackEventSource()
+    const webClient = new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } })
+    const plugin = new LeucoSlackChannelPlugin({
+      name: "main",
+      eventSource,
+      webClient,
+      usesUserToken: true,
+    })
+    const { ctx } = makeCtx(() => new Error("Authorization: Bearer private-token"))
+
+    await plugin.start(ctx)
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: 1_000,
+      payload: {
+        event: { type: "message", channel: "D1", user: "U_USER", text: "hello", ts },
+      },
+    })
+    await plugin.stop()
+
+    expect(webClient.calls.chatPostMessage[0]?.text).toContain("Authorization: [REDACTED]")
+    expect(webClient.calls.chatPostMessage[0]?.text).not.toContain("private-token")
   })
 
   it("handles delayed Socket Mode deliveries without timestamp-based stale dropping", async () => {

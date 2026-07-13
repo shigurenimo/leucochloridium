@@ -3,6 +3,9 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
+import { stopProjectTenant } from "@/cli/utils/stop-project-tenant"
+import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
+import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects <p> remove / unregister a project
@@ -39,6 +42,30 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
     })
   }
 
-  store.remove(project.id)
-  return c.text(`removed project "${name}"`)
+  const stopped = await stopProjectTenant({
+    projectId: project.id,
+    store,
+    daemon: c.var.daemon,
+    waitForDown: waitForTenantDown,
+  })
+  if (stopped instanceof Error) {
+    throw new HTTPException(503, { message: stopped.message })
+  }
+
+  try {
+    store.remove(project.id)
+  } catch (err) {
+    if (stopped.disabledForStop) {
+      try {
+        store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
+        c.var.daemon.reload()
+      } catch {
+        // The original removal failure is more useful than rollback noise.
+      }
+    }
+    throw new HTTPException(500, { message: `remove failed: ${errorMessage(err)}` })
+  }
+
+  const tail = stopped.disabledForStop ? " (tenant stopped)" : ""
+  return c.text(`removed project "${name}"${tail}`)
 })

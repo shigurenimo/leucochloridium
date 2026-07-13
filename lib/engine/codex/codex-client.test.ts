@@ -47,6 +47,35 @@ const fakeCodexAcksThenExits = [
   "setInterval(() => {}, 1_000_000);",
 ].join("\n")
 
+const fakeCodexAcksThenStreamsLargeCommandOutput = [
+  "let buffer = '';",
+  "process.stdin.setEncoding('utf8');",
+  "process.stdin.on('data', (chunk) => {",
+  "  buffer += chunk;",
+  "  const lines = buffer.split('\\n');",
+  "  buffer = lines.pop();",
+  "  for (const line of lines) {",
+  "    if (line.length === 0) continue;",
+  "    let msg;",
+  "    try { msg = JSON.parse(line); } catch { continue; }",
+  "    if (msg.method === 'initialize' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      continue;",
+  "    }",
+  "    if (msg.method === 'turn/start' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      process.stdout.write(JSON.stringify({",
+  "        jsonrpc: '2.0',",
+  "        method: 'item/commandExecution/outputDelta',",
+  "        params: { itemId: 'call_big', delta: 'abcdef' },",
+  "      }) + '\\n');",
+  "      continue;",
+  "    }",
+  "  }",
+  "});",
+  "setInterval(() => {}, 1_000_000);",
+].join("\n")
+
 describe("LeucoCodexClient.start", () => {
   it("kills the child process when initialize rejects", async () => {
     const client = new LeucoCodexClient({
@@ -77,6 +106,27 @@ describe("LeucoCodexClient.runTextTurn", () => {
     expect(result).toBeInstanceOf(Error)
     if (result instanceof Error) {
       expect(result.message).toMatch(/codex app-server exited/)
+    }
+    expect(client.isRunning()).toBe(false)
+  }, 5000)
+
+  it("aborts and stops the child when command output exceeds the turn budget", async () => {
+    const client = new LeucoCodexClient({
+      bin: "node",
+      args: ["-e", fakeCodexAcksThenStreamsLargeCommandOutput],
+      commandOutputLimitChars: 5,
+    })
+
+    await client.start()
+
+    const result = await client.runTextTurn("thread-x", "hello")
+
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toBe("codex command output exceeded 5 chars from call_big")
+    }
+    for (let i = 0; i < 20 && client.isRunning(); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
     }
     expect(client.isRunning()).toBe(false)
   }, 5000)

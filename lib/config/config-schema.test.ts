@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { projectSchema } from "@/config/config-schema"
+import { PromptPreset } from "@/engine/prompt-presets"
 
 describe("projectSchema", () => {
   it("defaults Slack ack reactions to off", () => {
@@ -28,5 +29,22 @@ describe("projectSchema", () => {
         error: "x",
       },
     })
+  })
+
+  it("migrates the legacy friendly prompt preset", () => {
+    const parsed = projectSchema.parse({
+      version: 2,
+      id: "00000000-0000-4000-8000-000000000000",
+      name: "demo",
+      path: "/tmp/demo",
+      prompts: ["friendly"],
+      channels: [],
+    })
+
+    expect(parsed.prompts).toEqual([
+      PromptPreset.CORE,
+      PromptPreset.COMMUNICATION,
+      PromptPreset.COMMUNICATION_SLACK,
+    ])
   })
 })

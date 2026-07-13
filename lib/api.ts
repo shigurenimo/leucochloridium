@@ -1,6 +1,6 @@
 // Public API surface for leucochloridium.
 //
-// Consumers can either call `LeucoRuntime.build({ cwd, env })` for the
+// Consumers can either call `LeucoRuntime.build({ env })` for the
 // fully-wired composition root, or assemble individual classes (LeucoEngine,
 // LeucoCodexClient, LeucoSlackChannelPlugin, ...) directly for embedding.
 // Every IO boundary exposes a port type so tests can substitute fakes.
@@ -16,6 +16,10 @@ export type {
 } from "@/channels/slack/slack-event-processor"
 export { LeucoSlackEventProcessor } from "@/channels/slack/slack-event-processor"
 export { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
+export {
+  diagnoseSlackDirectMessage,
+  type SlackDirectMessageDiagnosis,
+} from "@/actions/slack/diagnose-slack-direct-message"
 export { LeucoFlumeSlackEventSource } from "@/channels/slack/leuco-flume-slack-event-source"
 export { LeucoMemorySlackEventSource } from "@/channels/slack/leuco-memory-slack-event-source"
 export { LeucoMemorySlackWebClient } from "@/channels/slack/leuco-memory-slack-web-client"

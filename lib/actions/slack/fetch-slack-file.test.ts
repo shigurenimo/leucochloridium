@@ -100,4 +100,18 @@ describe("fetchSlackFile", () => {
       fetchSlackFile("https://files.slack.com/files-pri/T1-F1/x", "xoxb-t"),
     ).rejects.toThrow("without location header")
   })
+
+  it("aborts a stalled file request", async () => {
+    globalThis.fetch = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))
+        })
+      },
+    ) as unknown as typeof fetch
+
+    await expect(
+      fetchSlackFile("https://files.slack.com/files-pri/T1-F1/x", "xoxb-t", 5),
+    ).rejects.toThrow("slack file download timed out after 5ms")
+  })
 })

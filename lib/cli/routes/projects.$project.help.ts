@@ -6,6 +6,7 @@ subcommands:
   remove [--cascade] / unregister this project
   rename <new> / rename
   relocate <new-path> / move repo dir + update path
+  cwd <path> / change the tenant working directory without moving files
   start / enable
   stop / disable
   restart / rebuild the tenant

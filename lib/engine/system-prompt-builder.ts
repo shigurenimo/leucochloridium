@@ -29,6 +29,7 @@ export class LeucoSystemPromptBuilder {
         this.identitySection(),
         this.responseSection(),
         this.replySection(),
+        this.localCommandSection(),
         this.scheduleSection(),
         this.loopSection(),
       ]
@@ -128,6 +129,16 @@ export class LeucoSystemPromptBuilder {
       "To send anything visible in Slack you MUST call the `slack_call` MCP tool with a Web API method such as `chat.postMessage`. Always pass `thread_ts` from the incoming `<slack-event>` envelope so the reply lands in the same thread.",
       "",
       "If you decide not to post — because the message wasn't for you, or another bot is handling it, or there's nothing to add — simply finish the turn without calling the tool. Returning text without calling the tool is the same as silence, and silence is often the correct answer.",
+    ].join("\n")
+  }
+
+  private localCommandSection(): string {
+    return [
+      "## Local command hygiene",
+      "",
+      "Keep shell output bounded. When searching broad trees, use scoped paths plus `rg -m`, `--max-count`, `head`, or specific file globs before reading results.",
+      "",
+      "Do not run unbounded recursive searches over home directories, project caches, or generated plugin folders when a narrower path or tool query is available.",
     ].join("\n")
   }
 

@@ -93,6 +93,53 @@ describe("LeucoTenant.start / stop", () => {
     expect(calls).toEqual(["a.stop", "codex.stop"])
   })
 
+  it("stops codex before waiting for an in-flight plugin turn to settle", async () => {
+    let releasePluginStop: (() => void) | null = null
+    const pluginStopGate = new Promise<void>((resolve) => {
+      releasePluginStop = resolve
+    })
+    const calls: string[] = []
+    const plugin = fakePlugin("schedule")
+    plugin.stop = async () => {
+      calls.push("plugin.stop.begin")
+      await pluginStopGate
+      calls.push("plugin.stop.end")
+    }
+    const codex = fakeCodex({
+      stop: async () => {
+        calls.push("codex.stop")
+        if (releasePluginStop !== null) releasePluginStop()
+      },
+    })
+    const tenant = buildTenant({ codex, plugins: [plugin] })
+
+    await tenant.start()
+    await tenant.stop()
+
+    expect(calls).toEqual(["plugin.stop.begin", "codex.stop", "plugin.stop.end"])
+  })
+
+  it("still stops codex when a plugin throws synchronously during shutdown", async () => {
+    const calls: string[] = []
+    const plugin = fakePlugin("broken")
+    plugin.stop = () => {
+      throw new Error("stop failed")
+    }
+    const tenant = buildTenant({
+      codex: fakeCodex({
+        stop: async () => {
+          calls.push("codex.stop")
+        },
+      }),
+      plugins: [plugin],
+    })
+
+    await tenant.start()
+    await tenant.stop()
+
+    expect(calls).toEqual(["codex.stop"])
+  })
+
   it("rolls back codex and earlier plugins when a later plugin start fails", async () => {
     const calls: string[] = []
     const codex = fakeCodex({
@@ -185,6 +232,29 @@ describe("LeucoTenant.runTextTurn", () => {
     const result = await tenant.runTextTurn("k", "x")
     expect(result).toBeInstanceOf(Error)
     if (result instanceof Error) expect(result.message).toBe("turn failed")
+  })
+
+  it("restarts codex after a command output budget error", async () => {
+    const calls: string[] = []
+    const tenant = buildTenant({
+      codex: fakeCodex({
+        stop: async () => {
+          calls.push("stop")
+        },
+        start: async () => {
+          calls.push("start")
+        },
+        runTextTurn: async () => new Error("codex command output exceeded 200000 chars"),
+      }),
+    })
+
+    const result = await tenant.runTextTurn("k", "x")
+
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toBe("codex command output exceeded 200000 chars")
+    }
+    expect(calls).toEqual(["stop", "start"])
   })
 
   it("batches turns that arrive while another turn is in flight", async () => {

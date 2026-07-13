@@ -147,6 +147,43 @@ describe("LeucoFetchSlackWebClient", () => {
     ).rejects.toThrow("http 429")
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it("aborts a Slack API request at the configured deadline", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))
+        })
+      },
+    )
+    const client = new LeucoFetchSlackWebClient({
+      botToken: "xoxb-test",
+      requestTimeoutMs: 5,
+      fetchFn: fetchMock,
+    })
+
+    await expect(client.authTest()).rejects.toThrow("slack auth.test timed out after 5ms")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the deadline active while reading the response body", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(new Error("aborted")))
+        },
+      })
+      return new Response(body, { status: 200 })
+    })
+    const client = new LeucoFetchSlackWebClient({
+      botToken: "xoxb-test",
+      requestTimeoutMs: 5,
+      fetchFn: fetchMock,
+    })
+
+    await expect(client.authTest()).rejects.toThrow("slack auth.test timed out after 5ms")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 const onlyFetchCall = (
