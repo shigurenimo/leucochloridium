@@ -20,7 +20,7 @@
     "url": "git+https://github.com/shigurenimo/leuco.git"
   },
   "bin": {
-    "leuco": "./lib/index.ts"
+    "leuco": "lib/index.ts"
   },
   "files": [
     "lib/**/*.ts",
@@ -60,15 +60,6 @@
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
-  },
-  "overrides": {
-    "form-data": "4.0.6",
-    "hono": "4.12.28",
-    "ip-address": "10.2.0",
-    "qs": "6.15.3",
-    "undici": "6.27.0",
-    "vite": "8.0.16",
-    "ws": "8.21.0"
   },
   "engines": {
     "bun": ">=1.3.0"
