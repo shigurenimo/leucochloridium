@@ -1,6 +1,10 @@
 import { isAbsolute } from "node:path"
 import { z } from "zod"
-import { PROMPT_PRESET_NAMES, PromptPreset } from "@/engine/prompt-presets"
+import {
+  DEFAULT_PROMPT_PRESET_NAMES,
+  PROMPT_PRESET_NAMES,
+  PromptPreset,
+} from "@/engine/prompt-presets"
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
@@ -62,11 +66,7 @@ const scheduleChannelSchema = z.object({
 
 const channelSchema = z.discriminatedUnion("type", [slackChannelSchema, scheduleChannelSchema])
 
-const DEFAULT_PROMPTS = [
-  PromptPreset.CORE,
-  PromptPreset.COMMUNICATION,
-  PromptPreset.COMMUNICATION_SLACK,
-]
+const DEFAULT_PROMPTS = [...DEFAULT_PROMPT_PRESET_NAMES]
 
 const appendUniquePrompt = (out: unknown[], prompt: string): void => {
   if (!out.includes(prompt)) out.push(prompt)
@@ -79,6 +79,10 @@ const migratePromptPresets = (value: unknown): unknown => {
   for (const prompt of value) {
     if (prompt === "friendly") {
       for (const defaultPrompt of DEFAULT_PROMPTS) appendUniquePrompt(migrated, defaultPrompt)
+      continue
+    }
+    if (prompt === "COMMUNICATION") {
+      appendUniquePrompt(migrated, PromptPreset.WORK_COMMUNICATION)
       continue
     }
     if (typeof prompt === "string") {

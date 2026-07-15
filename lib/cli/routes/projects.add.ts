@@ -4,7 +4,7 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import type { Project } from "@/config/config-schema"
-import { PromptPreset } from "@/engine/prompt-presets"
+import { DEFAULT_PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects add / register an existing repository
@@ -44,7 +44,7 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
     useCommonInstructions: true,
     model: null,
     developerInstructions: null,
-    prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+    prompts: [...DEFAULT_PROMPT_PRESET_NAMES],
     channels: [],
     mcpServers: {},
     state: { codexThreadId: null, scheduleLastFiredAt: {} },

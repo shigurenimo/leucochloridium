@@ -18,7 +18,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+  prompts: [PromptPreset.CORE, PromptPreset.WORK_COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [
     {
       id: "11111111-1111-4111-8111-111111111111",
@@ -185,7 +185,11 @@ describe("LeucoProjectStore", () => {
         path: "/tmp/legacy",
         enabled: true,
         useCommonInstructions: true,
-        prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+        prompts: [
+          PromptPreset.CORE,
+          PromptPreset.WORK_COMMUNICATION,
+          PromptPreset.COMMUNICATION_SLACK,
+        ],
         channels: [],
         mcpServers: {},
       }),

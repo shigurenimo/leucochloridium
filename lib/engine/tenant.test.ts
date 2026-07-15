@@ -368,7 +368,7 @@ describe("LeucoTenant developer instructions", () => {
     expect(arg.developerInstructions).toContain("# leuco built-in instructions")
     expect(arg.developerInstructions).toContain("`U777`")
     expect(arg.developerInstructions).toContain("`/tmp/leuco/demo/.codex/AGENTS.md`")
-    expect(arg.developerInstructions).toContain("Machine-local time zone: `Asia/Tokyo`")
+    expect(arg.developerInstructions).not.toContain("Machine-local time zone")
     expect(arg.developerInstructions).not.toContain(".codex/agents")
     expect(arg.developerInstructions).toContain("\n---\n\nyou are mochi")
   })

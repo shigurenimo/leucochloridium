@@ -43,8 +43,24 @@ describe("projectSchema", () => {
 
     expect(parsed.prompts).toEqual([
       PromptPreset.CORE,
-      PromptPreset.COMMUNICATION,
+      PromptPreset.SECURITY,
+      PromptPreset.WORK_COMMUNICATION,
+      PromptPreset.HUMAN_COMMUNICATION,
       PromptPreset.COMMUNICATION_SLACK,
+      PromptPreset.AGENTS_MEMORY,
     ])
+  })
+
+  it("migrates COMMUNICATION to WORK_COMMUNICATION without duplicates", () => {
+    const parsed = projectSchema.parse({
+      version: 2,
+      id: "00000000-0000-4000-8000-000000000000",
+      name: "demo",
+      path: "/tmp/demo",
+      prompts: ["COMMUNICATION", "WORK_COMMUNICATION"],
+      channels: [],
+    })
+
+    expect(parsed.prompts).toEqual([PromptPreset.WORK_COMMUNICATION])
   })
 })

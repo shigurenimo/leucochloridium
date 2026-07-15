@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Project } from "@/config/config-schema"
-import { PromptPreset } from "@/engine/prompt-presets"
+import { DEFAULT_PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -99,7 +99,7 @@ const registerInStore = (
     useCommonInstructions: true,
     model: null,
     developerInstructions: null,
-    prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+    prompts: [...DEFAULT_PROMPT_PRESET_NAMES],
     channels: [],
     mcpServers: {},
     state: { codexThreadId: null, scheduleLastFiredAt: {} },

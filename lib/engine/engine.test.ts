@@ -59,7 +59,7 @@ const makeProject = (name: string, enabled = true): Project => ({
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+  prompts: [PromptPreset.CORE, PromptPreset.WORK_COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
   channels: [],
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },
