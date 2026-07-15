@@ -211,6 +211,8 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
+    codexHome,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     agentSpec: {
       model: props.project.model ?? undefined,
       developerInstructions: props.project.developerInstructions ?? undefined,

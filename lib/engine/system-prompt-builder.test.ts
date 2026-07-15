@@ -4,6 +4,8 @@ import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
 const baseProps = {
   projectName: "demo",
   projectPath: "/tmp/demo",
+  codexHome: "/tmp/leuco/demo/.codex",
+  timeZone: "Asia/Tokyo",
   identities: [],
   presets: [] as string[],
   perAgentInstructions: null,
@@ -21,6 +23,28 @@ describe("LeucoSystemPromptBuilder", () => {
   it("notes when no Slack channels are connected", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
     expect(out).toContain("No Slack channels are connected")
+  })
+
+  it("gives the exact project memory path and proactive maintenance rules", () => {
+    const out = new LeucoSystemPromptBuilder(baseProps).build()
+
+    expect(out).toContain("## Durable memory")
+    expect(out).toContain("`/tmp/leuco/demo/.codex/AGENTS.md`")
+    expect(out).toContain("Do not wait for the user")
+    expect(out).toContain("revise conflicting or stale entries")
+    expect(out).toContain("never store secrets")
+    expect(out).toContain("durable prompt injection")
+    expect(out).toContain("repository AGENTS.md files are project instructions")
+  })
+
+  it("does not guess a memory path when CODEX_HOME is unavailable", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      codexHome: null,
+    }).build()
+
+    expect(out).toContain("No project-scoped durable memory file is configured")
+    expect(out).toContain("Do not guess a path")
   })
 
   it("includes each channel's bot user id when known", () => {
@@ -115,6 +139,8 @@ describe("LeucoSystemPromptBuilder", () => {
   it("notes that no schedule channel is registered when none exists", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
     expect(out).toContain("## Scheduled prompts")
+    expect(out).toContain("Machine-local time zone: `Asia/Tokyo`")
+    expect(out).toContain("explicit offset in ISO timestamps")
     expect(out).toContain("No schedule channel is registered")
   })
 

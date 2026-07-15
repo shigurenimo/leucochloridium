@@ -27,6 +27,8 @@ type Props = {
   projectId: string
   projectName: string
   projectPath: string
+  codexHome?: string
+  timeZone?: string
   agentSpec?: TenantAgentSpec
   initialCodexThreadId?: string
   projectStateStore?: LeucoProjectStateStore
@@ -65,6 +67,8 @@ export class LeucoTenant {
   readonly projectName: string
   readonly projectPath: string
   readonly configSignature: string | null
+  private readonly codexHome: string | null
+  private readonly timeZone: string
   private readonly agentSpec: TenantAgentSpec
   private readonly codex: CodexClientPort
   private readonly plugins: ChannelPlugin[]
@@ -84,6 +88,8 @@ export class LeucoTenant {
     this.projectName = props.projectName
     this.projectPath = props.projectPath
     this.configSignature = props.configSignature ?? null
+    this.codexHome = props.codexHome ?? null
+    this.timeZone = props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
     this.agentSpec = props.agentSpec ?? {}
     this.codex = props.codex
     this.plugins = props.plugins
@@ -374,6 +380,8 @@ export class LeucoTenant {
     const builder = new LeucoSystemPromptBuilder({
       projectName: this.projectName,
       projectPath: this.projectPath,
+      codexHome: this.codexHome,
+      timeZone: this.timeZone,
       identities: this.plugins.map((p) => p.getIdentity()),
       presets: this.presets,
       perAgentInstructions: tail,

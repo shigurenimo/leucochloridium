@@ -44,6 +44,8 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     projectId: "00000000-0000-4000-8000-000000000000",
     projectName: "demo",
     projectPath: "/tmp/demo",
+    codexHome: "/tmp/leuco/demo/.codex",
+    timeZone: "Asia/Tokyo",
     codex: overrides.codex ?? fakeCodex(),
     plugins: overrides.plugins ?? [],
     agentSpec: overrides.agentSpec,
@@ -365,6 +367,8 @@ describe("LeucoTenant developer instructions", () => {
     if (arg === undefined) throw new Error("startThread was never called")
     expect(arg.developerInstructions).toContain("# leuco built-in instructions")
     expect(arg.developerInstructions).toContain("`U777`")
+    expect(arg.developerInstructions).toContain("`/tmp/leuco/demo/.codex/AGENTS.md`")
+    expect(arg.developerInstructions).toContain("Machine-local time zone: `Asia/Tokyo`")
     expect(arg.developerInstructions).not.toContain(".codex/agents")
     expect(arg.developerInstructions).toContain("\n---\n\nyou are mochi")
   })
