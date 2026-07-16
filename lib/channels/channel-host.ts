@@ -5,7 +5,7 @@ import { LeucoFlumeSlackEventSource } from "@/channels/slack/leuco-flume-slack-e
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
 import { slackAppTokenSchema, slackBotTokenSchema } from "@/channels/slack/slack-schemas"
 import type { Channel, ScheduleEntry } from "@/config/config-schema"
-import type { ChannelPlugin } from "@/engine/channel-plugin"
+import type { ChannelPlugin } from "@/channels/channel-plugin"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 import type { LeucoProjectStore } from "@/projects/project-store"
 

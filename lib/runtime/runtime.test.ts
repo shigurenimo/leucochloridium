@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { Project } from "@/config/config-schema"
-import { PromptPreset } from "@/engine/prompt-presets"
+import { PromptPreset } from "@/prompts/presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { LeucoRuntime } from "@/runtime/runtime"
@@ -19,7 +19,7 @@ const sampleProject = (): Project => ({
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.WORK_COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+  prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
   channels: [],
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Project } from "@/config/config-schema"
-import { DEFAULT_PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
+import { DEFAULT_PROMPT_PRESET_NAMES } from "@/prompts/presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 

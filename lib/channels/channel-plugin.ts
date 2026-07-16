@@ -1,5 +1,6 @@
 import type { LeucoEventBus } from "@/events/leuco-event-bus"
 
+/** Runtime services exposed to a channel adapter. */
 export type ChannelPluginContext = {
   cwd: string
   onLog: (line: string) => void

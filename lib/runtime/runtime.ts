@@ -15,7 +15,6 @@ import type { McpServer, Project } from "@/config/config-schema"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { tomlString } from "@/engine/codex/toml-string"
 import { LeucoEngine } from "@/engine/engine"
-import { LeucoPromptPresets } from "@/engine/prompt-presets"
 import { tenantConfigSignature } from "@/engine/tenant-config-signature"
 import { LeucoTenant } from "@/engine/tenant"
 import { DEFAULT_LEUCO_PORT } from "@/env/cli-env-schema"
@@ -24,6 +23,7 @@ import { atomicWriteText } from "@/fs/atomic-write-text"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoPromptPresets } from "@/prompts/presets"
 
 type Logger = (line: string) => void
 

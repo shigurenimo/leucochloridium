@@ -5,7 +5,7 @@ import {
 } from "@/channels/schedule/cron-expression"
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
-import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/channels/channel-plugin"
 import { errorMessage } from "@/error-message"
 
 type Props = {

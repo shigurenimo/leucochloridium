@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { LeucoMemorySlackEventSource } from "@/channels/slack/leuco-memory-slack-event-source"
 import { LeucoMemorySlackWebClient } from "@/channels/slack/leuco-memory-slack-web-client"
 import { LeucoSlackChannelPlugin } from "@/channels/slack/slack-channel-plugin"
-import type { ChannelPluginContext } from "@/engine/channel-plugin"
+import type { ChannelPluginContext } from "@/channels/channel-plugin"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 

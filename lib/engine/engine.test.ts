@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { Project } from "@/config/config-schema"
 import { LeucoEngine } from "@/engine/engine"
-import { PromptPreset } from "@/engine/prompt-presets"
+import { PromptPreset } from "@/prompts/presets"
 import { LeucoTenant } from "@/engine/tenant"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import type { LeucoProjectStore } from "@/projects/project-store"
@@ -59,7 +59,7 @@ const makeProject = (name: string, enabled = true): Project => ({
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.WORK_COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+  prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
   channels: [],
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Project } from "@/config/config-schema"
 import { stopProjectTenant } from "@/cli/utils/stop-project-tenant"
-import { PromptPreset } from "@/engine/prompt-presets"
+import { PromptPreset } from "@/prompts/presets"
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000000"
 
@@ -14,7 +14,7 @@ const project = (): Project => ({
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.WORK_COMMUNICATION, PromptPreset.COMMUNICATION_SLACK],
+  prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
   channels: [],
   mcpServers: {},
   state: { codexThreadId: null, scheduleLastFiredAt: {} },

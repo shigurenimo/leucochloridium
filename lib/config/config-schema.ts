@@ -4,7 +4,7 @@ import {
   DEFAULT_PROMPT_PRESET_NAMES,
   PROMPT_PRESET_NAMES,
   PromptPreset,
-} from "@/engine/prompt-presets"
+} from "@/prompts/presets"
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
@@ -72,6 +72,13 @@ const appendUniquePrompt = (out: unknown[], prompt: string): void => {
   if (!out.includes(prompt)) out.push(prompt)
 }
 
+const LEGACY_PROMPT_PRESETS: Readonly<Record<string, string>> = {
+  COMMUNICATION: PromptPreset.STYLE_WORK,
+  WORK_COMMUNICATION: PromptPreset.STYLE_WORK,
+  HUMAN_COMMUNICATION: PromptPreset.STYLE_HUMAN,
+  COMMUNICATION_SLACK: PromptPreset.STYLE_SLACK,
+}
+
 const migratePromptPresets = (value: unknown): unknown => {
   if (!Array.isArray(value)) return value
 
@@ -81,12 +88,8 @@ const migratePromptPresets = (value: unknown): unknown => {
       for (const defaultPrompt of DEFAULT_PROMPTS) appendUniquePrompt(migrated, defaultPrompt)
       continue
     }
-    if (prompt === "COMMUNICATION") {
-      appendUniquePrompt(migrated, PromptPreset.WORK_COMMUNICATION)
-      continue
-    }
     if (typeof prompt === "string") {
-      appendUniquePrompt(migrated, prompt)
+      appendUniquePrompt(migrated, LEGACY_PROMPT_PRESETS[prompt] ?? prompt)
       continue
     }
     migrated.push(prompt)

@@ -12,7 +12,7 @@ import {
 } from "@/channels/slack/slack-event-processor"
 import type { SlackEvent, SlackMessageEvent } from "@/channels/slack/slack-types"
 import { formatTurnFailureReply } from "@/channels/slack/format-turn-failure-reply"
-import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/channels/channel-plugin"
 import { errorMessage } from "@/error-message"
 
 export type SlackAckMode = "off" | "mention" | "always"

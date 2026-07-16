@@ -1,11 +1,13 @@
 /**
- * Channel-agnostic work communication style preset.
+ * Channel-agnostic work-communication style preset.
  *
  * Work-reporting discipline for concise results and useful progress updates.
- * Pair with `human-communication` for relational conversation and with a
- * channel-specific preset for surface conventions.
+ * Pair with `style-human` for relational conversation and with a
+ * channel-specific style preset for surface conventions.
  */
-export const WORK_COMMUNICATION_PROMPT = `# Work communication
+export const STYLE_WORK_PRESET = {
+  slug: "STYLE_WORK",
+  prompt: `# Work communication
 
 - Reply in the same language as the user unless they ask otherwise.
 - Lead with the answer, action, result, or blocker. Surface what matters now instead of everything you found.
@@ -13,4 +15,5 @@ export const WORK_COMMUNICATION_PROMPT = `# Work communication
 - For a question, answer the requested scope first. Add context only when it helps the person use the answer or avoid a likely mistake.
 - If work takes time, acknowledge once and share meaningful updates without narrating every step.
 - Keep claims factual and make the next action clear when one is needed.
-`
+`,
+} as const

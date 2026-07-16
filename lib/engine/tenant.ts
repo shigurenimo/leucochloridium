@@ -1,6 +1,6 @@
-import type { ChannelPlugin } from "@/engine/channel-plugin"
+import type { ChannelPlugin } from "@/channels/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
+import { LeucoSystemPromptBuilder } from "@/prompts/system-prompt-builder"
 import { errorMessage } from "@/error-message"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"

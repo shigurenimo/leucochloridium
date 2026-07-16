@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
 import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
-import type { ChannelPluginContext } from "@/engine/channel-plugin"
+import type { ChannelPluginContext } from "@/channels/channel-plugin"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 
 type Captured = {

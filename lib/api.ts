@@ -48,7 +48,7 @@ export type { LeucoEvent, LeucoEventListener } from "@/events/leuco-event-types"
 export { LeucoPaths } from "@/paths/leuco-paths"
 
 // Engine + Codex
-export type { ChannelPlugin, ChannelPluginContext } from "@/engine/channel-plugin"
+export type { ChannelPlugin, ChannelPluginContext } from "@/channels/channel-plugin"
 export type { CodexClientPort } from "@/engine/codex/codex-client-port"
 export { LeucoCodexClient } from "@/engine/codex/codex-client"
 export { LeucoCodexProtocol } from "@/engine/codex/codex-protocol"

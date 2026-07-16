@@ -4,7 +4,7 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { assertRoutableName } from "@/cli/utils/assert-routable-name"
 import type { Project } from "@/config/config-schema"
-import { DEFAULT_PROMPT_PRESET_NAMES } from "@/engine/prompt-presets"
+import { DEFAULT_PROMPT_PRESET_NAMES } from "@/prompts/presets"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco projects add / register an existing repository

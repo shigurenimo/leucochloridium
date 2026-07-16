@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { LeucoSystemPromptBuilder } from "@/engine/system-prompt-builder"
+import { LeucoSystemPromptBuilder } from "@/prompts/system-prompt-builder"
 
 const baseProps = {
   projectName: "demo",

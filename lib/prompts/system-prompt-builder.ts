@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import type { ChannelIdentity } from "@/engine/channel-plugin"
+import type { ChannelIdentity } from "@/channels/channel-plugin"
 
 type Props = {
   projectName: string
@@ -13,7 +13,7 @@ type Props = {
 }
 
 /**
- * Builds the dynamic preamble that leuco prepends to every codex turn when
+ * Builds the dynamic preamble that leuco adds to every codex turn when
  * `project.useCommonInstructions` is true. Pure: every value the prompt depends
  * on must be passed in via Props so the same inputs always render the same
  * string and the class is trivially testable.

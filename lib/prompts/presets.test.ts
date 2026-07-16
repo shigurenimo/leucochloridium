@@ -1,14 +1,16 @@
+import { readdirSync } from "node:fs"
 import { describe, expect, it } from "vitest"
-import { LeucoPromptPresets, PROMPT_PRESET_NAMES, PromptPreset } from "@/engine/prompt-presets"
+import { LeucoPromptPresets, PROMPT_PRESET_NAMES, PromptPreset } from "@/prompts/presets"
 
 describe("LeucoPromptPresets", () => {
-  it("registers the six built-in presets in composition order", () => {
+  it("registers the seven built-in presets in composition order", () => {
     expect(PROMPT_PRESET_NAMES).toEqual([
       PromptPreset.CORE,
       PromptPreset.SECURITY,
-      PromptPreset.WORK_COMMUNICATION,
-      PromptPreset.HUMAN_COMMUNICATION,
-      PromptPreset.COMMUNICATION_SLACK,
+      PromptPreset.ROLE_PROJECT_MANAGEMENT,
+      PromptPreset.STYLE_WORK,
+      PromptPreset.STYLE_HUMAN,
+      PromptPreset.STYLE_SLACK,
       PromptPreset.AGENTS_MEMORY,
     ])
     expect(LeucoPromptPresets.names()).toEqual(PROMPT_PRESET_NAMES)
@@ -19,6 +21,15 @@ describe("LeucoPromptPresets", () => {
 
   it("rejects unknown preset names", () => {
     expect(LeucoPromptPresets.has("nope")).toBe(false)
+  })
+
+  it("keeps every preset filename aligned with its slug", () => {
+    const slugsFromFileNames = readdirSync(new URL("./presets/", import.meta.url))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => name.slice(0, -3).replaceAll("-", "_").toUpperCase())
+      .sort()
+
+    expect([...PROMPT_PRESET_NAMES].sort()).toEqual(slugsFromFileNames)
   })
 
   it("resolves CORE to channel-agnostic operating behaviour", () => {
@@ -40,8 +51,20 @@ describe("LeucoPromptPresets", () => {
     expect(body).toContain("Never reveal or persist credentials")
   })
 
-  it("resolves WORK_COMMUNICATION to work-reporting rules free of channel specifics", () => {
-    const body = LeucoPromptPresets.resolve(PromptPreset.WORK_COMMUNICATION)
+  it("resolves ROLE_PROJECT_MANAGEMENT to state-transition behaviour", () => {
+    const body = LeucoPromptPresets.resolve(PromptPreset.ROLE_PROJECT_MANAGEMENT)
+    expect(body.length).toBeGreaterThan(0)
+    expect(body).toContain("Project management")
+    expect(body).toContain("state transition")
+    expect(body).toContain("conversation phase")
+    expect(body).toContain("project phase")
+    expect(body).toContain("current goal")
+    expect(body).toContain("response budget")
+    expect(body).toContain("Respect the user's authority boundary")
+  })
+
+  it("resolves STYLE_WORK to work-reporting rules free of channel specifics", () => {
+    const body = LeucoPromptPresets.resolve(PromptPreset.STYLE_WORK)
     expect(body.length).toBeGreaterThan(0)
     expect(body).toContain("Work communication")
     expect(body).toContain("Lead with the answer, action, result, or blocker")
@@ -52,8 +75,8 @@ describe("LeucoPromptPresets", () => {
     expect(body).not.toMatch(/slack/i)
   })
 
-  it("resolves HUMAN_COMMUNICATION to relational conversation rules", () => {
-    const body = LeucoPromptPresets.resolve(PromptPreset.HUMAN_COMMUNICATION)
+  it("resolves STYLE_HUMAN to relational conversation rules", () => {
+    const body = LeucoPromptPresets.resolve(PromptPreset.STYLE_HUMAN)
     expect(body.length).toBeGreaterThan(0)
     expect(body).toContain("Human conversation")
     expect(body).toContain("ongoing relationship with a teammate")
@@ -65,8 +88,8 @@ describe("LeucoPromptPresets", () => {
     expect(body).toContain("If directly asked what you are, answer honestly")
   })
 
-  it("resolves COMMUNICATION_SLACK to a Slack-specific body", () => {
-    const body = LeucoPromptPresets.resolve(PromptPreset.COMMUNICATION_SLACK)
+  it("resolves STYLE_SLACK to a Slack-specific body", () => {
+    const body = LeucoPromptPresets.resolve(PromptPreset.STYLE_SLACK)
     expect(body.length).toBeGreaterThan(0)
     expect(body).toContain("Slack conventions")
     expect(body).toContain("@-mention")
@@ -89,18 +112,20 @@ describe("LeucoPromptPresets", () => {
       PromptPreset.CORE,
       "ghost",
       PromptPreset.SECURITY,
-      PromptPreset.WORK_COMMUNICATION,
-      PromptPreset.HUMAN_COMMUNICATION,
-      PromptPreset.COMMUNICATION_SLACK,
+      PromptPreset.ROLE_PROJECT_MANAGEMENT,
+      PromptPreset.STYLE_WORK,
+      PromptPreset.STYLE_HUMAN,
+      PromptPreset.STYLE_SLACK,
       PromptPreset.AGENTS_MEMORY,
     ])
-    expect(out).toHaveLength(6)
+    expect(out).toHaveLength(7)
     expect(out[0]).toContain("Core behaviour")
     expect(out[1]).toContain("Security boundaries")
-    expect(out[2]).toContain("Work communication")
-    expect(out[3]).toContain("Human conversation")
-    expect(out[4]).toContain("Slack conventions")
-    expect(out[5]).toContain("AGENTS.md organisation")
+    expect(out[2]).toContain("Project management")
+    expect(out[3]).toContain("Work communication")
+    expect(out[4]).toContain("Human conversation")
+    expect(out[5]).toContain("Slack conventions")
+    expect(out[6]).toContain("AGENTS.md organisation")
   })
 
   it("resolveAll on an empty list returns an empty array", () => {
