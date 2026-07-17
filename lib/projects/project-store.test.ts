@@ -185,11 +185,7 @@ describe("LeucoProjectStore", () => {
         path: "/tmp/legacy",
         enabled: true,
         useCommonInstructions: true,
-        prompts: [
-          PromptPreset.CORE,
-          PromptPreset.STYLE_WORK,
-          PromptPreset.STYLE_SLACK,
-        ],
+        prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
         channels: [],
         mcpServers: {},
       }),

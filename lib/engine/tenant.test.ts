@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
-import type { ChannelIdentity, ChannelPlugin, ChannelPluginContext } from "@/channels/channel-plugin"
+import type {
+  ChannelIdentity,
+  ChannelPlugin,
+  ChannelPluginContext,
+} from "@/channels/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoTenant } from "@/engine/tenant"
 

@@ -1,10 +1,6 @@
 import { isAbsolute } from "node:path"
 import { z } from "zod"
-import {
-  DEFAULT_PROMPT_PRESET_NAMES,
-  PROMPT_PRESET_NAMES,
-  PromptPreset,
-} from "@/prompts/presets"
+import { DEFAULT_PROMPT_PRESET_NAMES, PROMPT_PRESET_NAMES, PromptPreset } from "@/prompts/presets"
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
