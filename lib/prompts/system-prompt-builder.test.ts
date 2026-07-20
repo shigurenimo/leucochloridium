@@ -81,6 +81,21 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("The primary agent owns Slack writes")
   })
 
+  it("defines addressed-context semantics before acknowledgements or work", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      identities: [{ name: "general", type: "slack", botUserId: "U01ABC" }],
+    }).build()
+
+    expect(out).toContain('`mentioned="true"`')
+    expect(out).toContain("addressed-context signal")
+    expect(out).toContain("does not necessarily mean")
+    expect(out).toContain('`mentioned="false"`')
+    expect(out).toContain("Do not acknowledge it")
+    expect(out).toContain("start work from it")
+    expect(out).toContain("clear independent reason to interject")
+  })
+
   it("asks agents to keep local command output bounded", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
     expect(out).toContain("## Local command hygiene")
