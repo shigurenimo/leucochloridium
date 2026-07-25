@@ -11,10 +11,12 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
  * daemon has no terminal so it can never answer a prompt, and without a cap
  * a stuck turn would block every subsequent message on the same project.
  *
- * On timeout the codex child is restarted (in-flight turn dies with it) and
+ * A separate no-notification timer catches stalled turns earlier. On either
+ * timeout the codex child is restarted (the in-flight turn dies with it) and
  * the project thread is re-resumed on the next call.
  */
 const TURN_TIMEOUT_MS = 10 * 60 * 1000
+const TURN_IDLE_TIMEOUT_MS = 2 * 60 * 1000
 
 type Logger = (line: string) => void
 
@@ -41,6 +43,9 @@ type Props = {
   configSignature?: string
   onLog?: Logger
   bus?: LeucoEventBus
+  /** Hard wall-clock and no-notification limits. Overridable for tests. */
+  turnTimeoutMs?: number
+  turnIdleTimeoutMs?: number
 }
 
 export type TenantThreadEntry = {
@@ -51,6 +56,7 @@ export type TenantThreadEntry = {
 type PendingTurn = {
   threadKey: string
   text: string
+  enqueuedAt: number
   resolve: (reply: string | Error) => void
 }
 
@@ -77,6 +83,8 @@ export class LeucoTenant {
   private readonly projectStateStore: LeucoProjectStateStore | null
   private readonly useCommonInstructions: boolean
   private readonly presets: string[]
+  private readonly turnTimeoutMs: number
+  private readonly turnIdleTimeoutMs: number
   private codexThreadId: string | null
   private codexThreadLive = false
   private pendingTurns: PendingTurn[] = []
@@ -98,6 +106,8 @@ export class LeucoTenant {
     this.projectStateStore = props.projectStateStore ?? null
     this.useCommonInstructions = props.useCommonInstructions ?? true
     this.presets = props.presets ?? []
+    this.turnTimeoutMs = props.turnTimeoutMs ?? TURN_TIMEOUT_MS
+    this.turnIdleTimeoutMs = props.turnIdleTimeoutMs ?? TURN_IDLE_TIMEOUT_MS
     this.codexThreadId = props.initialCodexThreadId ?? null
   }
 
@@ -202,7 +212,18 @@ export class LeucoTenant {
 
   runTextTurn(threadKey: string, text: string): Promise<string | Error> {
     return new Promise<string | Error>((resolve) => {
-      this.pendingTurns.push({ threadKey, text, resolve })
+      const queueDepth = this.pendingTurns.length + 1
+      if (this.turnInflight) {
+        this.log(`[leuco] ${this.key}: turn queued (pending=${queueDepth})`)
+        this.bus.emit({
+          ts: Date.now(),
+          type: "turn.queued",
+          project: this.projectName,
+          threadKey,
+          queueDepth,
+        })
+      }
+      this.pendingTurns.push({ threadKey, text, enqueuedAt: Date.now(), resolve })
       void this.drainTurns()
     })
   }
@@ -234,15 +255,23 @@ export class LeucoTenant {
   private async executeBatchedTurn(batch: PendingTurn[]): Promise<string | Error> {
     const primaryThreadKey = batch[0]!.threadKey
     const combinedText = batch.length === 1 ? batch[0]!.text : batch.map((t) => t.text).join("\n\n")
+    const startedAt = Date.now()
+    const queueWaitMs = Math.max(0, startedAt - Math.min(...batch.map((turn) => turn.enqueuedAt)))
 
     const threadIdOrError = await this.ensureThread()
     if (threadIdOrError instanceof Error) {
+      const durationMs = Date.now() - startedAt
+      this.log(
+        `[leuco] ${this.key}: turn failed before start (wait=${queueWaitMs}ms duration=${durationMs}ms): ${threadIdOrError.message}`,
+      )
       this.bus.emit({
         ts: Date.now(),
         type: "turn.error",
         project: this.projectName,
         threadKey: primaryThreadKey,
         error: threadIdOrError.message,
+        durationMs,
+        queueWaitMs,
       })
       return threadIdOrError
     }
@@ -250,8 +279,8 @@ export class LeucoTenant {
 
     this.log(
       batch.length === 1
-        ? `[leuco] turn → ${threadId} (${truncate(combinedText, 60)})`
-        : `[leuco] turn ×${batch.length} → ${threadId} (${truncate(combinedText, 60)})`,
+        ? `[leuco] turn → ${threadId} wait=${queueWaitMs}ms (${truncate(combinedText, 60)})`
+        : `[leuco] turn ×${batch.length} → ${threadId} wait=${queueWaitMs}ms (${truncate(combinedText, 60)})`,
     )
     this.bus.emit({
       ts: Date.now(),
@@ -259,54 +288,152 @@ export class LeucoTenant {
       project: this.projectName,
       threadKey: primaryThreadKey,
       input: combinedText,
+      batchSize: batch.length,
+      queueWaitMs,
     })
 
     const reply = await this.runTextTurnWithTimeout(threadId, combinedText)
+    const durationMs = Date.now() - startedAt
     if (reply instanceof Error) {
+      this.log(
+        `[leuco] ${this.key}: turn error duration=${durationMs}ms wait=${queueWaitMs}ms: ${reply.message}`,
+      )
       this.bus.emit({
         ts: Date.now(),
         type: "turn.error",
         project: this.projectName,
         threadKey: primaryThreadKey,
         error: reply.message,
+        durationMs,
+        queueWaitMs,
       })
       return reply
     }
 
+    this.log(
+      `[leuco] ${this.key}: turn complete duration=${durationMs}ms wait=${queueWaitMs}ms replyChars=${reply.length}`,
+    )
     this.bus.emit({
       ts: Date.now(),
       type: "turn.complete",
       project: this.projectName,
       threadKey: primaryThreadKey,
       reply,
+      durationMs,
+      queueWaitMs,
     })
     return reply
   }
 
   private async runTextTurnWithTimeout(threadId: string, text: string): Promise<string | Error> {
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let hardTimer: ReturnType<typeof setTimeout> | undefined
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    let lastActivity = "turn/start"
+    let resolveTimeout: ((error: Error) => void) | undefined
+    let acceptingActivity = true
+
     const timeoutPromise = new Promise<Error>((resolve) => {
-      timer = setTimeout(() => {
-        resolve(new Error(`codex turn timed out after ${TURN_TIMEOUT_MS / 1000}s`))
-      }, TURN_TIMEOUT_MS)
+      resolveTimeout = resolve
+      hardTimer = setTimeout(() => {
+        resolve(new Error(`codex turn timed out after ${this.turnTimeoutMs / 1000}s`))
+      }, this.turnTimeoutMs)
     })
 
-    const replyPromise = this.codex.runTextTurn(threadId, text, this.projectPath)
+    const resetIdleTimer = (method: string): void => {
+      if (!acceptingActivity) return
+      lastActivity = method
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        resolveTimeout?.(
+          new Error(
+            `codex turn idle timed out after ${this.turnIdleTimeoutMs / 1000}s without activity (last=${lastActivity})`,
+          ),
+        )
+      }, this.turnIdleTimeoutMs)
+    }
+    resetIdleTimer(lastActivity)
+
+    const replyPromise = this.codex
+      .runTextTurn(threadId, text, this.projectPath, resetIdleTimer)
+      .catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))))
     const reply = await Promise.race([replyPromise, timeoutPromise])
-    if (timer) clearTimeout(timer)
+    acceptingActivity = false
+    if (hardTimer) clearTimeout(hardTimer)
+    if (idleTimer) clearTimeout(idleTimer)
 
     if (reply instanceof Error && isRestartableTurnError(reply)) {
-      this.log(`[leuco] ${this.key}: ${reply.message}; restarting codex child`)
-      this.codexThreadLive = false
-      await this.codex.stop().catch(() => undefined)
-      if (!this.stopped) {
-        await this.codex.start().catch((err: unknown) => {
-          this.log(`[leuco] ${this.key}: codex restart after timeout failed: ${errorMessage(err)}`)
-        })
-      }
+      await this.restartCodexChild(reply.message)
     }
 
     return reply
+  }
+
+  private async restartCodexChild(reason: string): Promise<void> {
+    const startedAt = Date.now()
+    this.log(`[leuco] ${this.key}: recovering codex child (reason=${reason})`)
+    this.codexThreadLive = false
+
+    const stopResult = await this.codex.stop().catch((err: unknown) => err)
+    if (this.stopped) {
+      this.log(`[leuco] ${this.key}: codex recovery skipped because tenant is stopping`)
+      return
+    }
+
+    if (stopResult instanceof Error && this.codex.isRunning()) {
+      const durationMs = Date.now() - startedAt
+      const recoveryError = `failed to stop unresponsive codex child: ${errorMessage(stopResult)}`
+      this.log(
+        `[leuco] ${this.key}: codex recovery failed duration=${durationMs}ms: ${recoveryError}`,
+      )
+      this.bus.emit({
+        ts: Date.now(),
+        type: "codex.recovery",
+        project: this.projectName,
+        reason,
+        status: "failed",
+        durationMs,
+        error: recoveryError,
+      })
+      return
+    }
+
+    const startResult = await this.codex.start().catch((err: unknown) => err)
+    const durationMs = Date.now() - startedAt
+    const recoveryError =
+      startResult instanceof Error
+        ? errorMessage(startResult)
+        : !this.codex.isRunning()
+          ? "codex child did not remain running after start"
+          : null
+
+    if (recoveryError !== null) {
+      this.log(
+        `[leuco] ${this.key}: codex recovery failed duration=${durationMs}ms: ${recoveryError}`,
+      )
+      this.bus.emit({
+        ts: Date.now(),
+        type: "codex.recovery",
+        project: this.projectName,
+        reason,
+        status: "failed",
+        durationMs,
+        error: recoveryError,
+      })
+      return
+    }
+
+    const stopWarning =
+      stopResult instanceof Error ? ` (stop warning: ${errorMessage(stopResult)})` : ""
+    this.log(`[leuco] ${this.key}: codex recovery succeeded duration=${durationMs}ms${stopWarning}`)
+    this.bus.emit({
+      ts: Date.now(),
+      type: "codex.recovery",
+      project: this.projectName,
+      reason,
+      status: "succeeded",
+      durationMs,
+      error: stopResult instanceof Error ? errorMessage(stopResult) : null,
+    })
   }
 
   private async ensureThread(): Promise<string | Error> {
@@ -409,6 +536,8 @@ const truncate = (text: string, max: number): string => {
 const isRestartableTurnError = (error: Error): boolean => {
   return (
     error.message.startsWith("codex turn timed out") ||
-    error.message.startsWith("codex command output exceeded")
+    error.message.startsWith("codex turn idle timed out") ||
+    error.message.startsWith("codex command output exceeded") ||
+    error.message.startsWith("codex app-server exited")
   )
 }

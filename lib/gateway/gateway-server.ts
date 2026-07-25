@@ -21,7 +21,7 @@ export class LeucoGatewayServer {
   private readonly selfPid: number
   private readonly onLog: ((line: string) => void) | undefined
   private readonly mcpTokenForProject: (projectId: string) => string | null
-  private server: Server | null = null
+  private server: Server<undefined> | null = null
 
   constructor(props: Props) {
     this.engine = props.engine
@@ -31,7 +31,7 @@ export class LeucoGatewayServer {
     this.mcpTokenForProject = props.mcpTokenForProject
   }
 
-  start(): Server {
+  start(): Server<undefined> {
     if (this.server) return this.server
 
     const app = buildGatewayApp({

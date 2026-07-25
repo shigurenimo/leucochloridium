@@ -23,6 +23,28 @@ describe("leucoEventSchema", () => {
     expect(parsed.success).toBe(true)
   })
 
+  it("accepts turn queue metrics and codex recovery outcomes", () => {
+    const queued = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "turn.queued",
+      project: "p",
+      threadKey: "t",
+      queueDepth: 2,
+    })
+    const recovered = leucoEventSchema.safeParse({
+      ts: 1700000000100,
+      type: "codex.recovery",
+      project: "p",
+      reason: "codex turn idle timed out after 120s",
+      status: "succeeded",
+      durationMs: 250,
+      error: null,
+    })
+
+    expect(queued.success).toBe(true)
+    expect(recovered.success).toBe(true)
+  })
+
   it("accepts a slack.event with a message payload", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,

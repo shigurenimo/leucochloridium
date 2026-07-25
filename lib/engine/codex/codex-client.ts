@@ -124,6 +124,7 @@ export class LeucoCodexClient {
       child.once("exit", (code, signal) => {
         const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`
         const exitError = new Error(`codex app-server exited (${reason})`)
+        this.onLog?.(`[codex] app-server exited (${reason})`)
         protocol.fail(exitError)
         this.abortInFlightTurns(exitError)
         this.child = null
@@ -133,6 +134,7 @@ export class LeucoCodexClient {
     })
 
     child.once("error", (err) => {
+      this.onLog?.(`[codex] app-server error: ${errorMessage(err)}`)
       protocol.fail(err)
       this.abortInFlightTurns(err)
       // A spawn failure (ENOENT etc.) never emits `exit`, so without this the
@@ -173,6 +175,7 @@ export class LeucoCodexClient {
       throw err
     }
     protocol.notify("initialized")
+    this.onLog?.(`[codex] app-server ready (pid=${child.pid ?? "unknown"})`)
   }
 
   async stop(): Promise<void> {
@@ -246,16 +249,24 @@ export class LeucoCodexClient {
    * concatenated assistant text — preferring `item/completed` agentMessage
    * text, falling back to streamed `item/agentMessage/delta`.
    */
-  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string | Error> {
+  runTextTurn(
+    threadId: string,
+    text: string,
+    cwd?: string,
+    onActivity?: (method: string) => void,
+  ): Promise<string | Error> {
     const input: TurnInputItem[] = [{ type: "text", text }]
-    return this.collectTurn({ threadId, input, cwd })
+    return this.collectTurn({ threadId, input, cwd }, onActivity)
   }
 
-  private async collectTurn(params: TurnStartParams): Promise<string | Error> {
+  private async collectTurn(
+    params: TurnStartParams,
+    onActivity?: (method: string) => void,
+  ): Promise<string | Error> {
     const protocol = this.protocol
     if (!protocol) return new Error("codex client not started")
     try {
-      return await this.collectTurnInternal(protocol, params)
+      return await this.collectTurnInternal(protocol, params, onActivity)
     } catch (err) {
       return err instanceof Error ? err : new Error(String(err))
     }
@@ -264,6 +275,7 @@ export class LeucoCodexClient {
   private collectTurnInternal(
     protocol: LeucoCodexProtocol,
     params: TurnStartParams,
+    onActivity?: (method: string) => void,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const deltas: string[] = []
@@ -287,6 +299,7 @@ export class LeucoCodexClient {
 
       const handler: NotificationHandler = (method, raw) => {
         if (previous) previous(method, raw)
+        onActivity?.(method)
 
         if (method === "item/agentMessage/delta") {
           const parsed = agentMessageDeltaSchema.safeParse(raw)

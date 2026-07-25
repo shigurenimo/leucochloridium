@@ -69,6 +69,16 @@ const turnStartSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   input: z.string(),
+  batchSize: z.number().int().positive().optional(),
+  queueWaitMs: z.number().nonnegative().optional(),
+})
+
+const turnQueuedSchema = z.object({
+  ...baseTs,
+  type: z.literal("turn.queued"),
+  project: z.string(),
+  threadKey: z.string(),
+  queueDepth: z.number().int().positive(),
 })
 
 const turnCompleteSchema = z.object({
@@ -77,6 +87,8 @@ const turnCompleteSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   reply: z.string(),
+  durationMs: z.number().nonnegative().optional(),
+  queueWaitMs: z.number().nonnegative().optional(),
 })
 
 const turnErrorSchema = z.object({
@@ -85,6 +97,18 @@ const turnErrorSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   error: z.string(),
+  durationMs: z.number().nonnegative().optional(),
+  queueWaitMs: z.number().nonnegative().optional(),
+})
+
+const codexRecoverySchema = z.object({
+  ...baseTs,
+  type: z.literal("codex.recovery"),
+  project: z.string(),
+  reason: z.string(),
+  status: z.enum(["succeeded", "failed"]),
+  durationMs: z.number().nonnegative(),
+  error: z.string().nullable(),
 })
 
 const codexNotificationSchema = z.object({
@@ -115,9 +139,11 @@ export const leucoEventSchema = z.discriminatedUnion("type", [
   slackEventEnvelopeSchema,
   slackConnectionSchema,
   slackErrorSchema,
+  turnQueuedSchema,
   turnStartSchema,
   turnCompleteSchema,
   turnErrorSchema,
+  codexRecoverySchema,
   codexNotificationSchema,
   scheduleFiredSchema,
 ])

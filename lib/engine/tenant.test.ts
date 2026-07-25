@@ -6,6 +6,8 @@ import type {
 } from "@/channels/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoTenant } from "@/engine/tenant"
+import { LeucoEventBus } from "@/events/leuco-event-bus"
+import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort => ({
   start: async () => undefined,
@@ -41,6 +43,10 @@ type BuildOverrides = {
   agentSpec?: { developerInstructions?: string; model?: string }
   useCommonInstructions?: boolean
   presets?: string[]
+  onLog?: (line: string) => void
+  bus?: LeucoEventBus
+  turnTimeoutMs?: number
+  turnIdleTimeoutMs?: number
 }
 
 const buildTenant = (overrides: BuildOverrides = {}) =>
@@ -55,7 +61,10 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     agentSpec: overrides.agentSpec,
     useCommonInstructions: overrides.useCommonInstructions,
     presets: overrides.presets,
-    onLog: () => {},
+    onLog: overrides.onLog ?? (() => {}),
+    bus: overrides.bus,
+    turnTimeoutMs: overrides.turnTimeoutMs,
+    turnIdleTimeoutMs: overrides.turnIdleTimeoutMs,
   })
 
 describe("LeucoTenant.start / stop", () => {
@@ -263,6 +272,101 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(calls).toEqual(["stop", "start"])
   })
 
+  it("restarts codex when a turn stops producing notifications", async () => {
+    let running = true
+    const calls: string[] = []
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    const tenant = buildTenant({
+      bus,
+      turnTimeoutMs: 100,
+      turnIdleTimeoutMs: 5,
+      codex: fakeCodex({
+        isRunning: () => running,
+        stop: async () => {
+          calls.push("stop")
+          running = false
+        },
+        start: async () => {
+          calls.push("start")
+          running = true
+        },
+        runTextTurn: async () => await new Promise<string>(() => {}),
+      }),
+    })
+
+    const result = await tenant.runTextTurn("k", "x")
+
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain("codex turn idle timed out after 0.005s")
+    }
+    expect(calls).toEqual(["stop", "start"])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "codex.recovery",
+        project: "demo",
+        status: "succeeded",
+      }),
+    )
+  })
+
+  it("keeps the hard turn deadline even when the idle deadline is longer", async () => {
+    let running = true
+    const calls: string[] = []
+    const tenant = buildTenant({
+      turnTimeoutMs: 5,
+      turnIdleTimeoutMs: 100,
+      codex: fakeCodex({
+        isRunning: () => running,
+        stop: async () => {
+          calls.push("stop")
+          running = false
+        },
+        start: async () => {
+          calls.push("start")
+          running = true
+        },
+        runTextTurn: async () => await new Promise<string>(() => {}),
+      }),
+    })
+
+    const result = await tenant.runTextTurn("k", "x")
+
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toBe("codex turn timed out after 0.005s")
+    }
+    expect(calls).toEqual(["stop", "start"])
+  })
+
+  it("keeps an active turn alive while codex notifications continue", async () => {
+    let notify: ((method: string) => void) | undefined
+    let finish: ((reply: string) => void) | undefined
+    const tenant = buildTenant({
+      turnTimeoutMs: 1_000,
+      turnIdleTimeoutMs: 30,
+      codex: fakeCodex({
+        runTextTurn: async (_threadId, _text, _cwd, onActivity) =>
+          await new Promise<string>((resolve) => {
+            notify = onActivity
+            finish = resolve
+          }),
+      }),
+    })
+
+    const resultPromise = tenant.runTextTurn("k", "x")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    notify?.("item/started")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    notify?.("item/commandExecution/outputDelta")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    finish?.("ok")
+
+    await expect(resultPromise).resolves.toBe("ok")
+  })
+
   it("batches turns that arrive while another turn is in flight", async () => {
     let releaseFirstTurn: () => void = () => {}
     const firstTurnGate = new Promise<void>((resolve) => {
@@ -293,6 +397,53 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(r1).toBe("1")
     expect(r2).toBe("2\n\n3")
     expect(r3).toBe("2\n\n3")
+  })
+
+  it("records queue depth, wait time, duration, and completion in logs and events", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const logs: string[] = []
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let attempts = 0
+    const tenant = buildTenant({
+      bus,
+      onLog: (line) => logs.push(line),
+      codex: fakeCodex({
+        runTextTurn: async (_id, text) => {
+          attempts += 1
+          if (attempts === 1) await firstTurnGate
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("k", "first")
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const second = tenant.runTextTurn("k", "second")
+    releaseFirstTurn()
+    await Promise.all([first, second])
+
+    expect(logs.some((line) => line.includes("turn queued (pending=1)"))).toBe(true)
+    expect(logs.some((line) => line.includes("turn complete duration="))).toBe(true)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "turn.queued",
+        project: "demo",
+        queueDepth: 1,
+      }),
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "turn.complete",
+        project: "demo",
+        durationMs: expect.any(Number),
+        queueWaitMs: expect.any(Number),
+      }),
+    )
   })
 
   it("recovers a failed turn so the next turn in the same thread still runs", async () => {

@@ -192,7 +192,7 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     bin: props.codexBin,
     cwd: props.project.path,
     env: childEnv,
-    onLog: props.onLog,
+    onLog: (line) => props.onLog(`[${props.project.name}] ${line}`),
     clientVersion: pkg.version,
     onAnyNotification: (method, params) => {
       props.bus.emit({

@@ -7,12 +7,12 @@ import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const PRESETS: Record<string, { types: string[]; description: string }> = {
   turns: {
-    types: ["turn.start", "turn.complete", "turn.error"],
-    description: "codex turn lifecycle (start / complete / error)",
+    types: ["turn.queued", "turn.start", "turn.complete", "turn.error"],
+    description: "codex turn lifecycle (queued / start / complete / error)",
   },
   errors: {
-    types: ["turn.error", "engine.reconcile.failed", "slack.error"],
-    description: "turn errors, reconcile failures, slack auth/connection errors",
+    types: ["turn.error", "codex.recovery", "engine.reconcile.failed", "slack.error"],
+    description: "turn errors, codex recovery, reconcile failures, slack errors",
   },
   lifecycle: {
     types: ["tenant.started", "tenant.stopped", "engine.reconcile", "slack.connection"],
@@ -21,6 +21,10 @@ const PRESETS: Record<string, { types: string[]; description: string }> = {
   schedule: {
     types: ["schedule.fired"],
     description: "cron and one-shot schedule firings",
+  },
+  recovery: {
+    types: ["codex.recovery"],
+    description: "codex child recovery attempts and outcomes",
   },
 }
 
@@ -46,7 +50,8 @@ ${presetList}
 event types:
   log  tenant.started  tenant.stopped  engine.reconcile
   engine.reconcile.failed  slack.event  slack.connection  slack.error
-  turn.start  turn.complete  turn.error  codex.notification  schedule.fired
+  turn.queued  turn.start  turn.complete  turn.error  codex.recovery
+  codex.notification  schedule.fired
 
 output / one line per event, newest first. --json outputs raw JSON objects.
 
@@ -69,15 +74,27 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "turn.start") {
-    return `${time}  TURN   ${event.project}  start  ${event.threadKey}  ${event.input.slice(0, 80)}`
+    const metrics = `wait=${event.queueWaitMs ?? "?"}ms batch=${event.batchSize ?? 1}`
+    return `${time}  TURN   ${event.project}  start   ${event.threadKey}  ${metrics}  ${event.input.slice(0, 80)}`
+  }
+
+  if (event.type === "turn.queued") {
+    return `${time}  TURN   ${event.project}  queued  ${event.threadKey}  depth=${event.queueDepth}`
   }
 
   if (event.type === "turn.complete") {
-    return `${time}  TURN   ${event.project}  done   ${event.threadKey}  ${event.reply.slice(0, 80)}`
+    const metrics = `duration=${event.durationMs ?? "?"}ms wait=${event.queueWaitMs ?? "?"}ms`
+    return `${time}  TURN   ${event.project}  done    ${event.threadKey}  ${metrics}  ${event.reply.slice(0, 80)}`
   }
 
   if (event.type === "turn.error") {
-    return `${time}  TURN   ${event.project}  error  ${event.threadKey}  ${event.error}`
+    const metrics = `duration=${event.durationMs ?? "?"}ms wait=${event.queueWaitMs ?? "?"}ms`
+    return `${time}  TURN   ${event.project}  error   ${event.threadKey}  ${metrics}  ${event.error}`
+  }
+
+  if (event.type === "codex.recovery") {
+    const error = event.error === null ? "" : `  error=${event.error}`
+    return `${time}  RECOVER  ${event.project}  ${event.status}  duration=${event.durationMs}ms  reason=${event.reason}${error}`
   }
 
   if (event.type === "tenant.started" || event.type === "tenant.stopped") {
