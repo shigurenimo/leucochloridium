@@ -61,7 +61,7 @@ export type {
   SlackReply,
 } from "@/channels/slack/slack-types"
 
-// Configuration (per-project JSON files)
+// Configuration (unified settings.json)
 export { CURRENT_SCHEMA_VERSION, EMPTY_PROJECT_STATE, projectSchema } from "@/config/config-schema"
 export type {
   Channel,

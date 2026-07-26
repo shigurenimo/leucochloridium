@@ -28,10 +28,9 @@ type Props = {
  * hit disk before the temp file's data blocks — leaving an empty or torn
  * settings.json (all projects + Slack tokens).
  *
- * Used wherever a partial write would lose data — settings.json (tokens),
- * agents/state.json (codex thread id), global settings.json. Same-directory
- * temp file is important because `rename` is only atomic within a single
- * filesystem.
+ * Used wherever a partial write would lose data, including unified
+ * settings.json (projects, runtime state, and tokens). Same-directory temp
+ * files are important because `rename` is only atomic within a filesystem.
  */
 export const atomicWriteJson = (props: Props): string => {
   const dir = dirname(props.path)

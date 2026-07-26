@@ -16,9 +16,8 @@ options:
   --cascade / also remove the project's channels from config
   --force / allow removing the project from inside its own Codex session
 
-The project directory itself is not touched, and .codex/agents/*.toml files
-inside the repository are left in place. ~/.leuco/projects/<id>/ (including
-the tenant's CODEX_HOME) is deleted.`
+The registered project directory itself is not touched.
+~/.leuco/projects/<id>/ (including the tenant's CODEX_HOME) is deleted.`
 
 export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

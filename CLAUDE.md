@@ -30,8 +30,6 @@ Leuco daemon
 - 現行schemaにLeuco独自の `Agent` entityや `agents` 配列はない。
   `TenantAgentSpec`、`perAgentInstructions`、ログ中のagentはCodex実行主体を指す
   旧命名であり、新しいdomain entityを示さない。
-- `project-store.ts` の `agents[]` はversion 1設定をversion 2のprojectへ
-  flattenする移行専用。複数の旧agentは複数projectへ分割される。
 - `.codex/agents/` はCodex subagent、macOS `LaunchAgent` はdaemon自動起動、
   `leuco projects <p> path agents` は `AGENTS.md` のpath。いずれも現行Leucoの
   Agent entityではない。
@@ -62,7 +60,7 @@ lib/
 ├─ actions/slack/           Slack API、file、DM診断
 ├─ config/                  Project、Channel、Schedule、MCPのZod schema
 ├─ global-settings/         機械全体設定のstoreとschema
-├─ projects/                registry、runtime state、scaffolder、旧設定移行
+├─ projects/                registry、runtime state、scaffolder
 ├─ daemon/                  一マシン一daemonのpid・log・spawn supervisor
 ├─ boot/                    macOS LaunchAgent
 ├─ events/                  typed event busとSQLite sink
@@ -136,7 +134,7 @@ read-modify-writeするため、project変更は必ず `updateProject()` を使�
 古いsnapshotを `save()` で書き戻すと、daemonが書いたtenant stateを巻き戻す。
 
 projectごとのruntime directoryは `~/.leuco/projects/<id>/`。現行の永続設定は
-その下の `settings.json` や `state.json` には置かない。それらのpathは旧version移行用。
+その下の `settings.json` や `state.json` には置かず、現行コードも読み込まない。
 
 各projectの `.codex/` はconfigとCodex memoryを分離する。`auth.json` だけは
 `~/.codex/auth.json` へsymlinkし、ログインを共有する。regular fileがある場合は
@@ -259,5 +257,3 @@ vp check && \
   再読み込みするため再構築不要。
 - `LEUCO_CWD` はenv schemaに残るが現行runtimeのcwd overrideに使われていない。
   cwd変更は `leuco projects <p> cwd <path>` を使う。
-- `runtime.ts`、`channel-host.ts`、`cli-env-schema.ts`の一部commentに旧pathや
-  旧MCP URLの説明が残る。ドメインschema、`LeucoPaths`、実行コードを正とする。

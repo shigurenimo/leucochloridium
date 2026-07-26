@@ -20,9 +20,8 @@ export type LeucoChannelHostBuildProps = {
 
 /**
  * Resolves a project's `channels[]` entries into runtime `ChannelPlugin`
- * instances. Tokens live inline on each channel object (loaded from
- * `<projectDir>/settings.json`), so building plugins is a pure transform with
- * no extra IO.
+ * instances. Tokens live inline on each channel object loaded from unified
+ * settings, so building plugins is a pure transform with no extra IO.
  */
 export class LeucoChannelHost {
   private constructor() {

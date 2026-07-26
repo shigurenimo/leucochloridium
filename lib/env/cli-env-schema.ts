@@ -2,7 +2,7 @@ import { z } from "zod"
 
 /**
  * Default gateway port. The daemon's streamable HTTP MCP route binds here so
- * tenants' codex children can reach `/mcp/<project>/<agent>` over loopback —
+ * tenants' codex children can reach `/mcp/<projectId>` over loopback —
  * port stability matters because each tenant's CODEX_HOME config.toml records
  * the URL at write time. Override with `LEUCO_PORT` if it conflicts locally.
  */

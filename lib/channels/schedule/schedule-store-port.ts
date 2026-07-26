@@ -15,7 +15,7 @@ export type ScheduleStorePort = {
   /**
    * Epoch ms of the entry's last fire decision (written before the turn
    * runs, regardless of turn outcome), or `null` when the entry has never
-   * fired (or its agent had no state.json yet). Returning `null` is treated
+   * fired. Returning `null` is treated
    * by the plugin as "no across-restart catch-up" for that entry.
    */
   getLastFiredAt(entryId: string): number | null

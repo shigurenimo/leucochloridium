@@ -9,16 +9,15 @@ export type LeucoPathsProps = {
  * Single source of truth for every path under `~/.leuco/`.
  *
  * All project registrations (including per-channel Slack tokens) live in the
- * unified `~/.leuco/settings.json` (chmod 600). Per-project runtime state
- * and codex home stay in UUID-keyed directories so renames are free and
- * same-name projects can coexist.
+ * unified `~/.leuco/settings.json` (chmod 600). Per-project codex homes stay
+ * in UUID-keyed directories so renames are free and same-name projects can
+ * coexist.
  *
  *   ~/.leuco/
  *   ├── settings.json           ← global config + projects array (chmod 600)
  *   ├── daemon/{pid,log}
  *   └── projects/
  *       └── <projectId>/
- *           ├── state.json      ← runtime state (codexThreadId)
  *           └── .codex/         ← CODEX_HOME
  */
 export class LeucoPaths {
@@ -76,39 +75,9 @@ export class LeucoPaths {
     return join(this.projectsRoot(), projectId)
   }
 
-  /** @deprecated Used only by migration from per-project settings.json. */
-  projectSettingsPath(projectId: string): string {
-    return join(this.projectDir(projectId), "settings.json")
-  }
-
   /** CODEX_HOME for the project's single tenant. */
   projectHome(projectId: string): string {
     return join(this.projectDir(projectId), ".codex")
-  }
-
-  /** @deprecated Used only by migration from per-project state.json. */
-  projectStatePath(projectId: string): string {
-    return join(this.projectDir(projectId), "state.json")
-  }
-
-  /** @deprecated Pre-0.9 agents root. Used only by migration. */
-  legacyAgentsRoot(projectId: string): string {
-    return join(this.projectDir(projectId), "agents")
-  }
-
-  /** @deprecated Pre-0.9 agent home (home/ variant). Used only by migration. */
-  legacyAgentHome(projectId: string, agentName: string): string {
-    return join(this.legacyAgentsRoot(projectId), agentName, "home")
-  }
-
-  /** @deprecated Pre-0.9 agent home (.codex/ variant). Used only by migration. */
-  legacyAgentCodex(projectId: string, agentName: string): string {
-    return join(this.legacyAgentsRoot(projectId), agentName, ".codex")
-  }
-
-  /** @deprecated Pre-0.9 agent state. Used only by migration. */
-  legacyAgentStatePath(projectId: string, agentName: string): string {
-    return join(this.legacyAgentsRoot(projectId), agentName, "state.json")
   }
 
   /** macOS LaunchAgents directory under the user's Library. */

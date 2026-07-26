@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -71,7 +71,7 @@ describe("LeucoProjectStore", () => {
     expect(mode).toBe(0o600)
   })
 
-  it("save() creates the project UUID directory for .codex/ and state.json", () => {
+  it("save() creates the project UUID directory used by CODEX_HOME", () => {
     store.save(sampleProject())
     const projectDir = join(home, ".leuco", "projects", DEMO_ID)
     expect(statSync(projectDir).isDirectory()).toBe(true)
@@ -172,67 +172,24 @@ describe("LeucoProjectStore", () => {
     expect(store.list()).toEqual([])
   })
 
-  it("list() migrates legacy per-project settings.json into unified file", () => {
-    const paths = store.getPaths()
-    const projectDir = paths.projectDir(DEMO_ID)
-    mkdirSync(projectDir, { recursive: true })
-    writeFileSync(
-      join(projectDir, "settings.json"),
-      JSON.stringify({
-        version: 2,
-        id: DEMO_ID,
-        name: "legacy",
-        path: "/tmp/legacy",
-        enabled: true,
-        useCommonInstructions: true,
-        prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
-        channels: [],
-        mcpServers: {},
-      }),
-    )
-
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    expect(result[0]!.name).toBe("legacy")
-
-    const perProjectFile = join(projectDir, "settings.json")
-    expect(() => statSync(perProjectFile)).toThrow()
-
-    const unified = JSON.parse(readFileSync(paths.settingsPath(), "utf8"))
-    expect(unified.projects).toHaveLength(1)
-  })
-
-  it("list() migrates legacy state.json into the project's state field", () => {
+  it.each([
+    ["a missing version", undefined],
+    ["v1", 1],
+    ["a future version", 3],
+  ])("list() rejects %s without rewriting unified settings", (_label, version) => {
     store.save(sampleProject())
-    const paths = store.getPaths()
-    const statePath = paths.projectStatePath(DEMO_ID)
-    writeFileSync(
-      statePath,
-      JSON.stringify({ codexThreadId: "thread-123", scheduleLastFiredAt: { e1: 1000 } }),
-    )
+    const settingsPath = store.getPaths().settingsPath()
+    const project = {
+      ...sampleProject(),
+      version,
+      futureOnlyField: { mustNotBeDropped: true },
+    }
+    if (version === undefined) delete (project as { version?: unknown }).version
+    const text = `${JSON.stringify({ projects: [project] }, null, 2)}\n`
+    writeFileSync(settingsPath, text)
 
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    expect(result[0]!.state.codexThreadId).toBe("thread-123")
-    expect(result[0]!.state.scheduleLastFiredAt).toEqual({ e1: 1000 })
-    expect(() => statSync(statePath)).toThrow()
-  })
-
-  it("list() migrates a legacy name-keyed directory to id-keyed", () => {
-    const paths = store.getPaths()
-    const legacyDir = join(paths.projectsRoot(), "legacy-demo")
-    mkdirSync(legacyDir, { recursive: true })
-    writeFileSync(
-      join(legacyDir, "settings.json"),
-      JSON.stringify({ name: "legacy-demo", path: "/tmp/legacy-demo", agents: [] }),
-    )
-
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    const project = result[0]!
-    expect(project.name).toBe("legacy-demo")
-    expect(typeof project.id).toBe("string")
-    expect(project.id.length).toBeGreaterThan(0)
+    expect(() => store.list()).toThrow()
+    expect(readFileSync(settingsPath, "utf8")).toBe(text)
   })
 
   describe("schedule entries", () => {

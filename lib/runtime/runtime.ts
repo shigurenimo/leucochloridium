@@ -40,9 +40,8 @@ export type LeucoRuntimeProps = {
 const LEUCO_MCP_TOKEN_ENV = "LEUCO_MCP_TOKEN"
 
 /**
- * Composition root: scans every registered project under
- * `~/.leuco/projects/<id>/settings.json`, builds one `LeucoTenant` per
- * enabled project, and wires the engine.
+ * Composition root: reads every registered project from unified settings,
+ * builds one `LeucoTenant` per enabled project, and wires the engine.
  */
 export class LeucoRuntime {
   private constructor(
