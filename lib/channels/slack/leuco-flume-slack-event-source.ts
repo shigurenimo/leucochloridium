@@ -15,7 +15,7 @@ import {
   leucoSlackSourceStatusSchema,
 } from "@/channels/slack/leuco-slack-event-source"
 
-type Props = {
+export type LeucoFlumeSlackEventSourceProps = {
   botToken: string
   appToken: string
 }
@@ -31,7 +31,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   private running: FlumeRunning | null = null
   private currentStatus: LeucoSlackSourceStatus = "disconnected"
 
-  constructor(private readonly props: Props) {
+  constructor(private readonly props: LeucoFlumeSlackEventSourceProps) {
     super()
   }
 

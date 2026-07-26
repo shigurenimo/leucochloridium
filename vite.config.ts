@@ -9,6 +9,16 @@ export default defineConfig({
   },
   test: {
     setupFiles: ["./vitest.setup.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      thresholds: {
+        statements: 70,
+        branches: 57,
+        functions: 67,
+        lines: 74,
+      },
+    },
     server: {
       deps: {
         inline: ["@interactive-inc/claude-funnel"],

@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-type Props = {
+export type LeucoPathsProps = {
   home?: string
 }
 
@@ -25,7 +25,7 @@ export class LeucoPaths {
   private readonly home: string
   private readonly base: string
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoPathsProps = {}) {
     this.home = props.home ?? homedir()
     if (this.home === "") {
       // homedir() falls back to an empty string when neither HOME nor the

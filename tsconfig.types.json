@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "./dist/types",
+    "rootDir": "./lib",
+    "tsBuildInfoFile": "./dist/types.tsbuildinfo"
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["lib/**/*.test.ts", "lib/**/*.bun-test.ts"]
+}

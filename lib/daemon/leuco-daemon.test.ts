@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -52,5 +52,37 @@ describe("LeucoDaemon", () => {
 
     expect(status.pid).toBe(12345)
     expect(status.isRunning).toBe(false)
+  })
+
+  it("hardens daemon state and log permissions on start", async () => {
+    const childPath = join(home, "daemon-child.ts")
+    writeFileSync(
+      childPath,
+      ['process.on("SIGTERM", () => process.exit(0))', "setInterval(() => undefined, 1_000)"].join(
+        "\n",
+      ),
+    )
+    chmodSync(paths.daemonDir(), 0o755)
+    writeFileSync(paths.daemonLogPath(), "existing\n", { mode: 0o644 })
+    const daemon = new LeucoDaemon({ paths })
+
+    const started = daemon.start({ binPath: childPath, cwd: home, env: process.env })
+    try {
+      expect(statSync(paths.daemonDir()).mode & 0o777).toBe(0o700)
+      expect(statSync(paths.daemonLogPath()).mode & 0o777).toBe(0o600)
+      expect(statSync(paths.daemonPidPath()).mode & 0o777).toBe(0o600)
+    } finally {
+      try {
+        process.kill(started.pid, "SIGTERM")
+      } catch {
+        // already exited
+      }
+      await vi.waitFor(
+        () => {
+          expect(() => process.kill(started.pid, 0)).toThrow()
+        },
+        { timeout: 2_000 },
+      )
+    }
   })
 })

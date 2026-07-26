@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
 import {
+  chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -12,11 +14,11 @@ import {
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-type Props = {
+export type LeucoDaemonProps = {
   paths?: LeucoPaths
 }
 
-type StartProps = {
+export type LeucoDaemonStartProps = {
   binPath: string
   cwd?: string
   env: NodeJS.ProcessEnv
@@ -48,7 +50,7 @@ export type DaemonStopResult = {
 export class LeucoDaemon {
   private readonly paths: LeucoPaths
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoDaemonProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
     Object.freeze(this)
   }
@@ -78,25 +80,32 @@ export class LeucoDaemon {
     }
   }
 
-  start(props: StartProps): DaemonStartResult {
+  start(props: LeucoDaemonStartProps): DaemonStartResult {
     const status = this.status()
     if (status.isRunning) {
       throw new Error(`leuco already running (pid ${status.pid})`)
     }
 
     const stateDir = this.paths.daemonDir()
-    if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
+    if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+    chmodSync(stateDir, 0o700)
 
     rotateLogIfLarge(status.logPath)
 
-    const logFd = openSync(status.logPath, "a")
-
-    const child = spawn(process.execPath, [props.binPath, "run"], {
-      cwd: props.cwd ?? this.paths.getHome(),
-      env: props.env,
-      stdio: ["ignore", logFd, logFd],
-      detached: true,
-    })
+    const logFd = openSync(status.logPath, "a", 0o600)
+    chmodSync(status.logPath, 0o600)
+    const child = (() => {
+      try {
+        return spawn(process.execPath, [props.binPath, "run"], {
+          cwd: props.cwd ?? this.paths.getHome(),
+          env: props.env,
+          stdio: ["ignore", logFd, logFd],
+          detached: true,
+        })
+      } finally {
+        closeSync(logFd)
+      }
+    })()
 
     if (typeof child.pid !== "number") {
       throw new Error("failed to spawn daemon (no pid)")
@@ -269,7 +278,9 @@ const rotateLogIfLarge = (logPath: string): void => {
   try {
     const stat = statSync(logPath)
     if (stat.size < LOG_ROTATE_BYTES) return
-    renameSync(logPath, `${logPath}.1`)
+    const rotatedPath = `${logPath}.1`
+    renameSync(logPath, rotatedPath)
+    chmodSync(rotatedPath, 0o600)
   } catch {
     // missing log (fresh install) or unrotatable — appending still works
   }
@@ -291,6 +302,14 @@ const waitForExit = (pid: number, timeoutMs: number): void => {
   const deadline = Date.now() + timeoutMs
   while (pidIsAlive(pid)) {
     if (Date.now() >= deadline) return
-    Bun.sleepSync(POLL_INTERVAL_MS)
+    sleepSync(POLL_INTERVAL_MS)
   }
+}
+
+const sleepSync = (durationMs: number): void => {
+  if (typeof Bun !== "undefined") {
+    Bun.sleepSync(durationMs)
+    return
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, durationMs)
 }

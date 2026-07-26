@@ -19,7 +19,7 @@ import { errorMessage } from "@/error-message"
 
 type NotificationHandler = (method: string, params: unknown) => void
 
-type Props = {
+export type LeucoCodexClientProps = {
   bin?: string
   args?: string[]
   cwd?: string
@@ -65,7 +65,7 @@ export class LeucoCodexClient {
    */
   private readonly turnAborters = new Set<(err: Error) => void>()
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoCodexClientProps = {}) {
     this.bin = props.bin ?? "codex"
     this.args = props.args ?? ["app-server"]
     this.cwd = props.cwd
@@ -197,7 +197,15 @@ export class LeucoCodexClient {
     if (termRace === "exited") return
 
     child.kill("SIGKILL")
-    await Promise.race([exit, sleep(STOP_KILL_GRACE_MS)])
+    const killRace = await Promise.race([
+      exit.then(() => "exited" as const),
+      sleep(STOP_KILL_GRACE_MS).then(() => "timeout" as const),
+    ])
+    if (killRace === "timeout") {
+      throw new Error(
+        `codex app-server did not exit within ${STOP_KILL_GRACE_MS / 1000}s after SIGKILL`,
+      )
+    }
   }
 
   async startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error> {

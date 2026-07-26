@@ -27,7 +27,7 @@ export type SlackAckIcons = {
   error: string
 }
 
-type Props = {
+export type LeucoSlackChannelPluginProps = {
   name: string
   eventSource: LeucoSlackEventSource
   webClient: LeucoSlackWebClient
@@ -61,7 +61,7 @@ const ACTIVE_THREAD_CAPACITY = 500
  */
 export class LeucoSlackChannelPlugin implements ChannelPlugin {
   readonly name: string
-  private readonly props: Props
+  private readonly props: LeucoSlackChannelPluginProps
   private adapter: LeucoSlackAdapter | null = null
   private processor: LeucoSlackEventProcessor
   private ctx: ChannelPluginContext | null = null
@@ -69,7 +69,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   private lastConnectionStatus: LeucoSlackSourceStatus | null = null
   private readonly activeThreads = new Map<string, number>()
 
-  constructor(props: Props) {
+  constructor(props: LeucoSlackChannelPluginProps) {
     this.name = props.name
     this.props = props
     // Wire the processor at construction so events arriving during the

@@ -257,7 +257,9 @@ Each enabled project runs exactly one Codex `app-server`, spawned over stdio JSO
 
 The return value of a Codex turn is never posted to Slack directly. A visible reply happens only when Codex calls the `slack_call` MCP tool. This keeps Codex in control of what, where, and whether to post.
 
-A single turn has a wall-clock timeout of ten minutes. When a turn times out, the Codex child process is stopped and restarted. Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
+A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
+
+Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
 
 ## Where data lives
 
@@ -289,7 +291,13 @@ A single turn has a wall-clock timeout of ten minutes. When a turn times out, th
 ```bash
 leuco config
 leuco config set keepAwake false
+leuco config set turnIdleTimeoutMs 120000
+leuco config set turnTimeoutMs 600000
+leuco config set turnQueueMaxItems 64
+leuco config set turnQueueMaxBytes 262144
 ```
+
+`turnIdleTimeoutMs` is the maximum interval without a Codex notification. `turnTimeoutMs` is the hard wall-clock cap for a turn; whichever deadline is reached first replaces the stalled Codex child. `turnQueueMaxItems` and `turnQueueMaxBytes` bound the work retained behind an active project turn; overload is rejected and recorded instead of growing memory without limit. Restart Leuco after changing these values.
 
 ## Troubleshooting
 
@@ -356,10 +364,12 @@ leuco events --preset turns
 leuco events --preset errors
 leuco events --preset lifecycle
 leuco events --preset schedule
+leuco events --preset recovery
 leuco events --json
 ```
 
 `leuco logs -f` follows the daemon's text log; `leuco events` reads the structured SQLite events.
+Turn events include queue depth, queue wait, batch size, execution duration, and error details. Recovery events include the trigger, outcome, duration, and restart error when one occurs.
 
 ## Using Leuco as a library
 
@@ -370,7 +380,17 @@ const runtime = LeucoRuntime.build({ env: process.env })
 await runtime.start()
 ```
 
-`LeucoRuntime`, `LeucoEngine`, `LeucoTenant`, `LeucoCodexClient`, `LeucoSlackChannelPlugin`, `LeucoChannelHost`, `LeucoEventBus`, `LeucoProjectStore`, and more are exported from the package root. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
+`LeucoRuntime`, `LeucoEngine`, `LeucoTenant`, `LeucoCodexClient`, `LeucoSlackChannelPlugin`, `LeucoChannelHost`, `LeucoEventBus`, `LeucoProjectStore`, their constructor option types, configuration schemas, and event schema are exported from the package root. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
+
+Run the complete local verification before publishing:
+
+```bash
+bun run verify
+bun run test:coverage
+bun audit
+```
+
+The package is also packed and imported from an isolated consumer in CI on every push and pull request.
 
 ## License
 

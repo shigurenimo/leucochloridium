@@ -6,12 +6,12 @@ type Pending = {
   reject: (err: Error) => void
 }
 
-type NotificationHandler = (method: string, params: unknown) => void
+export type CodexNotificationHandler = (method: string, params: unknown) => void
 
-type LineWriter = (line: string) => void
+export type CodexLineWriter = (line: string) => void
 
-type Props = {
-  writer: LineWriter
+export type LeucoCodexProtocolProps = {
+  writer: CodexLineWriter
   onLog?: (line: string) => void
 }
 
@@ -32,19 +32,19 @@ type Props = {
  * `writer`.
  */
 export class LeucoCodexProtocol {
-  private readonly writer: LineWriter
+  private readonly writer: CodexLineWriter
   private readonly onLog: (line: string) => void
   private readonly pending = new Map<number, Pending>()
   private buffer = ""
   private nextId = 1
-  private notificationHandler: NotificationHandler | null = null
+  private notificationHandler: CodexNotificationHandler | null = null
 
-  constructor(props: Props) {
+  constructor(props: LeucoCodexProtocolProps) {
     this.writer = props.writer
     this.onLog = props.onLog ?? (() => undefined)
   }
 
-  onNotification(handler: NotificationHandler | null): void {
+  onNotification(handler: CodexNotificationHandler | null): void {
     this.notificationHandler = handler
   }
 

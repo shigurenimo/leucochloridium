@@ -6,11 +6,11 @@ import { DEFAULT_PROMPT_PRESET_NAMES } from "@/prompts/presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-type Props = {
+export type LeucoProjectScaffolderProps = {
   paths?: LeucoPaths
 }
 
-type CreateProps = {
+export type LeucoProjectCreateProps = {
   path: string
   name: string
 }
@@ -39,12 +39,12 @@ export type ProjectScaffoldResult = {
 export class LeucoProjectScaffolder {
   private readonly paths: LeucoPaths
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoProjectScaffolderProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
     Object.freeze(this)
   }
 
-  create(createProps: CreateProps): ProjectScaffoldResult {
+  create(createProps: LeucoProjectCreateProps): ProjectScaffoldResult {
     const target = createProps.path
 
     const dir = ensureDir(target)
@@ -79,7 +79,7 @@ type RegisterResult = {
 
 const registerInStore = (
   target: string,
-  createProps: CreateProps,
+  createProps: LeucoProjectCreateProps,
   paths: LeucoPaths,
 ): RegisterResult => {
   const store = new LeucoProjectStore({ paths })

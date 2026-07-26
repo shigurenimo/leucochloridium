@@ -8,11 +8,15 @@ const help = `leuco config set / write one key to ~/.leuco/settings.json
 usage / leuco config set <key> <value>
 
 Values are coerced to the schema's type ("true"/"false" -> boolean, numeric -> number).
-Restart the daemon for changes that affect the spawn (e.g. keepAwake).
+Restart the daemon after changing keepAwake or turn limits.
 
 examples:
   leuco config set keepAwake true
-  leuco config set keepAwake false`
+  leuco config set keepAwake false
+  leuco config set turnIdleTimeoutMs 120000
+  leuco config set turnTimeoutMs 600000
+  leuco config set turnQueueMaxItems 64
+  leuco config set turnQueueMaxBytes 262144`
 
 export const configSetHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

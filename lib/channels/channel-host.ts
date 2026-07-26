@@ -9,10 +9,10 @@ import type { ChannelPlugin } from "@/channels/channel-plugin"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
-type ProjectRef = { id: string; name: string }
+export type LeucoProjectRef = { id: string; name: string }
 
-type BuildProps = {
-  project: ProjectRef
+export type LeucoChannelHostBuildProps = {
+  project: LeucoProjectRef
   channels: Channel[]
   projectStore?: LeucoProjectStore
   projectStateStore?: LeucoProjectStateStore
@@ -29,7 +29,7 @@ export class LeucoChannelHost {
     Object.freeze(this)
   }
 
-  static buildForProject(props: BuildProps): ChannelPlugin[] {
+  static buildForProject(props: LeucoChannelHostBuildProps): ChannelPlugin[] {
     const plugins: ChannelPlugin[] = []
     for (const channel of props.channels) {
       plugins.push(
@@ -45,7 +45,7 @@ export class LeucoChannelHost {
   }
 
   private static toPlugin(props: {
-    project: ProjectRef
+    project: LeucoProjectRef
     channel: Channel
     projectStore?: LeucoProjectStore
     projectStateStore?: LeucoProjectStateStore

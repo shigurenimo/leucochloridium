@@ -7,14 +7,17 @@ import {
   type SlackSearchMessages,
 } from "@/channels/slack/leuco-slack-web-client"
 
-type Responder<T, A> = ((args: A) => Promise<T> | T) | T
+export type SlackMemoryResponder<T, A> = ((args: A) => Promise<T> | T) | T
 
-type Props = {
-  chatPostMessage?: Responder<void, { channel: string; threadTs: string | null; text: string }>
-  reactionsAdd?: Responder<void, { channel: string; timestamp: string; name: string }>
-  reactionsRemove?: Responder<void, { channel: string; timestamp: string; name: string }>
-  conversationsInfo?: Responder<SlackConversationInfo, { channel: string }>
-  conversationsReplies?: Responder<
+export type LeucoMemorySlackWebClientProps = {
+  chatPostMessage?: SlackMemoryResponder<
+    void,
+    { channel: string; threadTs: string | null; text: string }
+  >
+  reactionsAdd?: SlackMemoryResponder<void, { channel: string; timestamp: string; name: string }>
+  reactionsRemove?: SlackMemoryResponder<void, { channel: string; timestamp: string; name: string }>
+  conversationsInfo?: SlackMemoryResponder<SlackConversationInfo, { channel: string }>
+  conversationsReplies?: SlackMemoryResponder<
     SlackHistorySlice,
     {
       channel: string
@@ -24,12 +27,15 @@ type Props = {
       limit: number | null
     }
   >
-  conversationsList?: Responder<SlackConversationList, { types: string; limit: number | null }>
-  conversationsHistory?: Responder<
+  conversationsList?: SlackMemoryResponder<
+    SlackConversationList,
+    { types: string; limit: number | null }
+  >
+  conversationsHistory?: SlackMemoryResponder<
     SlackHistorySlice,
     { channel: string; oldest: string | null; inclusive: boolean | null; limit: number | null }
   >
-  searchMessages?: Responder<
+  searchMessages?: SlackMemoryResponder<
     SlackSearchMessages,
     {
       query: string
@@ -38,8 +44,8 @@ type Props = {
       count: number | null
     }
   >
-  authTest?: Responder<SlackAuthTest, void>
-  apiCall?: Responder<unknown, { method: string; body: Record<string, unknown> }>
+  authTest?: SlackMemoryResponder<SlackAuthTest, void>
+  apiCall?: SlackMemoryResponder<unknown, { method: string; body: Record<string, unknown> }>
 }
 
 /**
@@ -77,7 +83,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
     apiCall: Array<{ method: string; body: Record<string, unknown> }>
   }
 
-  constructor(private readonly props: Props = {}) {
+  constructor(private readonly props: LeucoMemorySlackWebClientProps = {}) {
     super()
     this.calls = {
       chatPostMessage: [],
@@ -178,7 +184,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
   }
 
   private async invoke<T, A>(
-    responder: Responder<T, A> | undefined,
+    responder: SlackMemoryResponder<T, A> | undefined,
     args: A,
     fallback: T,
   ): Promise<T> {

@@ -7,11 +7,17 @@ import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const PRESETS: Record<string, { types: string[]; description: string }> = {
   turns: {
-    types: ["turn.queued", "turn.start", "turn.complete", "turn.error"],
-    description: "codex turn lifecycle (queued / start / complete / error)",
+    types: ["turn.queued", "turn.rejected", "turn.start", "turn.complete", "turn.error"],
+    description: "codex turn lifecycle (queued / rejected / start / complete / error)",
   },
   errors: {
-    types: ["turn.error", "codex.recovery", "engine.reconcile.failed", "slack.error"],
+    types: [
+      "turn.error",
+      "turn.rejected",
+      "codex.recovery",
+      "engine.reconcile.failed",
+      "slack.error",
+    ],
     description: "turn errors, codex recovery, reconcile failures, slack errors",
   },
   lifecycle: {
@@ -50,7 +56,8 @@ ${presetList}
 event types:
   log  tenant.started  tenant.stopped  engine.reconcile
   engine.reconcile.failed  slack.event  slack.connection  slack.error
-  turn.queued  turn.start  turn.complete  turn.error  codex.recovery
+  turn.queued  turn.rejected  turn.start  turn.complete  turn.error
+  codex.recovery
   codex.notification  schedule.fired
 
 output / one line per event, newest first. --json outputs raw JSON objects.
@@ -79,7 +86,12 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "turn.queued") {
-    return `${time}  TURN   ${event.project}  queued  ${event.threadKey}  depth=${event.queueDepth}`
+    const bytes = event.queueBytes === undefined ? "" : ` bytes=${event.queueBytes}`
+    return `${time}  TURN   ${event.project}  queued    ${event.threadKey}  depth=${event.queueDepth}${bytes}`
+  }
+
+  if (event.type === "turn.rejected") {
+    return `${time}  TURN   ${event.project}  rejected  ${event.threadKey}  pending=${event.queueDepth} bytes=${event.queueBytes} input=${event.inputBytes}  ${event.reason}`
   }
 
   if (event.type === "turn.complete") {

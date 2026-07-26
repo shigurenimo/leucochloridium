@@ -47,6 +47,9 @@ type BuildOverrides = {
   bus?: LeucoEventBus
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
+  turnQueueMaxItems?: number
+  turnQueueMaxBytes?: number
+  initialCodexThreadId?: string
 }
 
 const buildTenant = (overrides: BuildOverrides = {}) =>
@@ -65,6 +68,9 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     bus: overrides.bus,
     turnTimeoutMs: overrides.turnTimeoutMs,
     turnIdleTimeoutMs: overrides.turnIdleTimeoutMs,
+    turnQueueMaxItems: overrides.turnQueueMaxItems,
+    turnQueueMaxBytes: overrides.turnQueueMaxBytes,
+    initialCodexThreadId: overrides.initialCodexThreadId,
   })
 
 describe("LeucoTenant.start / stop", () => {
@@ -250,14 +256,18 @@ describe("LeucoTenant.runTextTurn", () => {
   })
 
   it("restarts codex after a command output budget error", async () => {
+    let running = true
     const calls: string[] = []
     const tenant = buildTenant({
       codex: fakeCodex({
+        isRunning: () => running,
         stop: async () => {
           calls.push("stop")
+          running = false
         },
         start: async () => {
           calls.push("start")
+          running = true
         },
         runTextTurn: async () => new Error("codex command output exceeded 200000 chars"),
       }),
@@ -308,6 +318,101 @@ describe("LeucoTenant.runTextTurn", () => {
         type: "codex.recovery",
         project: "demo",
         status: "succeeded",
+      }),
+    )
+  })
+
+  it("times out and recovers when thread/start never replies", async () => {
+    let running = true
+    let startThreadCalls = 0
+    const calls: string[] = []
+    const tenant = buildTenant({
+      turnTimeoutMs: 15,
+      turnIdleTimeoutMs: 15,
+      codex: fakeCodex({
+        isRunning: () => running,
+        startThread: async () => {
+          startThreadCalls += 1
+          if (startThreadCalls === 1) return await new Promise<never>(() => {})
+          return { thread: { id: "thread-recovered" } }
+        },
+        stop: async () => {
+          calls.push("stop")
+          running = false
+        },
+        start: async () => {
+          calls.push("start")
+          running = true
+        },
+      }),
+    })
+
+    const first = await tenant.runTextTurn("k", "first")
+    expect(first).toBeInstanceOf(Error)
+    if (first instanceof Error) {
+      expect(first.message).toBe("codex turn timed out after 0.015s")
+    }
+    expect(calls).toEqual(["stop", "start"])
+
+    await expect(tenant.runTextTurn("k", "second")).resolves.toBe("echo:second")
+  })
+
+  it("times out and recovers when thread/resume never replies", async () => {
+    let running = true
+    let resumeCalls = 0
+    const calls: string[] = []
+    const tenant = buildTenant({
+      initialCodexThreadId: "thread-existing",
+      turnTimeoutMs: 15,
+      turnIdleTimeoutMs: 15,
+      codex: fakeCodex({
+        isRunning: () => running,
+        resumeThread: async (params) => {
+          resumeCalls += 1
+          if (resumeCalls === 1) return await new Promise<never>(() => {})
+          return { thread: { id: params.threadId } }
+        },
+        stop: async () => {
+          calls.push("stop")
+          running = false
+        },
+        start: async () => {
+          calls.push("start")
+          running = true
+        },
+      }),
+    })
+
+    const first = await tenant.runTextTurn("k", "first")
+    expect(first).toBeInstanceOf(Error)
+    expect(calls).toEqual(["stop", "start"])
+    await expect(tenant.runTextTurn("k", "second")).resolves.toBe("echo:second")
+  })
+
+  it("records recovery failure when the old codex child survives stop", async () => {
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    const start = vi.fn(async () => undefined)
+    const tenant = buildTenant({
+      bus,
+      codex: fakeCodex({
+        isRunning: () => true,
+        stop: async () => undefined,
+        start,
+        runTextTurn: async () => new Error("codex app-server exited (code 1)"),
+      }),
+    })
+
+    const result = await tenant.runTextTurn("k", "x")
+
+    expect(result).toBeInstanceOf(Error)
+    expect(start).not.toHaveBeenCalled()
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "codex.recovery",
+        status: "failed",
+        error: expect.stringContaining("after stop completed"),
       }),
     )
   })
@@ -397,6 +502,59 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(r1).toBe("1")
     expect(r2).toBe("2\n\n3")
     expect(r3).toBe("2\n\n3")
+  })
+
+  it("rejects queued work at the item limit without retaining it", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let calls = 0
+    const tenant = buildTenant({
+      bus,
+      turnQueueMaxItems: 1,
+      turnQueueMaxBytes: 1_024,
+      codex: fakeCodex({
+        runTextTurn: async (_id, text) => {
+          calls += 1
+          if (calls === 1) await firstTurnGate
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("k", "first")
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const queued = tenant.runTextTurn("k", "queued")
+    const rejected = await tenant.runTextTurn("k", "rejected")
+
+    expect(rejected).toBeInstanceOf(Error)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "turn.rejected",
+        queueDepth: 1,
+      }),
+    )
+
+    releaseFirstTurn()
+    await expect(first).resolves.toBe("first")
+    await expect(queued).resolves.toBe("queued")
+  })
+
+  it("rejects a single turn larger than the byte budget", async () => {
+    const runTextTurn = vi.fn(async () => "unexpected")
+    const tenant = buildTenant({
+      turnQueueMaxBytes: 4,
+      codex: fakeCodex({ runTextTurn }),
+    })
+
+    const result = await tenant.runTextTurn("k", "ああ")
+
+    expect(result).toBeInstanceOf(Error)
+    expect(runTextTurn).not.toHaveBeenCalled()
   })
 
   it("records queue depth, wait time, duration, and completion in logs and events", async () => {

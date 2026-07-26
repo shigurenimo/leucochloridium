@@ -2,7 +2,7 @@ import type { LeucoSlackWebClient } from "@/channels/slack/leuco-slack-web-clien
 import type { SlackReply } from "@/channels/slack/slack-types"
 import { errorMessage } from "@/error-message"
 
-type Props = {
+export type LeucoSlackAdapterProps = {
   client: LeucoSlackWebClient
   onLog?: (line: string) => void
   /** Clock injection for tests. */
@@ -24,7 +24,7 @@ export class LeucoSlackAdapter {
   // Map state — only reassignment of the field itself is prevented.
   private readonly channelAccessCache = new Map<string, ChannelAccessCacheEntry>()
 
-  constructor(private readonly props: Props) {
+  constructor(private readonly props: LeucoSlackAdapterProps) {
     Object.freeze(this)
   }
 

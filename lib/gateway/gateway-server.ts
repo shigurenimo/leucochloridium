@@ -2,7 +2,7 @@ import type { Server } from "bun"
 import { buildGatewayApp } from "@/gateway/build-gateway-app"
 import type { LeucoEngine } from "@/engine/engine"
 
-type Props = {
+export type LeucoGatewayServerProps = {
   engine: LeucoEngine
   port: number
   mcpTokenForProject: (projectId: string) => string | null
@@ -23,7 +23,7 @@ export class LeucoGatewayServer {
   private readonly mcpTokenForProject: (projectId: string) => string | null
   private server: Server<undefined> | null = null
 
-  constructor(props: Props) {
+  constructor(props: LeucoGatewayServerProps) {
     this.engine = props.engine
     this.port = props.port
     this.selfPid = props.selfPid ?? process.pid

@@ -1,7 +1,7 @@
 BUN ?= bun
 ENTRY := lib/index.ts
 
-.PHONY: help dev run start stop status tui check test bun-test typecheck
+.PHONY: help dev run start stop status tui check test bun-test typecheck verify
 
 help:
 	@echo "leuco dev targets"
@@ -15,6 +15,7 @@ help:
 	@echo "  make test      # vp test run + bun-only test files"
 	@echo "  make bun-test  # bun test (covers *.bun-test.ts, e.g. bun:sqlite)"
 	@echo "  make typecheck # tsc -b"
+	@echo "  make verify    # full source, test, and package verification"
 
 dev:
 	$(BUN) run $(ENTRY)
@@ -35,14 +36,16 @@ tui:
 	$(BUN) run $(ENTRY) tui
 
 check:
-	vp check
+	$(BUN) run check
 
 test:
-	vp test run
-	$(MAKE) bun-test
+	$(BUN) run test
 
 bun-test:
-	$(BUN) test ./lib/events/leuco-event-bus.bun-test.ts ./lib/logger/leuco-logger-sqlite-sink.bun-test.ts
+	$(BUN) run test:bun
 
 typecheck:
-	bunx tsc -b
+	$(BUN) run typecheck
+
+verify:
+	$(BUN) run verify

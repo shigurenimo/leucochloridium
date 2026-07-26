@@ -9,7 +9,7 @@ import type {
   SlackReactionEvent,
 } from "@/channels/slack/slack-types"
 
-type Props = {
+export type LeucoSlackEventProcessorProps = {
   botUserId: string | null
   /** Hard cap on the dedup map; events older than the TTL are evicted lazily. */
   dedupCapacity?: number
@@ -44,7 +44,7 @@ export class LeucoSlackEventProcessor {
   private readonly seenKeys = new Map<string, number>()
   private botUserId: string | null
 
-  constructor(props: Props) {
+  constructor(props: LeucoSlackEventProcessorProps) {
     this.botUserId = props.botUserId
     this.dedupCapacity = props.dedupCapacity ?? DEFAULT_DEDUP_CAPACITY
     this.dedupTtlMs = props.dedupTtlMs ?? DEFAULT_DEDUP_TTL_MS

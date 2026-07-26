@@ -10,13 +10,16 @@ import {
 } from "@/channels/slack/leuco-slack-web-client"
 import { slackRateLimitDelayMs } from "@/channels/slack/slack-rate-limit-delay"
 
-type Props = {
+export type LeucoFetchSlackWebClientProps = {
   botToken: string
   requestTimeoutMs?: number
-  fetchFn?: FetchPort
+  fetchFn?: SlackFetchPort
 }
 
-type FetchPort = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+export type SlackFetchPort = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>
 
 const SLACK_API_BASE = "https://slack.com/api"
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
@@ -28,7 +31,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
  * port's flat shapes. No `@slack/web-api` dependency.
  */
 export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
-  constructor(private readonly props: Props) {
+  constructor(private readonly props: LeucoFetchSlackWebClientProps) {
     super()
     Object.freeze(this)
   }

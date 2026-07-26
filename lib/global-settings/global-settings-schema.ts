@@ -1,5 +1,11 @@
 import { z } from "zod"
 import { projectSchema } from "@/config/config-schema"
+import {
+  DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_QUEUE_MAX_BYTES,
+  DEFAULT_TURN_QUEUE_MAX_ITEMS,
+  DEFAULT_TURN_TIMEOUT_MS,
+} from "@/engine/turn-timeouts"
 
 /**
  * Machine-wide leuco settings that live in `~/.leuco/settings.json`.
@@ -17,6 +23,14 @@ const globalSettingsShape = {
    * Ignored on non-darwin.
    */
   keepAwake: z.boolean().default(true),
+  /** Maximum wall-clock for one Codex turn before the child is replaced. */
+  turnTimeoutMs: z.number().int().min(1_000).default(DEFAULT_TURN_TIMEOUT_MS),
+  /** Maximum time without a Codex notification before treating a turn as stalled. */
+  turnIdleTimeoutMs: z.number().int().min(1_000).default(DEFAULT_TURN_IDLE_TIMEOUT_MS),
+  /** Maximum turns retained while a tenant already has work in flight. */
+  turnQueueMaxItems: z.number().int().min(1).default(DEFAULT_TURN_QUEUE_MAX_ITEMS),
+  /** Maximum UTF-8 bytes retained across a tenant's pending turns. */
+  turnQueueMaxBytes: z.number().int().min(1_024).default(DEFAULT_TURN_QUEUE_MAX_BYTES),
   projects: z
     .array(projectSchema)
     .default([])
@@ -38,13 +52,24 @@ const globalSettingsShape = {
  * older leuco writing the file after a newer one does not silently strip the
  * newer version's fields.
  */
-export const globalSettingsSchema = z
-  .object(globalSettingsShape)
-  .passthrough()
-  .default({ keepAwake: true, projects: [] })
+export const globalSettingsSchema = z.object(globalSettingsShape).passthrough().default({
+  keepAwake: true,
+  turnTimeoutMs: DEFAULT_TURN_TIMEOUT_MS,
+  turnIdleTimeoutMs: DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  turnQueueMaxItems: DEFAULT_TURN_QUEUE_MAX_ITEMS,
+  turnQueueMaxBytes: DEFAULT_TURN_QUEUE_MAX_BYTES,
+  projects: [],
+})
 
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>
 
 export type GlobalSettingsKey = keyof typeof globalSettingsShape
 
-export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<GlobalSettingsKey> = ["keepAwake", "projects"]
+export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<GlobalSettingsKey> = [
+  "keepAwake",
+  "turnTimeoutMs",
+  "turnIdleTimeoutMs",
+  "turnQueueMaxItems",
+  "turnQueueMaxBytes",
+  "projects",
+]

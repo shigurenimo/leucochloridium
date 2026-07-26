@@ -20,6 +20,7 @@ import { LeucoTenant } from "@/engine/tenant"
 import { DEFAULT_LEUCO_PORT } from "@/env/cli-env-schema"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { atomicWriteText } from "@/fs/atomic-write-text"
+import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
@@ -27,7 +28,7 @@ import { LeucoPromptPresets } from "@/prompts/presets"
 
 type Logger = (line: string) => void
 
-type Props = {
+export type LeucoRuntimeProps = {
   env: NodeJS.ProcessEnv
   /** Gateway port for `/mcp/<projectId>`. Defaults to the CLI port (7331). */
   port?: number
@@ -57,7 +58,7 @@ export class LeucoRuntime {
     Object.freeze(this)
   }
 
-  static build(buildProps: Props): LeucoRuntime {
+  static build(buildProps: LeucoRuntimeProps): LeucoRuntime {
     const baseLog = buildProps.onLog ?? ((line: string) => process.stdout.write(`${line}\n`))
     const paths = new LeucoPaths({ home: buildProps.home })
     const bus = new LeucoEventBus({ eventLogPath: paths.daemonEventLogPath() })
@@ -72,6 +73,8 @@ export class LeucoRuntime {
 
     const projectStore = new LeucoProjectStore({ paths })
     const projectStateStore = new LeucoProjectStateStore({ projectStore })
+    const globalSettings = new LeucoGlobalSettingsStore({ paths }).load()
+    if (globalSettings instanceof Error) throw globalSettings
     const projects = projectStore.list()
 
     // One bearer token per project, generated lazily and held for the daemon
@@ -99,6 +102,10 @@ export class LeucoRuntime {
         projectStateStore,
         mcpToken: mcpTokenForProject(project.id),
         mcpPort,
+        turnTimeoutMs: globalSettings.turnTimeoutMs,
+        turnIdleTimeoutMs: globalSettings.turnIdleTimeoutMs,
+        turnQueueMaxItems: globalSettings.turnQueueMaxItems,
+        turnQueueMaxBytes: globalSettings.turnQueueMaxBytes,
       })
 
     const tenants: LeucoTenant[] = []
@@ -159,6 +166,10 @@ type BuildTenantProps = {
   projectStateStore: LeucoProjectStateStore
   mcpToken: string
   mcpPort: number
+  turnTimeoutMs: number
+  turnIdleTimeoutMs: number
+  turnQueueMaxItems: number
+  turnQueueMaxBytes: number
 }
 
 const buildTenant = (props: BuildTenantProps): LeucoTenant => {
@@ -226,6 +237,10 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     useCommonInstructions: props.project.useCommonInstructions,
     presets,
     configSignature: tenantConfigSignature(props.project),
+    turnTimeoutMs: props.turnTimeoutMs,
+    turnIdleTimeoutMs: props.turnIdleTimeoutMs,
+    turnQueueMaxItems: props.turnQueueMaxItems,
+    turnQueueMaxBytes: props.turnQueueMaxBytes,
   })
 }
 

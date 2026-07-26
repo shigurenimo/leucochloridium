@@ -42,7 +42,7 @@ const migrationShape = z
   })
   .passthrough()
 
-type Props = {
+export type LeucoProjectStoreProps = {
   paths?: LeucoPaths
 }
 
@@ -61,7 +61,7 @@ type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
 export class LeucoProjectStore {
   private readonly paths: LeucoPaths
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoProjectStoreProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
     Object.freeze(this)
   }

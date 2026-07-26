@@ -8,7 +8,7 @@ import {
 } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-type Props = {
+export type LeucoGlobalSettingsStoreProps = {
   paths?: LeucoPaths
 }
 
@@ -23,7 +23,7 @@ type Props = {
 export class LeucoGlobalSettingsStore {
   private readonly paths: LeucoPaths
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoGlobalSettingsStoreProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
     Object.freeze(this)
   }

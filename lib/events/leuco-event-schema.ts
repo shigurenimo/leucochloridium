@@ -69,6 +69,8 @@ const turnStartSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   input: z.string(),
+  inputChars: z.number().int().nonnegative().optional(),
+  inputTruncated: z.boolean().optional(),
   batchSize: z.number().int().positive().optional(),
   queueWaitMs: z.number().nonnegative().optional(),
 })
@@ -79,6 +81,18 @@ const turnQueuedSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   queueDepth: z.number().int().positive(),
+  queueBytes: z.number().int().nonnegative().optional(),
+})
+
+const turnRejectedSchema = z.object({
+  ...baseTs,
+  type: z.literal("turn.rejected"),
+  project: z.string(),
+  threadKey: z.string(),
+  reason: z.string(),
+  queueDepth: z.number().int().nonnegative(),
+  queueBytes: z.number().int().nonnegative(),
+  inputBytes: z.number().int().nonnegative(),
 })
 
 const turnCompleteSchema = z.object({
@@ -87,6 +101,8 @@ const turnCompleteSchema = z.object({
   project: z.string(),
   threadKey: z.string(),
   reply: z.string(),
+  replyChars: z.number().int().nonnegative().optional(),
+  replyTruncated: z.boolean().optional(),
   durationMs: z.number().nonnegative().optional(),
   queueWaitMs: z.number().nonnegative().optional(),
 })
@@ -140,6 +156,7 @@ export const leucoEventSchema = z.discriminatedUnion("type", [
   slackConnectionSchema,
   slackErrorSchema,
   turnQueuedSchema,
+  turnRejectedSchema,
   turnStartSchema,
   turnCompleteSchema,
   turnErrorSchema,

@@ -6,7 +6,7 @@ import { LeucoEventBus } from "@/events/leuco-event-bus"
 import { LeucoGatewayServer } from "@/gateway/gateway-server"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
-type Props = {
+export type LeucoEngineProps = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
   buildTenant: (project: Project) => LeucoTenant
@@ -48,7 +48,7 @@ export class LeucoEngine {
   private reconcileQueue: Promise<void> = Promise.resolve()
   private stopped = false
 
-  constructor(props: Props) {
+  constructor(props: LeucoEngineProps) {
     this.tenants = props.tenants
     this.projectStore = props.projectStore
     this.buildTenant = props.buildTenant

@@ -76,6 +76,65 @@ describe("LeucoEventBus", () => {
     bus.stop()
   })
 
+  test("retains only the configured number of newest rows", () => {
+    const path = join(dir, "events.db")
+    const bus = new LeucoEventBus({ eventLogPath: path, maxRows: 2 })
+
+    bus.log("info", "one")
+    bus.log("info", "two")
+    bus.log("info", "three")
+
+    expect(
+      bus
+        .getSink()!
+        .query()
+        .map((entry) => entry.event),
+    ).toEqual([
+      expect.objectContaining({ type: "log", line: "two" }),
+      expect.objectContaining({ type: "log", line: "three" }),
+    ])
+    bus.stop()
+  })
+
+  test("bounds large turn and notification payloads on disk", () => {
+    const path = join(dir, "events.db")
+    const bus = new LeucoEventBus({ eventLogPath: path })
+    const large = "x".repeat(40_000)
+
+    bus.emit({
+      ts: Date.now(),
+      type: "turn.complete",
+      project: "demo",
+      threadKey: "thread",
+      reply: large,
+    })
+    bus.emit({
+      ts: Date.now(),
+      type: "codex.notification",
+      project: "demo",
+      method: "item/commandExecution/outputDelta",
+      params: { delta: large },
+    })
+
+    const [turn, notification] = bus
+      .getSink()!
+      .query()
+      .map((entry) => entry.event)
+    expect(turn).toMatchObject({
+      type: "turn.complete",
+      replyChars: 40_000,
+      replyTruncated: true,
+    })
+    if (turn?.type === "turn.complete") expect(turn.reply.length).toBe(16_000)
+    if (notification?.type === "codex.notification") {
+      expect(notification.params).toMatchObject({
+        truncated: true,
+        originalChars: expect.any(Number),
+      })
+    }
+    bus.stop()
+  })
+
   test("stop is idempotent", () => {
     const bus = new LeucoEventBus({ eventLogPath: join(dir, "events.db") })
     bus.stop()
