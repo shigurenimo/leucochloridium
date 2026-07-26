@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception"
 import { FunnelLogSqliteSink } from "@interactive-inc/claude-funnel/logger"
 import { z } from "zod"
 import { diagnoseSlackDirectMessage } from "@/actions/slack/diagnose-slack-direct-message"
+import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-direct-message"
 import { resolveSlackTokens } from "@/actions/slack/slack-call"
 import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
 import { factory } from "@/cli/cli-factory"
@@ -14,19 +15,22 @@ import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco slack dm / diagnose the latest inbound direct message
 
-usage / leuco slack dm <conversation-id> --project <p> [--limit <N>] [--json]
+usage / leuco slack dm [conversation-id] --project <p> [--limit <N>] [--json]
 
 arguments:
-  <conversation-id> / Slack direct-message ID (for example D0123ABC)
+  [conversation-id] / optional Slack DM ID (for example D0123ABC)
+                      omitted: inspect the newest human message across all DMs
 
 options:
   --project <p> / project whose Slack bot should be inspected
   --limit <N> / Slack history messages to inspect (default 50, max 100)
   --json / print JSON instead of YAML
 
-output / latest human DM plus Socket Mode, Codex turn, and bot-reply status
+output / daemon and Slack connection state, latest human DM, Socket Mode,
+         Codex turn, and bot-reply status
 
 examples:
+  leuco slack dm --project cocolococo-hiract
   leuco slack dm D0123ABC --project cocolococo-hiract
   leuco slack dm D0123ABC --project cocolococo-hiract --json
 
@@ -36,7 +40,13 @@ const directMessageIdSchema = z
   .string()
   .regex(/^D[A-Z0-9]+$/, "conversation ID must be a Slack direct-message ID beginning with D")
 
-const EVENT_TYPES = ["slack.event", "turn.start", "turn.complete", "turn.error"] as const
+const EVENT_TYPES = [
+  "slack.connection",
+  "slack.event",
+  "turn.start",
+  "turn.complete",
+  "turn.error",
+] as const
 const EVENT_SCAN_LIMIT = 5_000
 
 export const slackDmHandler = factory.createHandlers(async (c) => {
@@ -44,13 +54,11 @@ export const slackDmHandler = factory.createHandlers(async (c) => {
   if (flagBool(body.flags.help)) return c.text(help)
 
   const rawConversationId = body.args[0]
-  if (rawConversationId === undefined) {
-    throw new HTTPException(400, { message: "usage: leuco slack dm <D...> --project <p>" })
-  }
-  const conversationId = directMessageIdSchema.safeParse(rawConversationId)
-  if (!conversationId.success) {
+  const parsedConversationId =
+    rawConversationId === undefined ? null : directMessageIdSchema.safeParse(rawConversationId)
+  if (parsedConversationId !== null && !parsedConversationId.success) {
     throw new HTTPException(400, {
-      message: conversationId.error.issues[0]?.message ?? "invalid DM ID",
+      message: parsedConversationId.error.issues[0]?.message ?? "invalid DM ID",
     })
   }
 
@@ -63,27 +71,57 @@ export const slackDmHandler = factory.createHandlers(async (c) => {
   const client = new LeucoFetchSlackWebClient({ botToken: tokens.botToken })
   const limit = parseLimit(flagString(body.flags.limit))
   const auth = await client.authTest()
-  const history = await client.conversationsHistory({
-    channel: conversationId.data,
-    oldest: null,
-    inclusive: null,
-    limit,
-  })
+  const selected =
+    parsedConversationId === null
+      ? await findLatestSlackDirectMessage({
+          client,
+          botUserId: auth.userId,
+          historyLimit: limit,
+        })
+      : {
+          conversationId: parsedConversationId.data,
+          messages: (
+            await client.conversationsHistory({
+              channel: parsedConversationId.data,
+              oldest: null,
+              inclusive: null,
+              limit,
+            })
+          ).messages,
+        }
 
   const eventLogPath = c.var.daemon.getEventLogPath()
   const eventLogAvailable = existsSync(eventLogPath)
   const events = eventLogAvailable ? queryProjectEvents(eventLogPath, project.name) : []
-  const diagnosis = diagnoseSlackDirectMessage({
-    conversationId: conversationId.data,
-    botUserId: auth.userId,
-    messages: history.messages,
+  const runtime = buildSlackDmRuntimeSummary({
+    daemonRunning: c.var.daemon.status().isRunning,
+    slackChannel: tokens.channelName,
+    selection: parsedConversationId === null ? "latest" : "explicit",
     events,
-    eventLogAvailable,
   })
+  const diagnosis =
+    selected === null
+      ? {
+          conversationId: null,
+          message: null,
+          socketMode: "unavailable",
+          turn: "not_applicable",
+          botReply: { status: "not_applicable", ts: null },
+          status: "no_user_message",
+          error: null,
+          nextAction: "No non-bot message was found in any fetched DM history.",
+        }
+      : diagnoseSlackDirectMessage({
+          conversationId: selected.conversationId,
+          botUserId: auth.userId,
+          messages: selected.messages,
+          events,
+          eventLogAvailable,
+          usesUserToken: tokens.botToken.startsWith("xoxp-"),
+        })
+  const output = { ...runtime, ...diagnosis }
 
-  return c.text(
-    flagBool(body.flags.json) ? JSON.stringify(diagnosis, null, 2) : renderYaml(diagnosis),
-  )
+  return c.text(flagBool(body.flags.json) ? JSON.stringify(output, null, 2) : renderYaml(output))
 })
 
 const parseLimit = (raw: string | null): number => {
@@ -119,5 +157,28 @@ const queryProjectEvents = (eventLogPath: string, project: string): LeucoEvent[]
       .map((entry) => entry.event)
   } finally {
     sink.close()
+  }
+}
+
+export const buildSlackDmRuntimeSummary = (props: {
+  daemonRunning: boolean
+  slackChannel: string
+  selection: "latest" | "explicit"
+  events: ReadonlyArray<LeucoEvent>
+}) => {
+  const connection =
+    props.events
+      .filter(
+        (event): event is Extract<LeucoEvent, { type: "slack.connection" }> =>
+          event.type === "slack.connection" && event.channel === props.slackChannel,
+      )
+      .sort((a, b) => b.ts - a.ts)[0] ?? null
+
+  return {
+    daemonRunning: props.daemonRunning,
+    slackChannel: props.slackChannel,
+    slackConnection: connection?.status ?? "unavailable",
+    slackConnectionObservedAt: connection?.ts ?? null,
+    selection: props.selection,
   }
 }

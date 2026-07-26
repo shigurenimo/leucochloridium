@@ -26,6 +26,7 @@ type Props = {
   messages: ReadonlyArray<SlackHistoryMessage>
   events: ReadonlyArray<LeucoEvent>
   eventLogAvailable: boolean
+  usesUserToken?: boolean
 }
 
 /**
@@ -89,8 +90,9 @@ export const diagnoseSlackDirectMessage = (props: Props): SlackDirectMessageDiag
       botReply: { status: "missing", ts: null },
       status: "socket_event_missing",
       error: null,
-      nextAction:
-        "Slack history has this DM, but Socket Mode did not deliver it. Subscribe to message.im and reinstall the Slack app.",
+      nextAction: props.usesUserToken
+        ? "Slack history has this DM, but Socket Mode did not deliver it. In Event Subscriptions, add message.im under Subscribe to events on behalf of users, grant the im:history scope, and reinstall the Slack app."
+        : "Slack history has this DM, but Socket Mode did not deliver it. Subscribe to message.im, grant the im:history scope, and reinstall the Slack app.",
     }
   }
 

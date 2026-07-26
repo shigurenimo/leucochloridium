@@ -88,9 +88,11 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   async conversationsList(args: {
     types: string
     limit: number | null
+    cursor?: string | null
   }): Promise<SlackConversationList> {
     const body: Record<string, unknown> = { types: args.types }
     if (args.limit !== null) body.limit = args.limit
+    if (args.cursor) body.cursor = args.cursor
 
     const raw = await this.callOk("conversations.list", body)
     const parsed = conversationsListSchema.safeParse(raw)
@@ -100,7 +102,10 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       if (channel.id === undefined) return []
       return [{ id: channel.id, isIm: channel.is_im === true }]
     })
-    return { channels }
+    return {
+      channels,
+      nextCursor: parsed.data.response_metadata?.next_cursor?.trim() || null,
+    }
   }
 
   async conversationsHistory(args: {
@@ -338,6 +343,12 @@ const conversationsListSchema = z
           .passthrough(),
       )
       .default([]),
+    response_metadata: z
+      .object({
+        next_cursor: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough()
 

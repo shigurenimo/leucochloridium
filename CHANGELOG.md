@@ -2,6 +2,13 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.15.1 - 2026-07-26
+
+### Changed
+
+- Let `leuco slack dm --project <name>` discover and diagnose the latest human DM without requiring a conversation ID.
+- Include daemon and Slack connection state in DM diagnostics, with token-specific remediation when Socket Mode delivery is missing.
+
 ## 0.15.0 - 2026-07-26
 
 ### Added

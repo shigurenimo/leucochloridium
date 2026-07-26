@@ -27,6 +27,22 @@ describe("diagnoseSlackDirectMessage", () => {
     expect(result.nextAction).toContain("message.im")
   })
 
+  it("points user tokens at the user-event subscription section", () => {
+    const result = diagnoseSlackDirectMessage({
+      conversationId: "D1",
+      botUserId: "UBOT",
+      messages: [INBOUND],
+      events: [],
+      eventLogAvailable: true,
+      usesUserToken: true,
+    })
+
+    expect(result.status).toBe("socket_event_missing")
+    expect(result.nextAction).toContain("Subscribe to events on behalf of users")
+    expect(result.nextAction).toContain("im:history")
+    expect(result.nextAction).toContain("reinstall")
+  })
+
   it("reports a visible bot reply after a delivered turn", () => {
     const events: LeucoEvent[] = [
       {

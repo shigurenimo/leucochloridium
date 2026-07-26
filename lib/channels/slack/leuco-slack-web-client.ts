@@ -32,6 +32,7 @@ export abstract class LeucoSlackWebClient {
   abstract conversationsList(args: {
     types: string
     limit: number | null
+    cursor?: string | null
   }): Promise<SlackConversationList>
 
   abstract conversationsHistory(args: {
@@ -81,6 +82,7 @@ export type SlackConversationListEntry = {
 
 export type SlackConversationList = {
   channels: ReadonlyArray<SlackConversationListEntry>
+  nextCursor?: string | null
 }
 
 export type SlackSearchMessageMatch = {

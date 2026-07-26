@@ -344,13 +344,19 @@ Check that the `app_mention` event and the `app_mentions:read` scope are configu
 
 ### The bot ignores DMs
 
-Check the `message.im` event and the `im:history` scope. With a user token, `message.im` must be subscribed as a user event, not a bot event. The delivery path for a specific DM conversation (`D...`) can be diagnosed directly:
+Check the `message.im` event and the `im:history` scope. With a user token, `message.im` must be subscribed as a user event, not a bot event. Diagnose the newest human DM visible to the project's Slack token directly:
+
+```bash
+leuco slack dm --project <p>
+```
+
+Pass a conversation ID to inspect a specific DM instead:
 
 ```bash
 leuco slack dm D0123ABC --project <p>
 ```
 
-A result of `socket_event_missing` means the message exists in Slack history but never reached Leuco over Socket Mode.
+The output includes daemon and Slack connection state plus Socket Mode, Codex turn, and reply status. A result of `socket_event_missing` means the message exists in Slack history but never reached Leuco over Socket Mode. For `xoxp-...` user tokens, add `message.im` under **Subscribe to events on behalf of users**, grant `im:history`, and reinstall the Slack app.
 
 ## Event log
 

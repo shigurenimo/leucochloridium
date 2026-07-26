@@ -128,6 +128,13 @@ describe("toRequest", () => {
     expect(r.parsed.flags).toEqual({ project: "cocolococo-hiract" })
   })
 
+  it("expands Slack DM diagnostics without a conversation ID", () => {
+    const r = toRequest(["slack", "dm", "--project", "cocolococo-hiract"])
+    expect(r.path).toBe("/slack/dm")
+    expect(r.parsed.args).toEqual([])
+    expect(r.parsed.flags).toEqual({ project: "cocolococo-hiract" })
+  })
+
   it("collects --key value flags interspersed with segments", () => {
     const r = toRequest(["projects", "create", "/p", "--name", "foo"])
     expect(r.path).toBe("/projects/create")

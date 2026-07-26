@@ -75,6 +75,7 @@ describe("LeucoFetchSlackWebClient", () => {
           JSON.stringify({
             ok: true,
             channels: [{ id: "D1", is_im: true }],
+            response_metadata: { next_cursor: "page-2" },
           }),
           { status: 200 },
         ),
@@ -82,15 +83,21 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
-    const result = await client.conversationsList({ types: "im", limit: 200 })
+    const result = await client.conversationsList({
+      types: "im",
+      limit: 200,
+      cursor: "page-1",
+    })
 
     const [url, init] = onlyFetchCall(fetchMock)
     expect(url).toBe("https://slack.com/api/conversations.list")
     expectFormBody(init, {
       types: "im",
       limit: "200",
+      cursor: "page-1",
     })
     expect(result.channels).toEqual([{ id: "D1", isIm: true }])
+    expect(result.nextCursor).toBe("page-2")
   })
 
   it("posts conversations.replies as form-encoded data through apiCall", async () => {
