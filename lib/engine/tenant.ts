@@ -1,5 +1,6 @@
 import type { ChannelPlugin } from "@/channels/channel-plugin"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
+import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 import { LeucoSystemPromptBuilder } from "@/prompts/system-prompt-builder"
 import { errorMessage } from "@/error-message"
 import {
@@ -448,6 +449,12 @@ export class LeucoTenant {
 
     if (reply instanceof Error && isRestartableTurnError(reply)) {
       await this.restartCodexChild(reply.message)
+    }
+
+    if (reply instanceof Error && isCodexHistoryCorruptionError(reply)) {
+      this.log(`[leuco] ${this.key}: clearing corrupt codex thread ${threadId}: ${reply.message}`)
+      this.clearThread(threadId)
+      return new Error("codex session history was corrupted and has been reset; please resend")
     }
 
     return reply
