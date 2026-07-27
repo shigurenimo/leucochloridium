@@ -115,6 +115,13 @@ describe("toRequest", () => {
     )
   })
 
+  it("maps project conversation scope as a session subcommand", () => {
+    const request = toRequest(["projects", "azamino", "session", "scope", "thread"])
+
+    expect(request.path).toBe("/projects/azamino/session/scope")
+    expect(request.parsed.args).toEqual(["thread"])
+  })
+
   it("expands /boot/<leaf>", () => {
     expect(toRequest(["boot", "install"]).path).toBe("/boot/install")
     expect(toRequest(["boot", "uninstall"]).path).toBe("/boot/uninstall")

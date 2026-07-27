@@ -8,7 +8,7 @@ type Props = {
 }
 
 /**
- * Read / write the per-project runtime state (codexThreadId,
+ * Read / write the per-project runtime state (codexThreadId, codexThreadIds,
  * scheduleLastFiredAt) stored inside the unified `~/.leuco/settings.json`.
  * Thin wrapper over `LeucoProjectStore` — reads the project, patches the
  * `state` field, and saves back.
@@ -30,6 +30,13 @@ export class LeucoProjectStateStore {
     this.projectStore.updateProject(projectId, (project) => ({
       ...project,
       state: { ...project.state, codexThreadId },
+    }))
+  }
+
+  setCodexThreadIds(projectId: string, codexThreadIds: Readonly<Record<string, string>>): void {
+    this.projectStore.updateProject(projectId, (project) => ({
+      ...project,
+      state: { ...project.state, codexThreadIds: { ...codexThreadIds } },
     }))
   }
 

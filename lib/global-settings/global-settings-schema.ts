@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { projectSchema } from "@/config/config-schema"
 import {
+  DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
@@ -27,6 +28,8 @@ const globalSettingsShape = {
   turnTimeoutMs: z.number().int().min(1_000).default(DEFAULT_TURN_TIMEOUT_MS),
   /** Maximum time without a Codex notification before treating a turn as stalled. */
   turnIdleTimeoutMs: z.number().int().min(1_000).default(DEFAULT_TURN_IDLE_TIMEOUT_MS),
+  /** Maximum different conversation threads one project may run concurrently. */
+  turnConcurrency: z.number().int().min(1).max(32).default(DEFAULT_TURN_CONCURRENCY),
   /** Maximum turns retained while a tenant already has work in flight. */
   turnQueueMaxItems: z.number().int().min(1).default(DEFAULT_TURN_QUEUE_MAX_ITEMS),
   /** Maximum UTF-8 bytes retained across a tenant's pending turns. */
@@ -56,6 +59,7 @@ export const globalSettingsSchema = z.object(globalSettingsShape).passthrough().
   keepAwake: true,
   turnTimeoutMs: DEFAULT_TURN_TIMEOUT_MS,
   turnIdleTimeoutMs: DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  turnConcurrency: DEFAULT_TURN_CONCURRENCY,
   turnQueueMaxItems: DEFAULT_TURN_QUEUE_MAX_ITEMS,
   turnQueueMaxBytes: DEFAULT_TURN_QUEUE_MAX_BYTES,
   projects: [],
@@ -69,6 +73,7 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<GlobalSettingsKey> = [
   "keepAwake",
   "turnTimeoutMs",
   "turnIdleTimeoutMs",
+  "turnConcurrency",
   "turnQueueMaxItems",
   "turnQueueMaxBytes",
   "projects",

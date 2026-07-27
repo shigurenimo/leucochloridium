@@ -54,7 +54,7 @@ const CHANNEL_NAMED_LEAFS = new Set([
   "set-tokens",
   "download-file",
 ])
-const PROJECT_SESSION_LEAFS = new Set(["reset"])
+const PROJECT_SESSION_LEAFS = new Set(["reset", "scope"])
 const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
 const SLACK_LEAFS = new Set(["call", "dm"])
 const CONFIG_LEAFS = new Set(["list", "get", "set"])

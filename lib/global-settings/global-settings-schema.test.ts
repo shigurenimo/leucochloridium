@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { DEFAULT_TURN_IDLE_TIMEOUT_MS, DEFAULT_TURN_TIMEOUT_MS } from "@/engine/turn-timeouts"
+import {
+  DEFAULT_TURN_CONCURRENCY,
+  DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_TIMEOUT_MS,
+} from "@/engine/turn-timeouts"
 import { globalSettingsSchema } from "@/global-settings/global-settings-schema"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
@@ -13,6 +17,7 @@ describe("globalSettingsSchema turn limits", () => {
 
     expect(parsed.turnTimeoutMs).toBe(DEFAULT_TURN_TIMEOUT_MS)
     expect(parsed.turnIdleTimeoutMs).toBe(DEFAULT_TURN_IDLE_TIMEOUT_MS)
+    expect(parsed.turnConcurrency).toBe(DEFAULT_TURN_CONCURRENCY)
   })
 
   it("allows the hard deadline to be shorter than the idle deadline", () => {

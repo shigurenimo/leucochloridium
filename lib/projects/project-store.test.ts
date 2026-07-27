@@ -36,8 +36,9 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
     },
   ],
   mcpServers: {},
-  state: { codexThreadId: null, scheduleLastFiredAt: {} },
+  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
   ...overrides,
+  conversationScope: overrides.conversationScope ?? "project",
 })
 
 describe("LeucoProjectStore", () => {

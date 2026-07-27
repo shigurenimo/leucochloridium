@@ -65,6 +65,7 @@ export type {
 export { CURRENT_SCHEMA_VERSION, EMPTY_PROJECT_STATE, projectSchema } from "@/config/config-schema"
 export type {
   Channel,
+  ConversationScope,
   McpServer,
   Project,
   ProjectState,
@@ -132,6 +133,7 @@ export {
   type ThreadEntry,
 } from "@/engine/engine"
 export {
+  DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,

@@ -67,8 +67,42 @@ const fakeCodexAcksThenStreamsLargeCommandOutput = [
   "      process.stdout.write(JSON.stringify({",
   "        jsonrpc: '2.0',",
   "        method: 'item/commandExecution/outputDelta',",
-  "        params: { itemId: 'call_big', delta: 'abcdef' },",
+  "        params: { threadId: msg.params.threadId, turnId: 'turn-big', itemId: 'call_big', delta: 'abcdef' },",
   "      }) + '\\n');",
+  "      continue;",
+  "    }",
+  "  }",
+  "});",
+  "setInterval(() => {}, 1_000_000);",
+].join("\n")
+
+const fakeCodexStreamsConcurrentTurns = [
+  "let buffer = '';",
+  "process.stdin.setEncoding('utf8');",
+  "const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');",
+  "process.stdin.on('data', (chunk) => {",
+  "  buffer += chunk;",
+  "  const lines = buffer.split('\\n');",
+  "  buffer = lines.pop();",
+  "  for (const line of lines) {",
+  "    if (line.length === 0) continue;",
+  "    let msg;",
+  "    try { msg = JSON.parse(line); } catch { continue; }",
+  "    if (msg.method === 'initialize' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      continue;",
+  "    }",
+  "    if (msg.method === 'turn/start' && msg.id != null) {",
+  "      const threadId = msg.params.threadId;",
+  "      const turnId = `turn-${threadId}`;",
+  "      const text = msg.params.input[0].text;",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } }) + '\\n');",
+  "      const delay = threadId === 'thread-a' ? 20 : 5;",
+  "      setTimeout(() => {",
+  "        notify('item/agentMessage/delta', { threadId, turnId, itemId: `item-${threadId}`, delta: `delta:${text}` });",
+  "        notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', text: `reply:${text}` } });",
+  "        notify('turn/completed', { threadId, turn: { id: turnId, status: 'completed' } });",
+  "      }, delay);",
   "      continue;",
   "    }",
   "  }",
@@ -129,5 +163,20 @@ describe("LeucoCodexClient.runTextTurn", () => {
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
     expect(client.isRunning()).toBe(false)
+  }, 5000)
+
+  it("routes interleaved notifications to concurrent turns by thread id", async () => {
+    const client = new LeucoCodexClient({
+      bin: "node",
+      args: ["-e", fakeCodexStreamsConcurrentTurns],
+    })
+
+    await client.start()
+
+    const first = client.runTextTurn("thread-a", "first")
+    const second = client.runTextTurn("thread-b", "second")
+
+    await expect(Promise.all([first, second])).resolves.toEqual(["reply:first", "reply:second"])
+    await client.stop()
   }, 5000)
 })

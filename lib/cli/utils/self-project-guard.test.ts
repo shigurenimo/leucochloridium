@@ -8,13 +8,14 @@ const project: Project = {
   name: "azamino",
   path: "/Users/i/inta",
   enabled: true,
+  conversationScope: "project",
   channels: [],
   prompts: [],
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
   mcpServers: {},
-  state: { codexThreadId: null, scheduleLastFiredAt: {} },
+  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 }
 
 describe("isCurrentCodexProject", () => {

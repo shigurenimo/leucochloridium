@@ -56,13 +56,14 @@ const makeProject = (name: string, enabled = true): Project => ({
   name,
   path: `/tmp/${name}`,
   enabled,
+  conversationScope: "project",
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
   channels: [],
   mcpServers: {},
-  state: { codexThreadId: null, scheduleLastFiredAt: {} },
+  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 })
 
 describe("LeucoEngine.start / stop", () => {

@@ -4,10 +4,12 @@ import type {
   ChannelPlugin,
   ChannelPluginContext,
 } from "@/channels/channel-plugin"
+import type { ConversationScope } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoTenant } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
 import type { LeucoEvent } from "@/events/leuco-event-types"
+import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort => ({
   start: async () => undefined,
@@ -47,9 +49,13 @@ type BuildOverrides = {
   bus?: LeucoEventBus
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
+  turnConcurrency?: number
   turnQueueMaxItems?: number
   turnQueueMaxBytes?: number
+  conversationScope?: ConversationScope
   initialCodexThreadId?: string
+  initialCodexThreadIds?: Readonly<Record<string, string>>
+  projectStateStore?: Pick<LeucoProjectStateStore, "setCodexThreadId" | "setCodexThreadIds">
 }
 
 const buildTenant = (overrides: BuildOverrides = {}) =>
@@ -66,11 +72,15 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     presets: overrides.presets,
     onLog: overrides.onLog ?? (() => {}),
     bus: overrides.bus,
+    conversationScope: overrides.conversationScope,
     turnTimeoutMs: overrides.turnTimeoutMs,
     turnIdleTimeoutMs: overrides.turnIdleTimeoutMs,
+    turnConcurrency: overrides.turnConcurrency,
     turnQueueMaxItems: overrides.turnQueueMaxItems,
     turnQueueMaxBytes: overrides.turnQueueMaxBytes,
     initialCodexThreadId: overrides.initialCodexThreadId,
+    initialCodexThreadIds: overrides.initialCodexThreadIds,
+    projectStateStore: overrides.projectStateStore,
   })
 
 describe("LeucoTenant.start / stop", () => {
@@ -193,6 +203,32 @@ describe("LeucoTenant.start / stop", () => {
     // a started, b threw mid-start, rollback stops a in reverse + codex.
     expect(calls).toEqual(["codex.start", "a.start", "b.start", "a.stop", "codex.stop"])
   })
+
+  it("settles queued turns while stopping", async () => {
+    let finishActive: (() => void) | undefined
+    const tenant = buildTenant({
+      codex: fakeCodex({
+        stop: async () => finishActive?.(),
+        runTextTurn: async () =>
+          await new Promise<string>((resolve) => {
+            finishActive = () => resolve("active finished")
+          }),
+      }),
+    })
+
+    const active = tenant.runTextTurn("same", "active")
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const queued = tenant.runTextTurn("same", "queued")
+
+    await tenant.stop()
+
+    await expect(active).resolves.toBe("active finished")
+    const queuedResult = await queued
+    expect(queuedResult).toBeInstanceOf(Error)
+    if (queuedResult instanceof Error) {
+      expect(queuedResult.message).toContain("stopped before the turn ran")
+    }
+  })
 })
 
 describe("LeucoTenant.runTextTurn", () => {
@@ -221,6 +257,75 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(await tenant.runTextTurn("b", "x")).toBe("t-1")
     expect(await tenant.runTextTurn("a", "y")).toBe("t-1")
     expect(starts).toBe(1)
+  })
+
+  it("uses a separate codex thread per threadKey in thread scope", async () => {
+    let starts = 0
+    const tenant = buildTenant({
+      conversationScope: "thread",
+      codex: fakeCodex({
+        startThread: async () => ({ thread: { id: `t-${++starts}` } }),
+        runTextTurn: async (id) => id,
+      }),
+    })
+
+    expect(await tenant.runTextTurn("a", "x")).toBe("t-1")
+    expect(await tenant.runTextTurn("b", "x")).toBe("t-2")
+    expect(await tenant.runTextTurn("a", "y")).toBe("t-1")
+    expect(starts).toBe(2)
+  })
+
+  it("persists every thread-scope mapping without overwriting earlier keys", async () => {
+    let starts = 0
+    const setCodexThreadIds = vi.fn()
+    const tenant = buildTenant({
+      conversationScope: "thread",
+      projectStateStore: {
+        setCodexThreadId: vi.fn(),
+        setCodexThreadIds,
+      },
+      codex: fakeCodex({
+        startThread: async () => ({ thread: { id: `t-${++starts}` } }),
+      }),
+    })
+
+    await tenant.runTextTurn("a", "first")
+    await tenant.runTextTurn("b", "second")
+
+    expect(setCodexThreadIds).toHaveBeenLastCalledWith("00000000-0000-4000-8000-000000000000", {
+      a: "t-1",
+      b: "t-2",
+    })
+  })
+
+  it("runs different threadKeys concurrently in thread scope", async () => {
+    let releaseTurns: () => void = () => {}
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurns = resolve
+    })
+    let active = 0
+    let maxActive = 0
+    const tenant = buildTenant({
+      conversationScope: "thread",
+      turnConcurrency: 2,
+      codex: fakeCodex({
+        runTextTurn: async (_id, text) => {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          await turnGate
+          active -= 1
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("a", "first")
+    const second = tenant.runTextTurn("b", "second")
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(maxActive).toBe(2)
+    releaseTurns()
+    await expect(Promise.all([first, second])).resolves.toEqual(["first", "second"])
   })
 
   it("serializes turns within the same thread", async () => {
@@ -472,7 +577,7 @@ describe("LeucoTenant.runTextTurn", () => {
     await expect(resultPromise).resolves.toBe("ok")
   })
 
-  it("batches turns that arrive while another turn is in flight", async () => {
+  it("keeps queued messages as separate Codex turns", async () => {
     let releaseFirstTurn: () => void = () => {}
     const firstTurnGate = new Promise<void>((resolve) => {
       releaseFirstTurn = resolve
@@ -498,10 +603,10 @@ describe("LeucoTenant.runTextTurn", () => {
     releaseFirstTurn()
 
     const [r1, r2, r3] = await Promise.all([p1, p2, p3])
-    expect(calls).toEqual(["1", "2\n\n3"])
+    expect(calls).toEqual(["1", "2", "3"])
     expect(r1).toBe("1")
-    expect(r2).toBe("2\n\n3")
-    expect(r3).toBe("2\n\n3")
+    expect(r2).toBe("2")
+    expect(r3).toBe("3")
   })
 
   it("rejects queued work at the item limit without retaining it", async () => {
@@ -655,6 +760,27 @@ describe("LeucoTenant introspection", () => {
     expect(tenant.clearThread(tenant.key)).toBe(true)
     expect(tenant.listThreads()).toEqual([])
     expect(tenant.clearThread(tenant.key)).toBe(false)
+  })
+
+  it("lists and clears independent thread-scope mappings", async () => {
+    let starts = 0
+    const tenant = buildTenant({
+      conversationScope: "thread",
+      codex: fakeCodex({
+        startThread: async () => ({ thread: { id: `tx-${++starts}` } }),
+        runTextTurn: async () => "ok",
+      }),
+    })
+
+    await tenant.runTextTurn("slack:C1:T1", "one")
+    await tenant.runTextTurn("slack:C1:T2", "two")
+    expect(tenant.listThreads()).toEqual([
+      { threadKey: "slack:C1:T1", threadId: "tx-1" },
+      { threadKey: "slack:C1:T2", threadId: "tx-2" },
+    ])
+
+    expect(tenant.clearThread("tx-1")).toBe(true)
+    expect(tenant.listThreads()).toEqual([{ threadKey: "slack:C1:T2", threadId: "tx-2" }])
   })
 
   it("isCodexRunning delegates to the codex port", () => {

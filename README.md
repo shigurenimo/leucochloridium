@@ -6,14 +6,14 @@ Leuco runs on Bun only.
 
 ## How Leuco is organized
 
-A project is the unit you register and configure: a repository you want Codex to work in, together with its execution settings. When a project is enabled, Leuco builds a tenant for it — an internal runtime unit that owns one Codex `app-server` process, one shared Codex thread, and the project's connection plugins. You never create or manage tenants directly.
+プロジェクトは、Codexを動かすリポジトリと実行設定をまとめる単位です。有効なプロジェクトごとに、1つのCodex `app-server`、設定された会話範囲に応じたCodex thread、接続プラグインを持つtenantが作られます。tenantを直接作成・管理する必要はありません。
 
 ```text
 Leuco daemon
 ├─ project A
 │  └─ tenant
 │     ├─ Codex app-server × 1
-│     ├─ shared Codex thread × 1
+│     ├─ Codex thread × 1..n
 │     ├─ slack connection plugin
 │     └─ schedule plugin
 └─ project B
@@ -23,7 +23,13 @@ Leuco daemon
 
 The word "channel" in the CLI does not mean a Slack channel like `#general`. It is a connection plugin attached to a project, and it comes in two kinds: `slack` and `schedule`. Public channels, private channels, DMs, and threads on the Slack side are ordinary Slack conversations — you do not register them individually in Leuco.
 
-Everything inside one project shares a single Codex thread: every Slack connection, every Slack conversation and thread, and every schedule. If you want separate conversation histories, split the work into separate projects.
+会話範囲の既定値は`project`で、Slackの会話やscheduleを含むプロジェクト全体が1つのCodex threadを共有します。`thread`へ切り替えると、接続プラグインが渡す`threadKey`ごとに履歴が分離され、異なるthreadKeyは並行処理されます。切り替えても両方の履歴IDは保持されるため、元の範囲へ戻せます。
+
+```bash
+leuco projects <project> session scope
+leuco projects <project> session scope thread
+leuco projects <project> session scope project
+```
 
 Current Leuco has no user-facing `agent` entity. Codex subagents, the macOS LaunchAgent, and the `agents[]` array found in old configuration files are all unrelated concepts.
 
@@ -293,11 +299,12 @@ leuco config
 leuco config set keepAwake false
 leuco config set turnIdleTimeoutMs 120000
 leuco config set turnTimeoutMs 600000
+leuco config set turnConcurrency 4
 leuco config set turnQueueMaxItems 64
 leuco config set turnQueueMaxBytes 262144
 ```
 
-`turnIdleTimeoutMs` is the maximum interval without a Codex notification. `turnTimeoutMs` is the hard wall-clock cap for a turn; whichever deadline is reached first replaces the stalled Codex child. `turnQueueMaxItems` and `turnQueueMaxBytes` bound the work retained behind an active project turn; overload is rejected and recorded instead of growing memory without limit. Restart Leuco after changing these values.
+`turnIdleTimeoutMs`はCodexから通知がない状態の上限、`turnTimeoutMs`は1ターン全体の上限です。先に上限へ達した場合は停止したCodex childを置き換えます。`turnConcurrency`はスレッド別モードで同時実行できる異なる会話の上限です。`turnQueueMaxItems`と`turnQueueMaxBytes`は待機中の処理量を制限し、過負荷時はメモリを増やし続けず記録付きで拒否します。変更後はLeucoを再起動してください。
 
 ## Troubleshooting
 

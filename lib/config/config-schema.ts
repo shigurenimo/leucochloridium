@@ -124,9 +124,10 @@ const CURRENT_SCHEMA_VERSION = 2
 const projectStateSchema = z
   .object({
     codexThreadId: z.string().min(1).nullable().default(null),
+    codexThreadIds: z.record(z.string(), z.string().min(1)).default({}),
     scheduleLastFiredAt: z.record(z.string(), z.number()).default({}),
   })
-  .default({ codexThreadId: null, scheduleLastFiredAt: {} })
+  .default({ codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} })
 
 export const projectSchema = z.object({
   version: z.literal(CURRENT_SCHEMA_VERSION),
@@ -146,6 +147,11 @@ export const projectSchema = z.object({
   // input; this guard catches hand-edited settings.json.
   path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
   enabled: z.boolean().default(true),
+  /**
+   * "project" keeps one shared Codex conversation across every channel.
+   * "thread" maps each channel-provided threadKey to its own Codex thread.
+   */
+  conversationScope: z.enum(["project", "thread"]).default("project"),
   useCommonInstructions: z.boolean().default(true),
   /** Optional codex model override passed to `thread/start`. null = codex default. */
   model: z.string().min(1).nullable().default(null),
@@ -166,7 +172,12 @@ export type SlackChannel = z.infer<typeof slackChannelSchema>
 export type ScheduleChannel = z.infer<typeof scheduleChannelSchema>
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
 export type McpServer = z.infer<typeof mcpServerSchema>
+export type ConversationScope = Project["conversationScope"]
 export type ProjectState = z.infer<typeof projectStateSchema>
 export type Project = z.infer<typeof projectSchema>
 
-export const EMPTY_PROJECT_STATE: ProjectState = { codexThreadId: null, scheduleLastFiredAt: {} }
+export const EMPTY_PROJECT_STATE: ProjectState = {
+  codexThreadId: null,
+  codexThreadIds: {},
+  scheduleLastFiredAt: {},
+}

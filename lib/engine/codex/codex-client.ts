@@ -56,6 +56,7 @@ export class LeucoCodexClient {
   private child: ChildProcessWithoutNullStreams | null = null
   private protocol: LeucoCodexProtocol | null = null
   private notificationHandler: NotificationHandler | null = null
+  private readonly turnHandlers = new Map<string, NotificationHandler>()
   private exitPromise: Promise<void> | null = null
   /**
    * In-flight `collectTurnInternal` rejecters. The protocol layer rejects
@@ -82,7 +83,6 @@ export class LeucoCodexClient {
 
   onNotification(handler: NotificationHandler): void {
     this.notificationHandler = handler
-    if (this.protocol) this.protocol.onNotification(handler)
   }
 
   isRunning(): boolean {
@@ -105,7 +105,7 @@ export class LeucoCodexClient {
       writer: (line) => child.stdin.write(line),
       onLog: this.onLog,
     })
-    if (this.notificationHandler) protocol.onNotification(this.notificationHandler)
+    protocol.onNotification((method, params) => this.handleNotification(method, params))
 
     child.stdout.on("data", (chunk: string) => {
       protocol.feedChunk(chunk)
@@ -271,17 +271,15 @@ export class LeucoCodexClient {
     params: TurnStartParams,
     onActivity?: (method: string) => void,
   ): Promise<string | Error> {
-    const protocol = this.protocol
-    if (!protocol) return new Error("codex client not started")
+    if (!this.protocol) return new Error("codex client not started")
     try {
-      return await this.collectTurnInternal(protocol, params, onActivity)
+      return await this.collectTurnInternal(params, onActivity)
     } catch (err) {
       return err instanceof Error ? err : new Error(String(err))
     }
   }
 
   private collectTurnInternal(
-    protocol: LeucoCodexProtocol,
     params: TurnStartParams,
     onActivity?: (method: string) => void,
   ): Promise<string> {
@@ -289,7 +287,11 @@ export class LeucoCodexClient {
       const deltas: string[] = []
       const completedTexts: string[] = []
       let commandOutputChars = 0
-      const previous = this.notificationHandler
+
+      if (this.turnHandlers.has(params.threadId)) {
+        reject(new Error(`codex thread ${params.threadId} already has a turn in flight`))
+        return
+      }
 
       const aborter = (err: Error): void => {
         teardown()
@@ -297,16 +299,13 @@ export class LeucoCodexClient {
       }
 
       const teardown = (): void => {
-        this.notificationHandler = previous
-        // Always restore (even to null) — leaving the turn handler installed
-        // would keep appending deltas of later turns to this settled promise's
-        // arrays.
-        protocol.onNotification(previous)
+        if (this.turnHandlers.get(params.threadId) === handler) {
+          this.turnHandlers.delete(params.threadId)
+        }
         this.turnAborters.delete(aborter)
       }
 
       const handler: NotificationHandler = (method, raw) => {
-        if (previous) previous(method, raw)
         onActivity?.(method)
 
         if (method === "item/agentMessage/delta") {
@@ -367,8 +366,7 @@ export class LeucoCodexClient {
         }
       }
 
-      this.notificationHandler = handler
-      protocol.onNotification(handler)
+      this.turnHandlers.set(params.threadId, handler)
       this.turnAborters.add(aborter)
 
       // `startTurn` always resolves (errors are folded into `| Error`), so a
@@ -384,11 +382,28 @@ export class LeucoCodexClient {
     })
   }
 
+  private handleNotification(method: string, params: unknown): void {
+    this.notificationHandler?.(method, params)
+    const threadId = notificationThreadId(params)
+    if (threadId === null) {
+      if (this.turnHandlers.size === 1) {
+        this.turnHandlers.values().next().value?.(method, params)
+      }
+      return
+    }
+    this.turnHandlers.get(threadId)?.(method, params)
+  }
+
   private abortInFlightTurns(err: Error): void {
     const aborters = Array.from(this.turnAborters)
     this.turnAborters.clear()
     for (const aborter of aborters) aborter(err)
   }
+}
+
+const notificationThreadId = (params: unknown): string | null => {
+  if (typeof params !== "object" || params === null || !("threadId" in params)) return null
+  return typeof params.threadId === "string" ? params.threadId : null
 }
 
 const INITIALIZE_TIMEOUT_MS = 30_000

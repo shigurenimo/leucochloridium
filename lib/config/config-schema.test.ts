@@ -29,6 +29,28 @@ describe("projectSchema", () => {
         error: "x",
       },
     })
+    expect(parsed.conversationScope).toBe("project")
+    expect(parsed.state.codexThreadIds).toEqual({})
+  })
+
+  it("accepts thread-scoped conversations and persisted mappings", () => {
+    const parsed = projectSchema.parse({
+      version: 2,
+      id: "00000000-0000-4000-8000-000000000000",
+      name: "demo",
+      path: "/tmp/demo",
+      conversationScope: "thread",
+      state: {
+        codexThreadIds: {
+          "slack:C1:T1": "codex-thread-1",
+        },
+      },
+    })
+
+    expect(parsed.conversationScope).toBe("thread")
+    expect(parsed.state.codexThreadIds).toEqual({
+      "slack:C1:T1": "codex-thread-1",
+    })
   })
 
   it("migrates the legacy friendly prompt preset", () => {
