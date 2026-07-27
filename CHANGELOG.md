@@ -2,7 +2,7 @@
 
 All notable changes to Leuco are documented here.
 
-## Unreleased
+## 0.16.0 - 2026-07-28
 
 ### Changed
 
