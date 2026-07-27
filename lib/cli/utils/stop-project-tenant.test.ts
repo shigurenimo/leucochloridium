@@ -11,13 +11,14 @@ const project = (): Project => ({
   name: "demo",
   path: "/tmp/demo",
   enabled: true,
+  conversationScope: "project",
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
   channels: [],
   mcpServers: {},
-  state: { codexThreadId: null, scheduleLastFiredAt: {} },
+  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 })
 
 describe("stopProjectTenant", () => {

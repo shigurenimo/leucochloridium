@@ -103,6 +103,7 @@ export class LeucoRuntime {
         mcpPort,
         turnTimeoutMs: globalSettings.turnTimeoutMs,
         turnIdleTimeoutMs: globalSettings.turnIdleTimeoutMs,
+        turnConcurrency: globalSettings.turnConcurrency,
         turnQueueMaxItems: globalSettings.turnQueueMaxItems,
         turnQueueMaxBytes: globalSettings.turnQueueMaxBytes,
       })
@@ -167,6 +168,7 @@ type BuildTenantProps = {
   mcpPort: number
   turnTimeoutMs: number
   turnIdleTimeoutMs: number
+  turnConcurrency: number
   turnQueueMaxItems: number
   turnQueueMaxBytes: number
 }
@@ -231,13 +233,16 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
     plugins,
     onLog: props.onLog,
     bus: props.bus,
+    conversationScope: props.project.conversationScope,
     initialCodexThreadId: props.project.state.codexThreadId ?? undefined,
+    initialCodexThreadIds: props.project.state.codexThreadIds,
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
     presets,
     configSignature: tenantConfigSignature(props.project),
     turnTimeoutMs: props.turnTimeoutMs,
     turnIdleTimeoutMs: props.turnIdleTimeoutMs,
+    turnConcurrency: props.turnConcurrency,
     turnQueueMaxItems: props.turnQueueMaxItems,
     turnQueueMaxBytes: props.turnQueueMaxBytes,
   })

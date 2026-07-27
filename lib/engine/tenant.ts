@@ -1,10 +1,12 @@
 import type { ChannelPlugin } from "@/channels/channel-plugin"
+import type { ConversationScope } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 import { LeucoSystemPromptBuilder } from "@/prompts/system-prompt-builder"
 import { errorMessage } from "@/error-message"
 import {
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -14,6 +16,7 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 export {
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -31,6 +34,8 @@ export {
  */
 type Logger = (line: string) => void
 
+type ProjectStateStorePort = Pick<LeucoProjectStateStore, "setCodexThreadId" | "setCodexThreadIds">
+
 export type TenantAgentSpec = {
   developerInstructions?: string
   model?: string
@@ -43,8 +48,10 @@ export type LeucoTenantProps = {
   codexHome?: string
   timeZone?: string
   agentSpec?: TenantAgentSpec
+  conversationScope?: ConversationScope
   initialCodexThreadId?: string
-  projectStateStore?: LeucoProjectStateStore
+  initialCodexThreadIds?: Readonly<Record<string, string>>
+  projectStateStore?: ProjectStateStorePort
   codex: CodexClientPort
   plugins: ChannelPlugin[]
   useCommonInstructions?: boolean
@@ -57,6 +64,7 @@ export type LeucoTenantProps = {
   /** Hard wall-clock and no-notification limits. Overridable for tests. */
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
+  turnConcurrency?: number
   /** Pending-turn admission limits. Overridable for embedded runtimes and tests. */
   turnQueueMaxItems?: number
   turnQueueMaxBytes?: number
@@ -75,12 +83,10 @@ type PendingTurn = {
 }
 
 /**
- * Owns one project: a single codex app-server child, the channel plugins
- * routed at it, and ONE codex thread shared across every channel, Slack
- * thread, and reaction. The project's conversation history is therefore
- * unified — channel plugins are still given a `threadKey` for their own
- * book-keeping, but the tenant ignores it for codex routing and serializes
- * every turn through the same chain.
+ * Owns one project: a single codex app-server child and its channel plugins.
+ * Conversation routing is configurable: project scope keeps one shared Codex
+ * thread, while thread scope maps each plugin-provided threadKey to a separate
+ * Codex thread. Turns remain ordered within one conversation key.
  */
 export class LeucoTenant {
   readonly projectId: string
@@ -94,19 +100,24 @@ export class LeucoTenant {
   private readonly plugins: ChannelPlugin[]
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly projectStateStore: LeucoProjectStateStore | null
+  private readonly projectStateStore: ProjectStateStorePort | null
+  private readonly conversationScope: ConversationScope
   private readonly useCommonInstructions: boolean
   private readonly presets: string[]
   private readonly turnTimeoutMs: number
   private readonly turnIdleTimeoutMs: number
+  private readonly turnConcurrency: number
   private readonly turnQueueMaxItems: number
   private readonly turnQueueMaxBytes: number
-  private codexThreadId: string | null
-  private codexThreadLive = false
+  private projectCodexThreadId: string | null
+  private readonly threadCodexThreadIds: Map<string, string>
+  private readonly liveCodexThreadIds = new Set<string>()
   private codexGeneration = 0
+  private codexRecovery: Promise<void> | null = null
   private pendingTurns: PendingTurn[] = []
   private pendingTurnBytes = 0
-  private turnInflight = false
+  private readonly activeConversationKeys = new Set<string>()
+  private activeTurnCount = 0
   private stopped = false
 
   constructor(props: LeucoTenantProps) {
@@ -122,17 +133,21 @@ export class LeucoTenant {
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
     this.projectStateStore = props.projectStateStore ?? null
+    this.conversationScope = props.conversationScope ?? "project"
     this.useCommonInstructions = props.useCommonInstructions ?? true
     this.presets = props.presets ?? []
     this.turnTimeoutMs = props.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
     this.turnIdleTimeoutMs = props.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
+    this.turnConcurrency = props.turnConcurrency ?? DEFAULT_TURN_CONCURRENCY
     this.turnQueueMaxItems = props.turnQueueMaxItems ?? DEFAULT_TURN_QUEUE_MAX_ITEMS
     this.turnQueueMaxBytes = props.turnQueueMaxBytes ?? DEFAULT_TURN_QUEUE_MAX_BYTES
     assertPositiveInteger("turnTimeoutMs", this.turnTimeoutMs)
     assertPositiveInteger("turnIdleTimeoutMs", this.turnIdleTimeoutMs)
+    assertPositiveInteger("turnConcurrency", this.turnConcurrency)
     assertPositiveInteger("turnQueueMaxItems", this.turnQueueMaxItems)
     assertPositiveInteger("turnQueueMaxBytes", this.turnQueueMaxBytes)
-    this.codexThreadId = props.initialCodexThreadId ?? null
+    this.projectCodexThreadId = props.initialCodexThreadId ?? null
+    this.threadCodexThreadIds = new Map(Object.entries(props.initialCodexThreadIds ?? {}))
   }
 
   get key(): string {
@@ -148,16 +163,33 @@ export class LeucoTenant {
   }
 
   listThreads(): TenantThreadEntry[] {
-    if (this.codexThreadId === null) return []
-    return [{ threadKey: this.key, threadId: this.codexThreadId }]
+    if (this.conversationScope === "project") {
+      if (this.projectCodexThreadId === null) return []
+      return [{ threadKey: this.key, threadId: this.projectCodexThreadId }]
+    }
+    return Array.from(this.threadCodexThreadIds, ([threadKey, threadId]) => ({
+      threadKey,
+      threadId,
+    })).sort((a, b) => a.threadKey.localeCompare(b.threadKey))
   }
 
   clearThread(threadKey: string): boolean {
-    if (threadKey !== this.key && threadKey !== this.codexThreadId) return false
-    if (this.codexThreadId === null) return false
-    this.codexThreadId = null
-    this.codexThreadLive = false
-    this.persistThread()
+    if (this.conversationScope === "project") {
+      if (threadKey !== this.key && threadKey !== this.projectCodexThreadId) return false
+      if (this.projectCodexThreadId === null) return false
+      this.liveCodexThreadIds.delete(this.projectCodexThreadId)
+      this.projectCodexThreadId = null
+      this.persistThreads()
+      return true
+    }
+
+    const entry = Array.from(this.threadCodexThreadIds).find(
+      (candidate) => candidate[0] === threadKey || candidate[1] === threadKey,
+    )
+    if (entry === undefined) return false
+    this.threadCodexThreadIds.delete(entry[0])
+    this.liveCodexThreadIds.delete(entry[1])
+    this.persistThreads()
     return true
   }
 
@@ -200,10 +232,19 @@ export class LeucoTenant {
 
   async stop(): Promise<void> {
     // Must be set before codex.stop(): the drain loop otherwise takes the
-    // next queued batch after the in-flight turn dies, sees the codex child
+    // next queued turn after an in-flight turn dies, sees the codex child
     // gone, and ensureThread re-spawns it — an orphan codex process nobody
     // owns after this tenant is discarded (reconcile rebuilds, shutdown).
     this.stopped = true
+
+    // Settle queued plugin handlers before waiting for plugin.stop(). A plugin
+    // may wait for its accepted messages to finish, and stopped tenants will
+    // no longer drain this queue.
+    const abandoned = this.pendingTurns.splice(0)
+    this.pendingTurnBytes = 0
+    for (const pending of abandoned) {
+      pending.resolve(new Error(`tenant ${this.key} stopped before the turn ran`))
+    }
 
     // Begin closing every ingress first, but do not wait for a plugin whose
     // in-flight handler is itself waiting on codex. Stopping codex settles
@@ -221,12 +262,6 @@ export class LeucoTenant {
     })
 
     await Promise.all(pluginStops)
-
-    const abandoned = this.pendingTurns.splice(0)
-    this.pendingTurnBytes = 0
-    for (const pending of abandoned) {
-      pending.resolve(new Error(`tenant ${this.key} stopped before the turn ran`))
-    }
 
     this.bus.emit({
       ts: Date.now(),
@@ -269,7 +304,12 @@ export class LeucoTenant {
         return
       }
 
-      if (this.turnInflight) {
+      const conversationKey = this.conversationKey(threadKey)
+      const willQueue =
+        this.pendingTurns.length > 0 ||
+        this.activeTurnCount >= this.turnConcurrency ||
+        this.activeConversationKeys.has(conversationKey)
+      if (willQueue) {
         this.log(`[leuco] ${this.key}: turn queued (pending=${queueDepth})`)
         this.bus.emit({
           ts: Date.now(),
@@ -282,47 +322,47 @@ export class LeucoTenant {
       }
       this.pendingTurnBytes = queueBytes
       this.pendingTurns.push({ threadKey, text, enqueuedAt: Date.now(), resolve })
-      void this.drainTurns()
+      this.drainTurns()
     })
   }
 
-  private async drainTurns(): Promise<void> {
-    if (this.turnInflight) return
-    this.turnInflight = true
-    try {
-      while (this.pendingTurns.length > 0) {
-        const batch = this.pendingTurns.splice(0)
-        this.pendingTurnBytes = Math.max(
-          0,
-          this.pendingTurnBytes -
-            batch.reduce((total, pending) => total + Buffer.byteLength(pending.text, "utf8"), 0),
-        )
+  private drainTurns(): void {
+    if (this.stopped) return
 
-        if (this.stopped) {
-          for (const pending of batch) {
-            pending.resolve(new Error(`tenant ${this.key} stopped before the turn ran`))
-          }
-          continue
-        }
-
-        const reply = await this.executeBatchedTurn(batch).catch((err: unknown) =>
-          err instanceof Error ? err : new Error(String(err)),
-        )
-        for (const pending of batch) pending.resolve(reply)
+    let index = 0
+    while (this.activeTurnCount < this.turnConcurrency && index < this.pendingTurns.length) {
+      const pending = this.pendingTurns[index]!
+      const conversationKey = this.conversationKey(pending.threadKey)
+      if (this.activeConversationKeys.has(conversationKey)) {
+        index += 1
+        continue
       }
-    } finally {
-      this.turnInflight = false
+
+      this.pendingTurns.splice(index, 1)
+      this.pendingTurnBytes = Math.max(
+        0,
+        this.pendingTurnBytes - Buffer.byteLength(pending.text, "utf8"),
+      )
+      this.activeConversationKeys.add(conversationKey)
+      this.activeTurnCount += 1
+
+      void this.executeTurn(pending)
+        .catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))))
+        .then((reply) => pending.resolve(reply))
+        .finally(() => {
+          this.activeConversationKeys.delete(conversationKey)
+          this.activeTurnCount -= 1
+          this.drainTurns()
+        })
     }
   }
 
-  private async executeBatchedTurn(batch: PendingTurn[]): Promise<string | Error> {
-    const primaryThreadKey = batch[0]!.threadKey
-    const combinedText = batch.length === 1 ? batch[0]!.text : batch.map((t) => t.text).join("\n\n")
+  private async executeTurn(pending: PendingTurn): Promise<string | Error> {
     const startedAt = Date.now()
     const deadlineAt = startedAt + this.turnTimeoutMs
-    const queueWaitMs = Math.max(0, startedAt - Math.min(...batch.map((turn) => turn.enqueuedAt)))
+    const queueWaitMs = Math.max(0, startedAt - pending.enqueuedAt)
 
-    const threadIdOrError = await this.ensureThreadBefore(deadlineAt)
+    const threadIdOrError = await this.ensureThreadBefore(pending.threadKey, deadlineAt)
     if (threadIdOrError instanceof Error) {
       const durationMs = Date.now() - startedAt
       this.log(
@@ -332,7 +372,7 @@ export class LeucoTenant {
         ts: Date.now(),
         type: "turn.error",
         project: this.projectName,
-        threadKey: primaryThreadKey,
+        threadKey: pending.threadKey,
         error: threadIdOrError.message,
         durationMs,
         queueWaitMs,
@@ -341,23 +381,19 @@ export class LeucoTenant {
     }
     const threadId = threadIdOrError
 
-    this.log(
-      batch.length === 1
-        ? `[leuco] turn → ${threadId} wait=${queueWaitMs}ms (${truncate(combinedText, 60)})`
-        : `[leuco] turn ×${batch.length} → ${threadId} wait=${queueWaitMs}ms (${truncate(combinedText, 60)})`,
-    )
+    this.log(`[leuco] turn → ${threadId} wait=${queueWaitMs}ms (${truncate(pending.text, 60)})`)
     this.bus.emit({
       ts: Date.now(),
       type: "turn.start",
       project: this.projectName,
-      threadKey: primaryThreadKey,
-      input: combinedText,
-      batchSize: batch.length,
+      threadKey: pending.threadKey,
+      input: pending.text,
+      batchSize: 1,
       queueWaitMs,
     })
 
     const hardTimeoutMs = Math.max(1, deadlineAt - Date.now())
-    const reply = await this.runTextTurnWithTimeout(threadId, combinedText, hardTimeoutMs)
+    const reply = await this.runTextTurnWithTimeout(threadId, pending.text, hardTimeoutMs)
     const durationMs = Date.now() - startedAt
     if (reply instanceof Error) {
       this.log(
@@ -367,7 +403,7 @@ export class LeucoTenant {
         ts: Date.now(),
         type: "turn.error",
         project: this.projectName,
-        threadKey: primaryThreadKey,
+        threadKey: pending.threadKey,
         error: reply.message,
         durationMs,
         queueWaitMs,
@@ -382,7 +418,7 @@ export class LeucoTenant {
       ts: Date.now(),
       type: "turn.complete",
       project: this.projectName,
-      threadKey: primaryThreadKey,
+      threadKey: pending.threadKey,
       reply,
       durationMs,
       queueWaitMs,
@@ -390,7 +426,7 @@ export class LeucoTenant {
     return reply
   }
 
-  private async ensureThreadBefore(deadlineAt: number): Promise<string | Error> {
+  private async ensureThreadBefore(threadKey: string, deadlineAt: number): Promise<string | Error> {
     const remainingMs = Math.max(1, deadlineAt - Date.now())
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<Error>((resolve) => {
@@ -399,7 +435,7 @@ export class LeucoTenant {
       }, remainingMs)
     })
 
-    const result = await Promise.race([this.ensureThread(), timeout])
+    const result = await Promise.race([this.ensureThread(threadKey), timeout])
     if (timer) clearTimeout(timer)
     if (result instanceof Error && isRestartableTurnError(result)) {
       await this.restartCodexChild(result.message)
@@ -461,9 +497,24 @@ export class LeucoTenant {
   }
 
   private async restartCodexChild(reason: string): Promise<void> {
+    if (this.codexRecovery !== null) {
+      await this.codexRecovery
+      return
+    }
+
+    const recovery = this.performCodexRecovery(reason)
+    this.codexRecovery = recovery
+    try {
+      await recovery
+    } finally {
+      if (this.codexRecovery === recovery) this.codexRecovery = null
+    }
+  }
+
+  private async performCodexRecovery(reason: string): Promise<void> {
     const startedAt = Date.now()
     this.log(`[leuco] ${this.key}: recovering codex child (reason=${reason})`)
-    this.codexThreadLive = false
+    this.liveCodexThreadIds.clear()
     this.codexGeneration += 1
 
     const stopResult = await this.codex.stop().catch((err: unknown) => err)
@@ -531,68 +582,34 @@ export class LeucoTenant {
     })
   }
 
-  private async ensureThread(): Promise<string | Error> {
+  private async ensureThread(threadKey: string): Promise<string | Error> {
     if (this.stopped) {
       return new Error(`tenant ${this.key} is stopped`)
     }
 
     // If the codex child died (SIGSEGV / OOM / external kill / `app-server`
-    // exited cleanly) we surface a fresh respawn here instead of letting
-    // every subsequent turn fail with `codex client not started`. The
-    // persisted thread id survives, so the next ensureThread call will
-    // `resumeThread` it.
+    // exited cleanly), recover it once for every concurrent caller. Persisted
+    // thread ids survive and are resumed below.
     if (!this.codex.isRunning()) {
       this.log(`[leuco] ${this.key}: codex child not running — respawning`)
-      this.codexThreadLive = false
-      this.codexGeneration += 1
-      const recoveryStartedAt = Date.now()
-      const recoveryReason = "codex child was not running before turn"
-      const restart = await this.codex.start().catch((err: unknown) => err)
-      if (restart instanceof Error) {
-        const recoveryError = `codex respawn failed: ${errorMessage(restart)}`
-        this.bus.emit({
-          ts: Date.now(),
-          type: "codex.recovery",
-          project: this.projectName,
-          reason: recoveryReason,
-          status: "failed",
-          durationMs: Date.now() - recoveryStartedAt,
-          error: recoveryError,
-        })
-        return new Error(recoveryError)
-      }
+      await this.restartCodexChild("codex child was not running before turn")
       if (!this.codex.isRunning()) {
-        const recoveryError = "codex respawn completed without a running child"
-        this.bus.emit({
-          ts: Date.now(),
-          type: "codex.recovery",
-          project: this.projectName,
-          reason: recoveryReason,
-          status: "failed",
-          durationMs: Date.now() - recoveryStartedAt,
-          error: recoveryError,
-        })
-        return new Error(recoveryError)
+        return new Error("codex respawn completed without a running child")
       }
-      this.bus.emit({
-        ts: Date.now(),
-        type: "codex.recovery",
-        project: this.projectName,
-        reason: recoveryReason,
-        status: "succeeded",
-        durationMs: Date.now() - recoveryStartedAt,
-        error: null,
-      })
     }
 
-    if (this.codexThreadId !== null && this.codexThreadLive) return this.codexThreadId
+    const conversationKey = this.conversationKey(threadKey)
+    const codexThreadId = this.getCodexThreadId(conversationKey)
+    if (codexThreadId !== null && this.liveCodexThreadIds.has(codexThreadId)) {
+      return codexThreadId
+    }
 
     const developerInstructions = this.composeDeveloperInstructions()
     const requestGeneration = this.codexGeneration
 
-    if (this.codexThreadId !== null) {
+    if (codexThreadId !== null) {
       const resumed = await this.codex.resumeThread({
-        threadId: this.codexThreadId,
+        threadId: codexThreadId,
         cwd: this.projectPath,
         developerInstructions,
       })
@@ -601,14 +618,16 @@ export class LeucoTenant {
       }
       if (resumed instanceof Error) return resumed
       if (resumed !== null) {
-        this.log(`[leuco] resumed codex thread ${this.codexThreadId} for ${this.key}`)
-        this.codexThreadLive = true
+        this.setCodexThreadId(conversationKey, resumed.thread.id)
+        this.liveCodexThreadIds.add(resumed.thread.id)
+        this.log(
+          `[leuco] resumed codex thread ${resumed.thread.id} for ${this.key}/${conversationKey}`,
+        )
         return resumed.thread.id
       }
-      this.log(
-        `[leuco] thread ${this.codexThreadId} not found in codex sqlite; starting a new thread`,
-      )
-      this.codexThreadId = null
+      this.log(`[leuco] thread ${codexThreadId} not found in codex sqlite; starting a new thread`)
+      this.setCodexThreadId(conversationKey, null)
+      this.persistThreads()
     }
 
     const result = await this.codex.startThread({
@@ -620,11 +639,32 @@ export class LeucoTenant {
       return new Error("codex app-server was replaced while starting the thread")
     }
     if (result instanceof Error) return result
-    this.codexThreadId = result.thread.id
-    this.codexThreadLive = true
-    this.persistThread()
-    this.log(`[leuco] started codex thread ${this.codexThreadId} for ${this.key}`)
-    return this.codexThreadId
+    this.setCodexThreadId(conversationKey, result.thread.id)
+    this.liveCodexThreadIds.add(result.thread.id)
+    this.persistThreads()
+    this.log(`[leuco] started codex thread ${result.thread.id} for ${this.key}/${conversationKey}`)
+    return result.thread.id
+  }
+
+  private conversationKey(threadKey: string): string {
+    return this.conversationScope === "project" ? this.key : threadKey
+  }
+
+  private getCodexThreadId(conversationKey: string): string | null {
+    if (this.conversationScope === "project") return this.projectCodexThreadId
+    return this.threadCodexThreadIds.get(conversationKey) ?? null
+  }
+
+  private setCodexThreadId(conversationKey: string, threadId: string | null): void {
+    if (this.conversationScope === "project") {
+      this.projectCodexThreadId = threadId
+      return
+    }
+    if (threadId === null) {
+      this.threadCodexThreadIds.delete(conversationKey)
+      return
+    }
+    this.threadCodexThreadIds.set(conversationKey, threadId)
   }
 
   private composeDeveloperInstructions(): string | undefined {
@@ -648,13 +688,17 @@ export class LeucoTenant {
     return builder.build()
   }
 
-  private persistThread(): void {
+  private persistThreads(): void {
     const store = this.projectStateStore
     if (!store) return
     try {
-      store.setCodexThreadId(this.projectId, this.codexThreadId)
+      if (this.conversationScope === "project") {
+        store.setCodexThreadId(this.projectId, this.projectCodexThreadId)
+        return
+      }
+      store.setCodexThreadIds(this.projectId, Object.fromEntries(this.threadCodexThreadIds))
     } catch (err) {
-      this.log(`[leuco] failed to persist thread: ${errorMessage(err)}`)
+      this.log(`[leuco] failed to persist threads: ${errorMessage(err)}`)
     }
   }
 }

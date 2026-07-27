@@ -15,6 +15,7 @@ examples:
   leuco config set keepAwake false
   leuco config set turnIdleTimeoutMs 120000
   leuco config set turnTimeoutMs 600000
+  leuco config set turnConcurrency 4
   leuco config set turnQueueMaxItems 64
   leuco config set turnQueueMaxBytes 262144`
 

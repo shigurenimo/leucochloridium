@@ -109,6 +109,7 @@ describe("LeucoChannelHost.buildForProject", () => {
         name: "demo",
         path: "/tmp/demo",
         enabled: true,
+        conversationScope: "project",
         useCommonInstructions: true,
         model: null,
         developerInstructions: null,
@@ -123,7 +124,7 @@ describe("LeucoChannelHost.buildForProject", () => {
           },
         ],
         mcpServers: {},
-        state: { codexThreadId: null, scheduleLastFiredAt: {} },
+        state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
       }
       store.save(project)
 

@@ -29,6 +29,7 @@ export const tenantConfigSignature = (project: Project): string => {
   return JSON.stringify({
     name: project.name,
     path: project.path,
+    conversationScope: project.conversationScope,
     useCommonInstructions: project.useCommonInstructions,
     model: project.model,
     developerInstructions: project.developerInstructions,

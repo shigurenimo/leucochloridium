@@ -25,6 +25,7 @@ export const projectsListHandler = factory.createHandlers(async (c) => {
       projects: list.map((p) => ({
         name: p.name,
         enabled: p.enabled,
+        conversationScope: p.conversationScope,
         path: p.path,
         channels: p.channels.length,
       })),

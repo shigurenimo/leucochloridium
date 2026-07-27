@@ -31,17 +31,21 @@ export const resetProjectSession = async (
   }
 
   const previousThreadId = project.state.codexThreadId
+  const previousThreadCount = Object.keys(project.state.codexThreadIds).length
 
   // Every write goes through updateProject so a concurrent daemon-side state
   // write (markScheduleEntryFired etc.) is never rolled back by a stale
   // snapshot of the project.
   store.updateProject(project.id, (fresh) => ({
     ...fresh,
-    state: { ...fresh.state, codexThreadId: null },
+    state: { ...fresh.state, codexThreadId: null, codexThreadIds: {} },
   }))
 
   if (!project.enabled) {
-    const tail = previousThreadId === null ? " (was already empty)" : ` (was ${previousThreadId})`
+    const wasEmpty = previousThreadId === null && previousThreadCount === 0
+    const tail = wasEmpty
+      ? " (was already empty)"
+      : ` (cleared ${previousThreadCount + (previousThreadId === null ? 0 : 1)} thread ids)`
     return c.text(
       `reset session for "${projectName}"${tail} (project disabled; takes effect on enable)`,
     )
@@ -56,7 +60,8 @@ export const resetProjectSession = async (
   const reload = c.var.daemon.reload()
 
   const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
-  const previousMsg = previousThreadId === null ? "" : ` previous=${previousThreadId}`
+  const clearedCount = previousThreadCount + (previousThreadId === null ? 0 : 1)
+  const previousMsg = clearedCount === 0 ? "" : ` cleared=${clearedCount}`
   const warn = confirmedDown
     ? ""
     : "\nwarning: tenant did not stop within 10s; the reset may not have taken effect"

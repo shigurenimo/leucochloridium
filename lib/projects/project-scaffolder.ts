@@ -96,13 +96,14 @@ const registerInStore = (
     path: target,
     version: 2,
     enabled: true,
+    conversationScope: "project",
     useCommonInstructions: true,
     model: null,
     developerInstructions: null,
     prompts: [...DEFAULT_PROMPT_PRESET_NAMES],
     channels: [],
     mcpServers: {},
-    state: { codexThreadId: null, scheduleLastFiredAt: {} },
+    state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
   }
   const saved = store.save(project)
 
