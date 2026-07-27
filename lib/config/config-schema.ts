@@ -33,7 +33,7 @@ const slackChannelSchema = z.object({
    *   - "always": every accepted message event
    * Reaction events themselves never trigger ack — they are silent regardless.
    */
-  ackMode: z.enum(["off", "mention", "always"]).default("off"),
+  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
   /** Override the emoji names used by the ack reactions. Slack reaction names without `:`. */
   ackIcons: ackIconsSchema,
 })

@@ -77,7 +77,8 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("inspect enough of its current history")
     expect(out).toContain("`slack_call` MCP tool")
     expect(out).toContain("`thread_ts`")
-    expect(out).toContain("Finishing without `slack_call` stays silent")
+    expect(out).toContain("generated final text verbatim")
+    expect(out).toContain("Leave the final answer empty when silence is intentional")
     expect(out).toContain("The primary agent owns Slack writes")
   })
 
@@ -101,6 +102,21 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("## Local command hygiene")
     expect(out).toContain("Keep shell output bounded")
     expect(out).toContain("`rg -m`")
+  })
+
+  it("explains explicit Slack writes and generated final-answer fallback", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      identities: [{ name: "general", type: "slack", botUserId: "U01ABC" }],
+    }).build()
+
+    expect(out).toContain("## Slack runtime")
+    expect(out).toContain("`slack_call` MCP tool")
+    expect(out).toContain("`thread_ts`")
+    expect(out).toContain("posts that generated final text verbatim")
+    expect(out).toContain("never substitutes a canned failure reply")
+    expect(out).toContain("Keep Slack tool output bounded")
+    expect(out).toContain("small `limit`")
   })
 
   it("appends per-agent instructions after a separator", () => {

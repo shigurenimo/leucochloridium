@@ -1,7 +1,9 @@
 import { HTTPException } from "hono/http-exception"
+import { installLaunchAgentSafely } from "@/boot/install-launch-agent-safely"
 import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { startDaemon, waitForDaemonReady } from "@/daemon/daemon-control"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
 const help = `leuco boot install / install the macOS LaunchAgent
@@ -24,11 +26,31 @@ export const bootInstallHandler = factory.createHandlers(async (c) => {
   const agent = new LeucoLaunchAgent({ paths })
   const envVars = pickEnvVars(process.env)
 
-  const result = await agent.install({
-    bunPath: process.execPath,
-    binPath: c.var.binPath,
-    workingDirectory: paths.getHome(),
-    envVars,
+  const result = await installLaunchAgentSafely({
+    daemon: c.var.daemon,
+    install: () =>
+      agent.install({
+        bunPath: process.execPath,
+        binPath: c.var.binPath,
+        workingDirectory: paths.getHome(),
+        envVars,
+      }),
+    verify: () =>
+      waitForDaemonReady({
+        daemon: c.var.daemon,
+        env: process.env,
+        expectedPid: null,
+      }),
+    rollback: async () => {
+      const uninstalled = await agent.uninstall()
+      return uninstalled instanceof Error ? uninstalled : undefined
+    },
+    restore: () =>
+      startDaemon({
+        daemon: c.var.daemon,
+        binPath: c.var.binPath,
+        env: process.env,
+      }),
   })
 
   if (result instanceof Error) {

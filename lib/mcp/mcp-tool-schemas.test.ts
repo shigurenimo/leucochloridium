@@ -98,11 +98,28 @@ describe("scheduleListArgsSchema", () => {
   it("accepts an empty object", () => {
     const parsed = scheduleListArgsSchema.safeParse({})
     expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({ limit: 5, include_prompt: false })
+    }
   })
 
   it("accepts an optional channel_name", () => {
     const parsed = scheduleListArgsSchema.safeParse({ channel_name: "cron" })
     expect(parsed.success).toBe(true)
+  })
+
+  it("accepts bounded pagination options", () => {
+    const parsed = scheduleListArgsSchema.safeParse({
+      limit: 3,
+      cursor: "15",
+      include_prompt: true,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects unbounded or malformed pagination", () => {
+    expect(scheduleListArgsSchema.safeParse({ limit: 6 }).success).toBe(false)
+    expect(scheduleListArgsSchema.safeParse({ cursor: "next" }).success).toBe(false)
   })
 })
 

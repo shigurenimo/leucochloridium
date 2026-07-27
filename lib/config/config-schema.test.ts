@@ -3,7 +3,7 @@ import { projectSchema } from "@/config/config-schema"
 import { PromptPreset } from "@/prompts/presets"
 
 describe("projectSchema", () => {
-  it("defaults Slack ack reactions to off", () => {
+  it("defaults Slack ack reactions to mentions", () => {
     const parsed = projectSchema.parse({
       version: 2,
       id: "00000000-0000-4000-8000-000000000000",
@@ -22,7 +22,7 @@ describe("projectSchema", () => {
 
     expect(parsed.channels[0]).toMatchObject({
       type: "slack",
-      ackMode: "off",
+      ackMode: "mention",
       ackIcons: {
         progress: "hourglass_flowing_sand",
         success: "white_check_mark",

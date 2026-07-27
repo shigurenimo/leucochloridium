@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { z } from "zod"
-import { type Channel, type Project, type ScheduleEntry } from "@/config/config-schema"
+import {
+  type Channel,
+  type Project,
+  type ScheduleEntry,
+  projectSchema,
+} from "@/config/config-schema"
 import { atomicWriteJson } from "@/fs/atomic-write-json"
 import { withFileLock } from "@/fs/with-file-lock"
 import { globalSettingsSchema } from "@/global-settings/global-settings-schema"
@@ -12,6 +17,17 @@ export type LeucoProjectStoreProps = {
 }
 
 type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
+
+export type RunnableProjectIssue = {
+  index: number
+  project: string
+  error: string
+}
+
+export type RunnableProjectList = {
+  projects: Project[]
+  issues: RunnableProjectIssue[]
+}
 
 /**
  * Project registry backed by the `projects` array inside
@@ -34,6 +50,22 @@ export class LeucoProjectStore {
 
   list(): Project[] {
     return this.readSettings().projects
+  }
+
+  /**
+   * Runtime-only fault isolation. Administrative writes remain strict so an
+   * invalid entry is never silently deleted from settings, while the daemon
+   * can still start every independently valid project and report the broken
+   * entry for repair.
+   */
+  listRunnable(): RunnableProjectList {
+    try {
+      return { projects: this.list(), issues: [] }
+    } catch (strictError) {
+      const runnable = this.withSettingsLock(() => this.readProjectsIndividually())
+      if (runnable.issues.length === 0) throw strictError
+      return runnable
+    }
   }
 
   load(projectId: string): Project {
@@ -64,11 +96,15 @@ export class LeucoProjectStore {
   save(project: Project): string {
     return this.withSettingsLock(() => {
       const settings = this.readSettings()
-      const index = settings.projects.findIndex((p) => p.id === project.id)
+      const index = settings.projects.findIndex((candidate) => candidate.id === project.id)
       const next = settings.projects.slice()
 
       if (index >= 0) {
-        next[index] = project
+        const current = next[index]!
+        // Runtime state is written independently by the daemon. Configuration
+        // commands commonly carry a snapshot read before that write, so a
+        // plain replacement would roll a fresh thread/schedule marker back.
+        next[index] = { ...project, state: current.state }
       } else {
         next.push(project)
       }
@@ -81,24 +117,24 @@ export class LeucoProjectStore {
   }
 
   /**
-   * Read-modify-write a single project inside the settings lock. Prefer this
-   * over `load()` → mutate → `save()` in any caller that can race the daemon
-   * (which persists codexThreadId / scheduleLastFiredAt at its own cadence):
-   * the transform always sees the freshest on-disk project, so it cannot
-   * write back a stale snapshot.
+   * Apply a project mutation while holding the settings lock. Runtime-state
+   * writers and operations that intentionally change state must use this
+   * method instead of carrying a stale `load()` result into `save()`.
    */
   updateProject(projectId: string, transform: (project: Project) => Project): Project {
     return this.withSettingsLock(() => {
       const settings = this.readSettings()
-      const found = settings.projects.find((p) => p.id === projectId)
-      if (!found) throw new Error(`project not found: ${projectId}`)
+      const current = settings.projects.find((project) => project.id === projectId)
+      if (current === undefined) throw new Error(`project not found: ${projectId}`)
 
-      const updated = transform(found)
+      const updated = transform(current)
       if (updated.id !== projectId) {
-        throw new Error("updateProject: transform must not change the project id")
+        throw new Error("updateProject transform must not change the project id")
       }
 
-      const next = settings.projects.map((p) => (p.id === projectId ? updated : p))
+      const next = settings.projects.map((project) =>
+        project.id === projectId ? updated : project,
+      )
       this.writeSettings({ ...settings, projects: next })
       return updated
     })
@@ -107,7 +143,7 @@ export class LeucoProjectStore {
   remove(projectId: string): void {
     this.withSettingsLock(() => {
       const settings = this.readSettings()
-      const next = settings.projects.filter((p) => p.id !== projectId)
+      const next = settings.projects.filter((project) => project.id !== projectId)
       this.writeSettings({ ...settings, projects: next })
     })
 
@@ -149,23 +185,23 @@ export class LeucoProjectStore {
   }): string {
     this.updateProject(input.projectId, (project) => {
       const channel = findScheduleChannel(project, input.channelName)
-
       const removedIds = channel.entries
-        .filter((e) => e.id === input.entryIdOrName || e.name === input.entryIdOrName)
-        .map((e) => e.id)
+        .filter((entry) => entry.id === input.entryIdOrName || entry.name === input.entryIdOrName)
+        .map((entry) => entry.id)
       if (removedIds.length === 0) {
         throw new Error(`schedule entry not found: ${input.entryIdOrName}`)
       }
 
-      const nextEntries = channel.entries.filter((e) => !removedIds.includes(e.id))
-      const nextChannels: Channel[] = project.channels.map((c) =>
-        c.name === channel.name ? { ...channel, entries: nextEntries } : c,
+      const nextChannels: Channel[] = project.channels.map((candidate) =>
+        candidate.name === channel.name
+          ? {
+              ...channel,
+              entries: channel.entries.filter((entry) => !removedIds.includes(entry.id)),
+            }
+          : candidate,
       )
-
-      // Drop the fired-at marks for the removed entries so state does not
-      // accumulate dead UUID keys forever.
       const nextLastFiredAt = { ...project.state.scheduleLastFiredAt }
-      for (const removedId of removedIds) delete nextLastFiredAt[removedId]
+      for (const entryId of removedIds) delete nextLastFiredAt[entryId]
 
       return {
         ...project,
@@ -203,13 +239,52 @@ export class LeucoProjectStore {
     return globalSettingsSchema.parse(json)
   }
 
+  private readProjectsIndividually(): RunnableProjectList {
+    const path = this.paths.settingsPath()
+    if (!existsSync(path)) return { projects: [], issues: [] }
+
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"))
+    const shell = z
+      .object({ projects: z.array(z.unknown()).default([]) })
+      .passthrough()
+      .parse(raw)
+    const projects: Project[] = []
+    const issues: RunnableProjectIssue[] = []
+    const projectIds = new Set<string>()
+
+    for (const indexedProject of shell.projects.entries()) {
+      const index = indexedProject[0]
+      const candidate = indexedProject[1]
+      const parsed = projectSchema.safeParse(candidate)
+      if (parsed.success) {
+        if (projectIds.has(parsed.data.id)) {
+          issues.push({
+            index,
+            project: parsed.data.name,
+            error: `duplicate project id: ${parsed.data.id}`,
+          })
+          continue
+        }
+        projectIds.add(parsed.data.id)
+        projects.push(parsed.data)
+        continue
+      }
+      issues.push({
+        index,
+        project: legacyProjectLabel(candidate, index),
+        error: parsed.error.message.slice(0, 2_000),
+      })
+    }
+
+    return { projects, issues }
+  }
+
   private writeSettings(settings: z.infer<typeof globalSettingsSchema>): string {
     // Validate on write, not just on read. Without this, one unvalidated
     // caller (e.g. a route that skips name validation) can persist a shape
     // every later readSettings() rejects — bricking every command until the
     // file is fixed by hand.
     const validated = globalSettingsSchema.parse(settings)
-
     return atomicWriteJson({
       path: this.paths.settingsPath(),
       data: validated,
@@ -228,8 +303,8 @@ export class LeucoProjectStore {
     this.updateProject(input.projectId, (project) => {
       const channel = findScheduleChannel(project, input.channelName)
       const updated = transform(channel)
-      const nextChannels: Channel[] = project.channels.map((c) =>
-        c.name === channel.name ? updated : c,
+      const nextChannels: Channel[] = project.channels.map((candidate) =>
+        candidate.name === channel.name ? updated : candidate,
       )
       return { ...project, channels: nextChannels }
     })
@@ -238,12 +313,26 @@ export class LeucoProjectStore {
 }
 
 const findScheduleChannel = (project: Project, channelName: string): ScheduleChannelWritable => {
-  const channel = project.channels.find((c) => c.name === channelName)
-  if (!channel) {
+  const channel = project.channels.find((candidate) => candidate.name === channelName)
+  if (channel === undefined) {
     throw new Error(`channel '${channelName}' not found in ${project.name}`)
   }
   if (channel.type !== "schedule") {
     throw new Error(`channel '${channelName}' is not a schedule channel`)
   }
   return channel
+}
+
+const legacyProjectLabel = (value: unknown, index: number): string => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return `projects[${index}]`
+  }
+  const record = Object.fromEntries(Object.entries(value))
+  if (typeof record.name === "string" && record.name.length > 0) {
+    return record.name.slice(0, 200)
+  }
+  if (typeof record.id === "string" && record.id.length > 0) {
+    return record.id.slice(0, 200)
+  }
+  return `projects[${index}]`
 }

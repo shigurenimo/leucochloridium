@@ -118,7 +118,11 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "engine.reconcile.failed") {
-    return `${time}  engine.reconcile.failed  ${event.reason}`
+    const retry =
+      event.attempt === undefined
+        ? ""
+        : `  project=${event.project ?? "unknown"} attempt=${event.attempt} retryAt=${event.retryAt ?? "unknown"}`
+    return `${time}  engine.reconcile.failed  ${event.reason}${retry}`
   }
 
   if (event.type === "schedule.fired") {

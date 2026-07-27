@@ -4,7 +4,9 @@ import type {
   ChannelPlugin,
   ChannelPluginContext,
 } from "@/channels/channel-plugin"
-import type { ConversationScope } from "@/config/config-schema"
+import { LeucoScheduleChannelPlugin } from "@/channels/schedule/schedule-channel-plugin"
+import type { ScheduleStorePort } from "@/channels/schedule/schedule-store-port"
+import type { ConversationScope, ScheduleEntry } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoTenant } from "@/engine/tenant"
 import { LeucoEventBus } from "@/events/leuco-event-bus"
@@ -43,6 +45,7 @@ type BuildOverrides = {
   codex?: CodexClientPort
   plugins?: ChannelPlugin[]
   agentSpec?: { developerInstructions?: string; model?: string }
+  initialCodexThreadId?: string
   useCommonInstructions?: boolean
   presets?: string[]
   onLog?: (line: string) => void
@@ -53,7 +56,6 @@ type BuildOverrides = {
   turnQueueMaxItems?: number
   turnQueueMaxBytes?: number
   conversationScope?: ConversationScope
-  initialCodexThreadId?: string
   initialCodexThreadIds?: Readonly<Record<string, string>>
   projectStateStore?: Pick<LeucoProjectStateStore, "setCodexThreadId" | "setCodexThreadIds">
 }
@@ -68,6 +70,7 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     codex: overrides.codex ?? fakeCodex(),
     plugins: overrides.plugins ?? [],
     agentSpec: overrides.agentSpec,
+    initialCodexThreadId: overrides.initialCodexThreadId,
     useCommonInstructions: overrides.useCommonInstructions,
     presets: overrides.presets,
     onLog: overrides.onLog ?? (() => {}),
@@ -78,7 +81,6 @@ const buildTenant = (overrides: BuildOverrides = {}) =>
     turnConcurrency: overrides.turnConcurrency,
     turnQueueMaxItems: overrides.turnQueueMaxItems,
     turnQueueMaxBytes: overrides.turnQueueMaxBytes,
-    initialCodexThreadId: overrides.initialCodexThreadId,
     initialCodexThreadIds: overrides.initialCodexThreadIds,
     projectStateStore: overrides.projectStateStore,
   })
@@ -226,8 +228,63 @@ describe("LeucoTenant.start / stop", () => {
     const queuedResult = await queued
     expect(queuedResult).toBeInstanceOf(Error)
     if (queuedResult instanceof Error) {
-      expect(queuedResult.message).toContain("stopped before the turn ran")
+      expect(queuedResult.message).toBe("tenant demo is stopping")
     }
+  })
+
+  it("stops Codex while an earlier schedule plugin drains during start rollback", async () => {
+    const entry: ScheduleEntry = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "due",
+      runAt: "2026-05-07T09:00:00Z",
+      prompt: "run",
+      enabled: true,
+    }
+    const storeMutations = { marks: 0, removes: 0 }
+    const store: ScheduleStorePort = {
+      listEntries: () => [entry],
+      getLastFiredAt: () => null,
+      markFired: () => {
+        storeMutations.marks += 1
+      },
+      removeEntry: () => {
+        storeMutations.removes += 1
+      },
+    }
+    const schedule = new LeucoScheduleChannelPlugin({
+      name: "schedule",
+      store,
+      now: () => new Date("2026-05-07T09:01:00Z"),
+      intervalMs: 60 * 60 * 1000,
+    })
+    const turnResolvers: Array<(reply: string | Error) => void> = []
+    let reportTurnStarted: () => void = () => {}
+    const turnStarted = new Promise<void>((resolve) => {
+      reportTurnStarted = resolve
+    })
+    const stop = vi.fn(async () => {
+      const resolveTurn = turnResolvers[0]
+      if (resolveTurn) resolveTurn(new Error("codex stopped"))
+    })
+    const codex = fakeCodex({
+      stop,
+      runTextTurn: () =>
+        new Promise<string | Error>((resolve) => {
+          turnResolvers.push(resolve)
+          reportTurnStarted()
+        }),
+    })
+    const failing = fakePlugin("failing")
+    failing.start = async () => {
+      await turnStarted
+      throw new Error("later plugin failed")
+    }
+    const tenant = buildTenant({ codex, plugins: [schedule, failing] })
+
+    await expect(tenant.start()).rejects.toThrow("later plugin failed")
+
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(storeMutations).toEqual({ marks: 0, removes: 0 })
   })
 })
 
@@ -415,7 +472,7 @@ describe("LeucoTenant.runTextTurn", () => {
 
     expect(result).toBeInstanceOf(Error)
     if (result instanceof Error) {
-      expect(result.message).toContain("codex turn idle timed out after 0.005s")
+      expect(result.message).toContain("codex turn idle timeout after 0.005s")
     }
     expect(calls).toEqual(["stop", "start"])
     expect(events).toContainEqual(
@@ -455,7 +512,7 @@ describe("LeucoTenant.runTextTurn", () => {
     const first = await tenant.runTextTurn("k", "first")
     expect(first).toBeInstanceOf(Error)
     if (first instanceof Error) {
-      expect(first.message).toBe("codex turn timed out after 0.015s")
+      expect(first.message).toBe("codex turn hard deadline exceeded after 0.015s")
     }
     expect(calls).toEqual(["stop", "start"])
 
@@ -546,7 +603,7 @@ describe("LeucoTenant.runTextTurn", () => {
 
     expect(result).toBeInstanceOf(Error)
     if (result instanceof Error) {
-      expect(result.message).toBe("codex turn timed out after 0.005s")
+      expect(result.message).toBe("codex turn hard deadline exceeded after 0.005s")
     }
     expect(calls).toEqual(["stop", "start"])
   })
@@ -558,9 +615,9 @@ describe("LeucoTenant.runTextTurn", () => {
       turnTimeoutMs: 1_000,
       turnIdleTimeoutMs: 30,
       codex: fakeCodex({
-        runTextTurn: async (_threadId, _text, _cwd, onActivity) =>
+        runTextTurn: async (_threadId, _text, options) =>
           await new Promise<string>((resolve) => {
-            notify = onActivity
+            notify = typeof options === "string" ? undefined : options?.onActivity
             finish = resolve
           }),
       }),
@@ -577,7 +634,32 @@ describe("LeucoTenant.runTextTurn", () => {
     await expect(resultPromise).resolves.toBe("ok")
   })
 
-  it("keeps queued messages as separate Codex turns", async () => {
+  it("bounds persisted turn input and reply diagnostics", async () => {
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    const large = "x".repeat(20_000)
+    const tenant = buildTenant({
+      bus,
+      codex: fakeCodex({
+        runTextTurn: async () => large,
+      }),
+    })
+
+    await expect(tenant.runTextTurn("thread", large)).resolves.toBe(large)
+
+    const start = events.find((event) => event.type === "turn.start")
+    const complete = events.find((event) => event.type === "turn.complete")
+    if (start?.type !== "turn.start" || complete?.type !== "turn.complete") {
+      throw new Error("expected turn lifecycle events")
+    }
+    expect(start.input.length).toBeLessThanOrEqual(16_000)
+    expect(complete.reply.length).toBeLessThanOrEqual(16_000)
+    expect(start.input).toContain("[20000 chars]")
+    expect(complete.reply).toContain("[20000 chars]")
+  })
+
+  it("keeps queued messages as separate turns", async () => {
     let releaseFirstTurn: () => void = () => {}
     const firstTurnGate = new Promise<void>((resolve) => {
       releaseFirstTurn = resolve
@@ -594,8 +676,7 @@ describe("LeucoTenant.runTextTurn", () => {
     })
 
     const p1 = tenant.runTextTurn("k", "1")
-    // Let the first turn enter the gated codex.runTextTurn before queueing
-    // more — otherwise everything ends up in a single batch.
+    // Let the first turn enter the gated codex.runTextTurn before queueing more.
     await new Promise((r) => setTimeout(r, 5))
 
     const p2 = tenant.runTextTurn("k", "2")
@@ -725,6 +806,536 @@ describe("LeucoTenant.runTextTurn", () => {
     expect(first).toBeInstanceOf(Error)
     if (first instanceof Error) expect(first.message).toBe("first fails")
     await expect(tenant.runTextTurn("k", "2")).resolves.toBe("2")
+  })
+})
+
+describe("LeucoTenant turn timeouts", () => {
+  it("restarts Codex after the idle deadline passes without activity", async () => {
+    vi.useFakeTimers()
+    try {
+      let isRunning = false
+      const start = vi.fn(async () => {
+        isRunning = true
+      })
+      const stop = vi.fn(async () => {
+        isRunning = false
+      })
+      const codex = fakeCodex({
+        start,
+        stop,
+        isRunning: () => isRunning,
+        runTextTurn: () => new Promise<string | Error>(() => {}),
+      })
+      const tenant = buildTenant({
+        codex,
+        turnTimeoutMs: 1_000,
+        turnIdleTimeoutMs: 20,
+      })
+      await tenant.start()
+
+      const turn = tenant.runTextTurn("thread", "silent")
+      await vi.advanceTimersByTimeAsync(20)
+      const reply = await turn
+
+      expect(reply).toBeInstanceOf(Error)
+      if (reply instanceof Error) expect(reply.message).toContain("idle timeout")
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect(start).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("renews the idle deadline whenever the active Codex turn reports activity", async () => {
+    vi.useFakeTimers()
+    try {
+      const activityCallbacks: Array<(method: string) => void> = []
+      let resolveTurn: (reply: string | Error) => void = () => {}
+      const stop = vi.fn(async () => undefined)
+      const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>((_threadId, _text, options) => {
+        if (typeof options !== "string" && options?.onActivity) {
+          activityCallbacks.push(options.onActivity)
+        }
+        return new Promise<string | Error>((resolve) => {
+          resolveTurn = resolve
+        })
+      })
+      const tenant = buildTenant({
+        codex: fakeCodex({ stop, runTextTurn }),
+        turnTimeoutMs: 1_000,
+        turnIdleTimeoutMs: 20,
+      })
+
+      const turn = tenant.runTextTurn("thread", "active")
+      await vi.advanceTimersByTimeAsync(0)
+      const onActivity = activityCallbacks[0]
+      if (!onActivity) throw new Error("Codex activity callback was not provided")
+
+      await vi.advanceTimersByTimeAsync(15)
+      onActivity("item/started")
+      await vi.advanceTimersByTimeAsync(15)
+      onActivity("item/commandExecution/outputDelta")
+      await vi.advanceTimersByTimeAsync(15)
+      resolveTurn("ok")
+
+      await expect(turn).resolves.toBe("ok")
+      expect(stop).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(["start", "resume"])(
+    "includes thread %s in the hard turn deadline",
+    async (threadAction) => {
+      vi.useFakeTimers()
+      try {
+        let isRunning = false
+        const start = vi.fn(async () => {
+          isRunning = true
+        })
+        const stop = vi.fn(async () => {
+          isRunning = false
+        })
+        const startThread = vi.fn<CodexClientPort["startThread"]>(() =>
+          threadAction === "start"
+            ? new Promise(() => {})
+            : Promise.resolve({ thread: { id: "new-thread" } }),
+        )
+        const resumeThread = vi.fn<CodexClientPort["resumeThread"]>(() =>
+          threadAction === "resume"
+            ? new Promise(() => {})
+            : Promise.resolve({ thread: { id: "saved-thread" } }),
+        )
+        const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>(async () => "unreachable")
+        const codex = fakeCodex({
+          start,
+          stop,
+          isRunning: () => isRunning,
+          startThread,
+          resumeThread,
+          runTextTurn,
+        })
+        const tenant = buildTenant({
+          codex,
+          initialCodexThreadId: threadAction === "resume" ? "saved-thread" : undefined,
+          turnTimeoutMs: 20,
+          turnIdleTimeoutMs: 1_000,
+        })
+        await tenant.start()
+
+        const turn = tenant.runTextTurn("thread", "blocked setup")
+        await vi.advanceTimersByTimeAsync(20)
+        const reply = await turn
+
+        expect(reply).toBeInstanceOf(Error)
+        if (reply instanceof Error) expect(reply.message).toContain("hard deadline")
+        expect(runTextTurn).not.toHaveBeenCalled()
+        expect(stop).toHaveBeenCalledTimes(1)
+        expect(start).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+})
+
+describe("LeucoTenant Codex child recovery", () => {
+  it("restarts after command output overflow without retrying or losing the thread", async () => {
+    const reason = "codex command output exceeded 200000 chars from call_12345"
+    const events: LeucoEvent[] = []
+    const logs: string[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let isRunning = true
+    const calls: string[] = []
+    let reportStopStarted: () => void = () => {}
+    const stopStarted = new Promise<void>((resolve) => {
+      reportStopStarted = resolve
+    })
+    const stopReleases: Array<() => void> = []
+    const stop = vi.fn(async () => {
+      calls.push("stop")
+      reportStopStarted()
+      await new Promise<void>((resolve) => stopReleases.push(resolve))
+      isRunning = false
+    })
+    const start = vi.fn(async () => {
+      calls.push("start")
+      isRunning = true
+    })
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "preserved-thread" },
+    }))
+    const resumeThread = vi.fn<CodexClientPort["resumeThread"]>(async (params) => ({
+      thread: { id: params.threadId },
+    }))
+    let turnCount = 0
+    const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>(async () => {
+      turnCount += 1
+      return turnCount === 1 ? new Error(reason) : "ok"
+    })
+    const tenant = buildTenant({
+      bus,
+      onLog: (line) => logs.push(line),
+      codex: fakeCodex({
+        start,
+        stop,
+        isRunning: () => isRunning,
+        startThread,
+        resumeThread,
+        runTextTurn,
+      }),
+    })
+
+    let isFirstSettled = false
+    const first = tenant.runTextTurn("thread", "first")
+    void first.then(() => {
+      isFirstSettled = true
+    })
+    await stopStarted
+
+    expect(isFirstSettled).toBe(false)
+    expect(calls).toEqual(["stop"])
+    expect(runTextTurn).toHaveBeenCalledTimes(1)
+    const releaseStop = stopReleases[0]
+    if (!releaseStop) throw new Error("Codex stop gate was not installed")
+    releaseStop()
+
+    const failed = await first
+    expect(failed).toEqual(new Error(reason))
+    expect(calls).toEqual(["stop", "start"])
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "preserved-thread" }])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "codex.recovery",
+        project: "demo",
+        reason,
+        status: "succeeded",
+        error: null,
+      }),
+    )
+    expect(logs.some((line) => line.includes("recovering codex child"))).toBe(true)
+    expect(logs.some((line) => line.includes("codex recovery succeeded"))).toBe(true)
+
+    await expect(tenant.runTextTurn("thread", "second")).resolves.toBe("ok")
+    expect(runTextTurn).toHaveBeenCalledTimes(2)
+    expect(startThread).toHaveBeenCalledTimes(1)
+    expect(resumeThread).toHaveBeenCalledTimes(1)
+    expect(resumeThread.mock.calls[0]?.[0].threadId).toBe("preserved-thread")
+  })
+
+  it("reports a failed overflow recovery while returning the original turn error", async () => {
+    const reason = "codex command output exceeded 200000 chars from call_failed"
+    const events: LeucoEvent[] = []
+    const logs: string[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let isRunning = true
+    const tenant = buildTenant({
+      bus,
+      onLog: (line) => logs.push(line),
+      codex: fakeCodex({
+        isRunning: () => isRunning,
+        stop: async () => {
+          isRunning = false
+        },
+        start: async () => {
+          throw new Error("spawn failed")
+        },
+        runTextTurn: async () => new Error(reason),
+      }),
+    })
+
+    const reply = await tenant.runTextTurn("thread", "first")
+
+    expect(reply).toEqual(new Error(reason))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "codex.recovery",
+        reason,
+        status: "failed",
+        error: "spawn failed",
+      }),
+    )
+    expect(logs.some((line) => line.includes("codex recovery failed"))).toBe(true)
+  })
+
+  it("discards a thread only when the same overflow call repeats after recovery", async () => {
+    const reason = "turn failed: codex command output exceeded 200000 chars from call_stuck"
+    let isRunning = true
+    let turnCount = 0
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "fresh-thread" },
+    }))
+    const resumeThread = vi.fn<CodexClientPort["resumeThread"]>(async (params) => ({
+      thread: { id: params.threadId },
+    }))
+    const tenant = buildTenant({
+      initialCodexThreadId: "saved-thread",
+      codex: fakeCodex({
+        isRunning: () => isRunning,
+        start: async () => {
+          isRunning = true
+        },
+        stop: async () => {
+          isRunning = false
+        },
+        startThread,
+        resumeThread,
+        runTextTurn: async () => {
+          turnCount += 1
+          return turnCount <= 2 ? new Error(reason) : "ok"
+        },
+      }),
+    })
+
+    await expect(tenant.runTextTurn("thread", "first")).resolves.toEqual(new Error(reason))
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "saved-thread" }])
+
+    await expect(tenant.runTextTurn("thread", "second")).resolves.toEqual(new Error(reason))
+    expect(tenant.listThreads()).toEqual([])
+
+    await expect(tenant.runTextTurn("thread", "third")).resolves.toBe("ok")
+    expect(resumeThread).toHaveBeenCalledTimes(2)
+    expect(startThread).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("LeucoTenant queue admission", () => {
+  it("admits 64 queued turns and rejects the next one with a structured event", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    let reportFirstTurnEntered: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const firstTurnEntered = new Promise<void>((resolve) => {
+      reportFirstTurnEntered = resolve
+    })
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let callCount = 0
+    const tenant = buildTenant({
+      bus,
+      codex: fakeCodex({
+        runTextTurn: async (_threadId, text) => {
+          callCount += 1
+          if (callCount === 1) {
+            reportFirstTurnEntered()
+            await firstTurnGate
+          }
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("thread", "first")
+    await firstTurnEntered
+    const queued = Array.from({ length: 64 }, (_unused, index) =>
+      tenant.runTextTurn("thread", String(index)),
+    )
+
+    const rejected = await tenant.runTextTurn("thread", "overflow")
+    expect(rejected).toBeInstanceOf(Error)
+    if (rejected instanceof Error) expect(rejected.message).toContain("64 pending")
+
+    const event = events.find((candidate) => candidate.type === "turn.rejected")
+    expect(event).toMatchObject({
+      type: "turn.rejected",
+      reason: "queue_count_limit",
+      queueDepth: 64,
+      maxQueueDepth: 64,
+      inputBytes: 8,
+    })
+
+    releaseFirstTurn()
+    await first
+    await Promise.all(queued)
+  })
+
+  it("admits addressed work ahead of a queue filled by normal turns", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    let reportFirstTurnEntered: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const firstTurnEntered = new Promise<void>((resolve) => {
+      reportFirstTurnEntered = resolve
+    })
+    const executionOrder: string[] = []
+    let callCount = 0
+    const tenant = buildTenant({
+      codex: fakeCodex({
+        runTextTurn: async (_threadId, text) => {
+          callCount += 1
+          executionOrder.push(text)
+          if (callCount === 1) {
+            reportFirstTurnEntered()
+            await firstTurnGate
+          }
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("thread", "first")
+    await firstTurnEntered
+    const normal = Array.from({ length: 64 }, (_unused, index) =>
+      tenant.runTextTurn("thread", `normal-${index}`),
+    )
+    const addressed = tenant.runTextTurn("mention", "addressed", { priority: "high" })
+
+    releaseFirstTurn()
+    await expect(first).resolves.toBe("first")
+    await expect(addressed).resolves.toBe("addressed")
+    const normalResults = await Promise.all(normal)
+
+    expect(executionOrder.slice(0, 2)).toEqual(["first", "addressed"])
+    expect(normalResults.filter((result) => result instanceof Error)).toHaveLength(1)
+  })
+
+  it("counts UTF-8 bytes against an injectable byte limit", async () => {
+    let releaseFirstTurn: () => void = () => {}
+    let reportFirstTurnEntered: () => void = () => {}
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const firstTurnEntered = new Promise<void>((resolve) => {
+      reportFirstTurnEntered = resolve
+    })
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    let callCount = 0
+    const tenant = buildTenant({
+      bus,
+      turnQueueMaxBytes: 5,
+      codex: fakeCodex({
+        runTextTurn: async (_threadId, text) => {
+          callCount += 1
+          if (callCount === 1) {
+            reportFirstTurnEntered()
+            await firstTurnGate
+          }
+          return text
+        },
+      }),
+    })
+
+    const first = tenant.runTextTurn("thread", "first")
+    await firstTurnEntered
+    const admitted = tenant.runTextTurn("thread", "あ")
+    const rejected = await tenant.runTextTurn("thread", "い")
+
+    expect(rejected).toBeInstanceOf(Error)
+    if (rejected instanceof Error) expect(rejected.message).toContain("5 UTF-8 bytes")
+    const event = events.find((candidate) => candidate.type === "turn.rejected")
+    expect(event).toMatchObject({
+      type: "turn.rejected",
+      reason: "queue_bytes_limit",
+      queueDepth: 1,
+      queueBytes: 3,
+      inputBytes: 3,
+      maxQueueBytes: 5,
+    })
+
+    releaseFirstTurn()
+    await expect(first).resolves.toBe("first")
+    await expect(admitted).resolves.toBe("あ")
+  })
+
+  it("rejects new work immediately after the tenant has stopped", async () => {
+    const events: LeucoEvent[] = []
+    const bus = new LeucoEventBus()
+    bus.subscribe((event) => events.push(event))
+    const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>(async () => "unexpected")
+    const tenant = buildTenant({ bus, codex: fakeCodex({ runTextTurn }) })
+    await tenant.stop()
+
+    const reply = await tenant.runTextTurn("thread", "late")
+
+    expect(reply).toBeInstanceOf(Error)
+    expect(runTextTurn).not.toHaveBeenCalled()
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "turn.rejected",
+        reason: "tenant_stopped",
+        queueDepth: 0,
+      }),
+    )
+  })
+})
+
+describe("LeucoTenant corrupt history recovery", () => {
+  it("discards corrupt persisted history and starts a fresh thread for the same turn", async () => {
+    const resumeThread = vi.fn<CodexClientPort["resumeThread"]>(
+      async () =>
+        new Error(
+          "[ObjectParam] [input[381].arguments.bad] invalid_request_error: property name is too long",
+        ),
+    )
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "fresh-thread" },
+    }))
+    const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>(async (threadId) => threadId)
+    const tenant = buildTenant({
+      initialCodexThreadId: "corrupt-thread",
+      codex: fakeCodex({ resumeThread, startThread, runTextTurn }),
+    })
+
+    await expect(tenant.runTextTurn("thread", "hello")).resolves.toBe("fresh-thread")
+    expect(resumeThread).toHaveBeenCalledTimes(1)
+    expect(startThread).toHaveBeenCalledTimes(1)
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "fresh-thread" }])
+  })
+
+  it("keeps persisted history on authentication and network failures", async () => {
+    const resumeThread = vi.fn<CodexClientPort["resumeThread"]>(
+      async () => new Error("authentication failed: network connection reset"),
+    )
+    const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
+      thread: { id: "unexpected" },
+    }))
+    const tenant = buildTenant({
+      initialCodexThreadId: "saved-thread",
+      codex: fakeCodex({ resumeThread, startThread }),
+    })
+
+    const first = await tenant.runTextTurn("thread", "first")
+    const second = await tenant.runTextTurn("thread", "second")
+
+    expect(first).toBeInstanceOf(Error)
+    expect(second).toBeInstanceOf(Error)
+    expect(resumeThread).toHaveBeenCalledTimes(2)
+    expect(startThread).not.toHaveBeenCalled()
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "saved-thread" }])
+  })
+
+  it("clears a thread when corruption is discovered while running a turn", async () => {
+    const startThread = vi
+      .fn<CodexClientPort["startThread"]>()
+      .mockResolvedValueOnce({ thread: { id: "corrupt-thread" } })
+      .mockResolvedValueOnce({ thread: { id: "fresh-thread" } })
+    const runTextTurn = vi
+      .fn<CodexClientPort["runTextTurn"]>()
+      .mockResolvedValueOnce(
+        new Error(
+          "[ObjectParam] [input[381].arguments.bad] invalid_request_error: property name is too long",
+        ),
+      )
+      .mockResolvedValueOnce("ok")
+    const tenant = buildTenant({ codex: fakeCodex({ startThread, runTextTurn }) })
+
+    const failed = await tenant.runTextTurn("thread", "first")
+
+    expect(failed).toEqual(
+      new Error("codex session history was corrupted and has been reset; please resend"),
+    )
+    expect(tenant.listThreads()).toEqual([])
+    await expect(tenant.runTextTurn("thread", "second")).resolves.toBe("ok")
+    expect(startThread).toHaveBeenCalledTimes(2)
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "fresh-thread" }])
   })
 })
 
@@ -912,5 +1523,105 @@ describe("LeucoTenant developer instructions", () => {
     const arg = startThread.mock.calls[0]?.[0]
     if (arg === undefined) throw new Error("startThread was never called")
     expect(arg.developerInstructions).toBe("# Friendly\nbe warm\n\n---\n\ntail")
+  })
+})
+
+describe("LeucoTenant.stop with queued turns", () => {
+  it("cancels queued turns and never respawns codex after stop", async () => {
+    const starts: number[] = []
+    let running = false
+    let releaseTurn: (value: string) => void = () => {}
+    const codex = fakeCodex({
+      start: async () => {
+        starts.push(1)
+        running = true
+      },
+      stop: async () => {
+        running = false
+      },
+      isRunning: () => running,
+      runTextTurn: () =>
+        new Promise<string>((resolve) => {
+          releaseTurn = resolve
+        }),
+    })
+
+    const tenant = buildTenant({ codex })
+    await tenant.start()
+
+    const first = tenant.runTextTurn("thread", "one")
+    const second = tenant.runTextTurn("thread", "two")
+
+    const stopPromise = tenant.stop()
+    const secondReply = await second
+    expect(secondReply).toBeInstanceOf(Error)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseTurn("done")
+
+    await stopPromise
+    const firstReply = await first
+    expect(firstReply).toBe("done")
+
+    // exactly the one spawn from tenant.start(); the drained queue must not
+    // have respawned the codex child after stop() killed it
+    expect(starts).toHaveLength(1)
+
+    const third = await tenant.runTextTurn("thread", "three")
+    expect(third).toBeInstanceOf(Error)
+  })
+
+  it("stops Codex while a schedule plugin drains its in-flight turn", async () => {
+    const entry: ScheduleEntry = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "due",
+      runAt: "2026-05-07T09:00:00Z",
+      prompt: "run",
+      enabled: true,
+    }
+    const storeMutations = { marks: 0, removes: 0 }
+    const store: ScheduleStorePort = {
+      listEntries: () => [entry],
+      getLastFiredAt: () => null,
+      markFired: () => {
+        storeMutations.marks += 1
+      },
+      removeEntry: () => {
+        storeMutations.removes += 1
+      },
+    }
+    const schedule = new LeucoScheduleChannelPlugin({
+      name: "schedule",
+      store,
+      now: () => new Date("2026-05-07T09:01:00Z"),
+      intervalMs: 60 * 60 * 1000,
+    })
+    const turnResolvers: Array<(reply: string | Error) => void> = []
+    let reportTurnStarted: () => void = () => {}
+    const turnStarted = new Promise<void>((resolve) => {
+      reportTurnStarted = resolve
+    })
+    const stop = vi.fn(async () => {
+      const resolveTurn = turnResolvers[0]
+      if (resolveTurn) resolveTurn(new Error("codex stopped"))
+    })
+    const codex = fakeCodex({
+      stop,
+      runTextTurn: () =>
+        new Promise<string | Error>((resolve) => {
+          turnResolvers.push(resolve)
+          reportTurnStarted()
+        }),
+    })
+    const tenant = buildTenant({ codex, plugins: [schedule] })
+    await tenant.start()
+    await turnStarted
+
+    await tenant.stop()
+
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(storeMutations).toEqual({ marks: 0, removes: 0 })
+    await Promise.resolve()
+    expect(storeMutations).toEqual({ marks: 0, removes: 0 })
   })
 })

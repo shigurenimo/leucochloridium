@@ -4,7 +4,7 @@ import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoPaths } from "@/paths/leuco-paths"
-import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStore, type RunnableProjectList } from "@/projects/project-store"
 
 const help = `leuco doctor / diagnose daemon, projects, and channels
 
@@ -265,6 +265,8 @@ const checkProject = (
         ? ok(`set (${ch.appToken!.slice(0, 8)}…)`)
         : error("missing — socket mode requires an app-level token")
 
+      // xoxp- (user token) is a supported configuration — `channels add` and
+      // the slack token schema both accept it, so don't warn on it here.
       if (hasBotToken && !ch.botToken!.startsWith("xoxb-") && !ch.botToken!.startsWith("xoxp-")) {
         channelChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
       }
@@ -438,10 +440,10 @@ export const doctorHandler = factory.createHandlers(async (c) => {
   const paths = new LeucoPaths()
   const store = new LeucoProjectStore({ paths })
 
-  let projects: ReturnType<LeucoProjectStore["list"]> = []
+  let runnableProjects: RunnableProjectList = { projects: [], issues: [] }
 
   try {
-    projects = store.list()
+    runnableProjects = store.listRunnable()
   } catch {
     // settings parse failed — handled by checkSettings
   }
@@ -450,24 +452,33 @@ export const doctorHandler = factory.createHandlers(async (c) => {
   const isDaemonRunning = daemonChecks.process?.status === "ok"
   const daemonPidMatch = daemonChecks.pid?.message.match(/pid (\d+)/)
   const daemonPid = daemonPidMatch ? Number.parseInt(daemonPidMatch[1]!, 10) : null
+  const settingsChecks = checkSettings(paths.settingsPath())
+  if (runnableProjects.issues.length > 0) {
+    const invalidProjectMessages = runnableProjects.issues.map(
+      (issue) => `projects[${issue.index}] (${issue.project}): ${issue.error}`,
+    )
+    settingsChecks.projects = error(
+      `invalid project entries found: ${invalidProjectMessages.join("; ")}`,
+    )
+  }
 
   const report: DoctorReport = {
     status: "ok",
     daemon: daemonChecks,
     codex: checkCodex(),
-    settings: checkSettings(paths.settingsPath()),
-    projects: projects.map((p) =>
+    settings: settingsChecks,
+    projects: runnableProjects.projects.map((project) =>
       checkProject(paths, {
-        id: p.id,
-        name: p.name,
-        path: p.path,
-        enabled: p.enabled,
-        channels: p.channels.map((ch) => ({
-          name: ch.name,
-          type: ch.type,
-          enabled: ch.enabled,
-          ...("botToken" in ch ? { botToken: ch.botToken } : {}),
-          ...("appToken" in ch ? { appToken: ch.appToken } : {}),
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        enabled: project.enabled,
+        channels: project.channels.map((channel) => ({
+          name: channel.name,
+          type: channel.type,
+          enabled: channel.enabled,
+          ...("botToken" in channel ? { botToken: channel.botToken } : {}),
+          ...("appToken" in channel ? { appToken: channel.appToken } : {}),
         })),
       }),
     ),

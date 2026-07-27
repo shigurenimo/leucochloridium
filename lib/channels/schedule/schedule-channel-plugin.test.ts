@@ -58,7 +58,11 @@ const makeStore = (
   return store
 }
 
-const buildPlugin = (store: ScheduleStorePort, now: () => Date): LeucoScheduleChannelPlugin => {
+const buildPlugin = (
+  store: ScheduleStorePort,
+  clock: Date | (() => Date),
+): LeucoScheduleChannelPlugin => {
+  const now = typeof clock === "function" ? clock : () => clock
   return new LeucoScheduleChannelPlugin({
     name: "cron",
     store,
@@ -126,14 +130,16 @@ describe("LeucoScheduleChannelPlugin", () => {
   })
 
   it("fires a one-shot entry when runAt is past and removes it", async () => {
-    const store = makeStore([isoEntry({ runAt: "2026-05-07T09:00:00Z" })])
-    const plugin = buildPlugin(store, () => new Date("2026-05-07T09:01:00Z"))
+    const entry = isoEntry({ runAt: "2026-05-07T09:00:00Z" })
+    const store = makeStore([entry])
+    const plugin = buildPlugin(store, new Date("2026-05-07T09:01:00Z"))
 
     const { ctx, captured } = makeCtx()
     await plugin.start(ctx)
     await plugin.waitForStartupTick()
 
     expect(captured.turns).toHaveLength(1)
+    expect(store.lastFiredAt[entry.id]).toBe(new Date("2026-05-07T09:01:00Z").getTime())
     expect(store.entries).toEqual([])
   })
 
@@ -263,123 +269,313 @@ describe("LeucoScheduleChannelPlugin", () => {
 
     expect(captured.turns).toHaveLength(1)
   })
+})
 
-  it("does not re-fire a cron entry after its turn fails", async () => {
-    // Regression: lastFiredAt used to advance only on success, so the
-    // catch-up walk re-discovered the same minute every tick — a retry storm.
-    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
-    store.lastFiredAt[store.entries[0]!.id] = new Date(2026, 4, 6, 9, 30).getTime()
-
-    let nowValue = new Date(2026, 4, 7, 9, 30)
-    const plugin = buildPlugin(store, () => nowValue)
-
-    const { ctx: baseCtx } = makeCtx()
-    let calls = 0
-    const ctx: ChannelPluginContext = {
-      ...baseCtx,
-      runTextTurn: async () => {
-        calls++
-        return new Error("boom")
-      },
-    }
-
-    await plugin.start(ctx)
-    await plugin.waitForStartupTick()
-
-    expect(calls).toBe(1)
-    expect(store.lastFiredAt[store.entries[0]!.id]).toBe(nowValue.getTime())
-
-    nowValue = new Date(2026, 4, 7, 9, 31)
-    await plugin.tickOnce()
-    nowValue = new Date(2026, 4, 7, 9, 32)
-    await plugin.tickOnce()
-
-    expect(calls).toBe(1)
-  })
-
-  it("evaluates minutes that fell between ticks", async () => {
-    const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
-    let nowValue = new Date(2026, 4, 7, 9, 28)
-    const plugin = buildPlugin(store, () => nowValue)
-
-    const { ctx, captured } = makeCtx()
-    await plugin.start(ctx)
-    await plugin.waitForStartupTick()
-    expect(captured.turns).toEqual([])
-
-    // A slow turn can hold the tick past 09:30; the next tick lands at 09:33
-    // and must still fire the missed 09:30 match even without a persisted
-    // lastFiredAt baseline.
-    nowValue = new Date(2026, 4, 7, 9, 33)
-    await plugin.tickOnce()
-
-    expect(captured.turns).toHaveLength(1)
-
-    nowValue = new Date(2026, 4, 7, 9, 34)
-    await plugin.tickOnce()
-    expect(captured.turns).toHaveLength(1)
-  })
-
-  it("fires at most once per entry per pass across a long gap", async () => {
-    const store = makeStore([cronEntry()])
-    let nowValue = new Date(2026, 4, 7, 9, 0)
-    const plugin = buildPlugin(store, () => nowValue)
-
-    const { ctx, captured } = makeCtx()
-    await plugin.start(ctx)
-    await plugin.waitForStartupTick()
-    expect(captured.turns).toHaveLength(1)
-
-    // Ten matching minutes were missed; a single catch-up turn covers them.
-    nowValue = new Date(2026, 4, 7, 9, 10)
-    await plugin.tickOnce()
-
-    expect(captured.turns).toHaveLength(2)
-  })
-
-  it("stop awaits the in-flight tick and suppresses further fires", async () => {
-    const entryA = cronEntry({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "a" })
-    const entryB = cronEntry({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "b" })
-    const store = makeStore([entryA, entryB])
-    const plugin = buildPlugin(store, () => new Date(2026, 4, 7, 9, 30))
-
-    const { ctx: baseCtx } = makeCtx()
-    let releaseTurn = () => {}
+describe("LeucoScheduleChannelPlugin lifecycle isolation", () => {
+  it("drains the current one-shot and leaves later entries for the replacement", async () => {
+    const firstEntry = isoEntry({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "first",
+    })
+    const secondEntry = isoEntry({
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "second",
+    })
+    const now = new Date("2026-05-07T09:01:00Z")
+    const store = makeStore([firstEntry, secondEntry])
+    const plugin = buildPlugin(store, now)
+    const current = makeCtx()
+    let releaseTurn: () => void = () => {}
+    let reportTurnStarted: () => void = () => {}
     const turnGate = new Promise<void>((resolve) => {
       releaseTurn = resolve
     })
-    let turnCalls = 0
-    const ctx: ChannelPluginContext = {
-      ...baseCtx,
-      runTextTurn: async () => {
-        turnCalls++
-        await turnGate
-        return ""
-      },
+    const turnStarted = new Promise<void>((resolve) => {
+      reportTurnStarted = resolve
+    })
+    current.ctx.runTextTurn = async (threadKey, text) => {
+      current.captured.turns.push({ threadKey, text })
+      reportTurnStarted()
+      await turnGate
+      return ""
+    }
+
+    await plugin.start(current.ctx)
+    await turnStarted
+    let isStopped = false
+    const stopping = plugin.stop().then(() => {
+      isStopped = true
+    })
+    await Promise.resolve()
+
+    expect(isStopped).toBe(false)
+    releaseTurn()
+    await stopping
+
+    expect(current.captured.turns.map((turn) => turn.threadKey)).toEqual([
+      `schedule:${firstEntry.id}`,
+    ])
+    expect(store.entries).toEqual([secondEntry])
+    await plugin.tickOnce()
+    expect(current.captured.turns).toHaveLength(1)
+
+    const replacement = buildPlugin(store, now)
+    const next = makeCtx()
+    await replacement.start(next.ctx)
+    await replacement.waitForStartupTick()
+
+    expect(next.captured.turns.map((turn) => turn.threadKey)).toEqual([
+      `schedule:${secondEntry.id}`,
+    ])
+    expect(store.entries).toEqual([])
+    await replacement.stop()
+  })
+
+  it("persists a drained cron fire so replacement in the same minute does not duplicate it", async () => {
+    const entry = cronEntry()
+    const now = new Date(2026, 4, 7, 9, 30)
+    const store = makeStore([entry])
+    const plugin = buildPlugin(store, now)
+    const current = makeCtx()
+    let releaseTurn: () => void = () => {}
+    let reportTurnStarted: () => void = () => {}
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    const turnStarted = new Promise<void>((resolve) => {
+      reportTurnStarted = resolve
+    })
+    current.ctx.runTextTurn = async (threadKey, text) => {
+      current.captured.turns.push({ threadKey, text })
+      reportTurnStarted()
+      await turnGate
+      return ""
+    }
+
+    await plugin.start(current.ctx)
+    await turnStarted
+    const stopping = plugin.stop()
+    releaseTurn()
+    await stopping
+
+    expect(store.lastFiredAt[entry.id]).toBe(now.getTime())
+
+    const replacement = buildPlugin(store, now)
+    const next = makeCtx()
+    await replacement.start(next.ctx)
+    await replacement.waitForStartupTick()
+
+    expect(current.captured.turns).toHaveLength(1)
+    expect(next.captured.turns).toEqual([])
+    await replacement.stop()
+  })
+})
+
+describe("LeucoScheduleChannelPlugin failure containment", () => {
+  it("retains a failed one-shot and retries with exponential backoff until success", async () => {
+    const entry = isoEntry()
+    const store = makeStore([entry])
+    const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
+    const plugin = new LeucoScheduleChannelPlugin({
+      name: "cron",
+      store,
+      now: () => new Date(clock.nowMs),
+      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
+      clearIntervalFn: () => {},
+    })
+    const results = [new Error("codex down"), new Error("still down"), "ok"]
+    const { ctx, captured } = makeCtx()
+    ctx.runTextTurn = async (threadKey, text) => {
+      captured.turns.push({ threadKey, text })
+      return results[captured.turns.length - 1] ?? "ok"
     }
 
     await plugin.start(ctx)
-    expect(turnCalls).toBe(1)
+    await plugin.waitForStartupTick()
+    expect(captured.turns).toHaveLength(1)
+    expect(store.entries).toEqual([entry])
 
-    let stopResolved = false
-    const stopPromise = plugin.stop().then(() => {
-      stopResolved = true
+    clock.nowMs += 59_000
+    await plugin.tickOnce()
+    expect(captured.turns).toHaveLength(1)
+
+    clock.nowMs += 1_000
+    await plugin.tickOnce()
+    expect(captured.turns).toHaveLength(2)
+    expect(store.entries).toEqual([entry])
+
+    clock.nowMs += 119_000
+    await plugin.tickOnce()
+    expect(captured.turns).toHaveLength(2)
+
+    clock.nowMs += 1_000
+    await plugin.tickOnce()
+    expect(captured.turns).toHaveLength(3)
+    expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
+    expect(store.entries).toEqual([])
+    expect(captured.logs.some((line) => line.includes("turn failed: codex down"))).toBe(true)
+    expect(captured.logs.some((line) => line.includes("turn retry #1 in 60s"))).toBe(true)
+    expect(captured.logs.some((line) => line.includes("turn retry #2 in 120s"))).toBe(true)
+  })
+
+  it("caps one-shot retry delay at thirty minutes", async () => {
+    const entry = isoEntry()
+    const store = makeStore([entry])
+    const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
+    const plugin = new LeucoScheduleChannelPlugin({
+      name: "cron",
+      store,
+      now: () => new Date(clock.nowMs),
+      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
+      clearIntervalFn: () => {},
+    })
+    const { ctx, captured } = makeCtx()
+    ctx.runTextTurn = async (threadKey, text) => {
+      captured.turns.push({ threadKey, text })
+      return new Error("codex down")
+    }
+
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+    const delays = [60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000, 1_800_000]
+    for (const delayMs of delays) {
+      clock.nowMs += delayMs
+      await plugin.tickOnce()
+    }
+
+    const retryLogs = captured.logs.filter((line) => line.includes("turn retry"))
+    expect(captured.turns).toHaveLength(8)
+    expect(retryLogs).toEqual([
+      expect.stringContaining("retry #1 in 60s"),
+      expect.stringContaining("retry #2 in 120s"),
+      expect.stringContaining("retry #3 in 240s"),
+      expect.stringContaining("retry #4 in 480s"),
+      expect.stringContaining("retry #5 in 960s"),
+      expect.stringContaining("retry #6 in 1800s"),
+      expect.stringContaining("retry #6 in 1800s"),
+      expect.stringContaining("retry #6 in 1800s"),
+    ])
+  })
+
+  it("retries deletion without re-running a successfully delivered one-shot", async () => {
+    const entry = isoEntry()
+    const store = makeStore([entry])
+    const removeEntry = store.removeEntry
+    const removal = { calls: 0 }
+    store.removeEntry = (entryId) => {
+      removal.calls++
+      if (removal.calls === 1) throw new Error("settings busy")
+      removeEntry(entryId)
+    }
+    const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
+    const plugin = new LeucoScheduleChannelPlugin({
+      name: "cron",
+      store,
+      now: () => new Date(clock.nowMs),
+      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
+      clearIntervalFn: () => {},
+    })
+    const { ctx, captured } = makeCtx()
+
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+    expect(captured.turns).toHaveLength(1)
+    expect(store.entries).toEqual([entry])
+
+    clock.nowMs += 60_000
+    await plugin.tickOnce()
+
+    expect(captured.turns).toHaveLength(1)
+    expect(removal.calls).toBe(2)
+    expect(store.entries).toEqual([])
+    expect(captured.logs.some((line) => line.includes("cleanup retry #1 in 60s"))).toBe(true)
+    expect(captured.logs.some((line) => line.includes("delete failed: settings busy"))).toBe(true)
+  })
+
+  it("uses the durable delivery marker to avoid re-running after restart", async () => {
+    const entry = isoEntry()
+    const store = makeStore([entry])
+    const removeEntry = store.removeEntry
+    const removal = { calls: 0 }
+    store.removeEntry = (entryId) => {
+      removal.calls++
+      if (removal.calls === 1) throw new Error("settings busy")
+      removeEntry(entryId)
+    }
+    const now = new Date("2026-05-07T09:01:00Z")
+    const firstPlugin = buildPlugin(store, now)
+    const first = makeCtx()
+
+    await firstPlugin.start(first.ctx)
+    await firstPlugin.waitForStartupTick()
+    await firstPlugin.stop()
+
+    expect(first.captured.turns).toHaveLength(1)
+    expect(store.lastFiredAt[entry.id]).toBe(now.getTime())
+    expect(store.entries).toEqual([entry])
+
+    const restartedPlugin = buildPlugin(store, now)
+    const restarted = makeCtx()
+    await restartedPlugin.start(restarted.ctx)
+    await restartedPlugin.waitForStartupTick()
+
+    expect(restarted.captured.turns).toEqual([])
+    expect(store.entries).toEqual([])
+    expect(
+      restarted.captured.logs.some((line) => line.includes("already delivered; retrying cleanup")),
+    ).toBe(true)
+  })
+
+  it("retries a failed cron turn once via catch-up, then stops until restart", async () => {
+    const entry = cronEntry({ runAt: "30 9 * * *" })
+    const store = makeStore([entry])
+    store.lastFiredAt[entry.id] = new Date(2026, 4, 6, 10, 0).getTime()
+
+    let now = new Date(2026, 4, 7, 9, 30)
+    const plugin = new LeucoScheduleChannelPlugin({
+      name: "cron",
+      store,
+      now: () => now,
+      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
+      clearIntervalFn: () => {},
     })
 
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(stopResolved).toBe(false)
+    const { ctx, captured } = makeCtx()
+    ctx.runTextTurn = async (threadKey, text) => {
+      captured.turns.push({ threadKey, text })
+      return new Error("codex down")
+    }
 
-    releaseTurn()
-    await stopPromise
+    await plugin.start(ctx)
+    await plugin.waitForStartupTick()
+    expect(captured.turns).toHaveLength(1)
 
-    expect(stopResolved).toBe(true)
-    // Entry B was next in the pass; the stopped flag must bail before it fires.
-    expect(turnCalls).toBe(1)
-    expect(store.lastFiredAt[entryB.id]).toBeUndefined()
-
+    now = new Date(2026, 4, 7, 9, 31)
     await plugin.tickOnce()
-    expect(turnCalls).toBe(1)
+    // one catch-up retry for the failed 9:30 fire
+    expect(captured.turns).toHaveLength(2)
+
+    now = new Date(2026, 4, 7, 9, 32)
+    await plugin.tickOnce()
+    now = new Date(2026, 4, 7, 9, 33)
+    await plugin.tickOnce()
+    // no retry storm: the walked floor stops the catch-up from re-firing
+    expect(captured.turns).toHaveLength(2)
+  })
+
+  it("contains store errors thrown inside the catch-up path", async () => {
+    const store = makeStore([cronEntry()])
+    store.getLastFiredAt = () => {
+      throw new Error("project removed mid-tick")
+    }
+
+    const plugin = buildPlugin(store, new Date(2026, 4, 7, 9, 30))
+    const { ctx, captured } = makeCtx()
+
+    await plugin.start(ctx)
+    await expect(plugin.waitForStartupTick()).resolves.toBeUndefined()
+
+    expect(captured.turns).toEqual([])
+    expect(captured.logs.some((line) => line.includes("tick failed"))).toBe(true)
   })
 })

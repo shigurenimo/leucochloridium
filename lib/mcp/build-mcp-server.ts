@@ -19,6 +19,7 @@ import {
   slackCallArgsSchema,
   slackDownloadFileArgsSchema,
 } from "@/mcp/mcp-tool-schemas"
+import { toBoundedToolJson } from "@/mcp/to-bounded-tool-json"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 type Props = {
@@ -37,7 +38,8 @@ const SLACK_CALL_DESCRIPTION = [
   "reactions.add, files.upload). The body is the API method's JSON body — see",
   "https://api.slack.com/methods for parameters. Tokens are scoped to this",
   "project's enabled Slack channel; passing `channel_name` selects between",
-  "multiple channels owned by the same project.",
+  "multiple channels owned by the same project. Responses are size-bounded;",
+  "use Slack `limit`, `cursor`, and filters for list/history/search methods.",
 ].join(" ")
 
 const SLACK_CALL_INPUT_SCHEMA = {
@@ -125,7 +127,7 @@ const SCHEDULE_CREATE_INPUT_SCHEMA = {
 }
 
 const SCHEDULE_LIST_DESCRIPTION =
-  "List schedule entries owned by the current project. If `channel_name` is omitted and the project has multiple schedule channels, every channel's entries are returned."
+  "List schedule entries owned by the current project in bounded pages. Pass the returned `next_cursor` to continue. Prompts are omitted by default; set `include_prompt` for the current page. If `channel_name` is omitted, entries from every enabled schedule channel are included."
 
 const SCHEDULE_LIST_INPUT_SCHEMA = {
   type: "object",
@@ -133,6 +135,22 @@ const SCHEDULE_LIST_INPUT_SCHEMA = {
     channel_name: {
       type: "string",
       description: "Optional schedule channel name to filter by.",
+    },
+    limit: {
+      type: "number",
+      minimum: 1,
+      maximum: 5,
+      default: 5,
+      description: "Maximum entries in this bounded page.",
+    },
+    cursor: {
+      type: "string",
+      description: "Opaque continuation cursor returned by the previous schedule_list page.",
+    },
+    include_prompt: {
+      type: "boolean",
+      default: false,
+      description: "Include full prompt text for entries in this page.",
     },
   },
 }
@@ -244,7 +262,7 @@ const handleSlackCall = async (props: HandlerProps, args: unknown) => {
     body: parsed.data.body ?? {},
   })
 
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] }
+  return { content: [{ type: "text", text: toBoundedToolJson(result) }] }
 }
 
 const handleSlackDownloadFile = async (props: HandlerProps, args: unknown) => {
@@ -274,7 +292,7 @@ const handleSlackDownloadFile = async (props: HandlerProps, args: unknown) => {
     content: [
       {
         type: "text",
-        text: JSON.stringify(result, null, 2),
+        text: toBoundedToolJson(result),
       },
     ],
   }
@@ -324,7 +342,7 @@ const handleScheduleCreate = async (props: HandlerProps, args: unknown) => {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ id: entry.id, name: entry.name, channel: channel.name }, null, 2),
+        text: toBoundedToolJson({ id: entry.id, name: entry.name, channel: channel.name }),
       },
     ],
   }
@@ -334,6 +352,7 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
   const parsed = scheduleListArgsSchema.safeParse(args)
   if (!parsed.success) return errorResponse(formatZodIssue(parsed.error))
   const channelNameArg = parsed.data.channel_name
+  const offset = parsed.data.cursor === undefined ? 0 : Number(parsed.data.cursor)
 
   const project = props.store.load(props.projectId)
 
@@ -353,18 +372,35 @@ const handleScheduleList = async (props: HandlerProps, args: unknown) => {
     )
   }
 
-  const items = channels.flatMap((channel) =>
+  const allItems = channels.flatMap((channel) =>
     channel.entries.map((entry) => ({
       channel: channel.name,
       id: entry.id,
       name: entry.name,
       runAt: entry.runAt,
       enabled: entry.enabled,
-      prompt: entry.prompt,
+      ...(parsed.data.include_prompt ? { prompt: entry.prompt } : {}),
     })),
   )
 
-  return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }] }
+  if (!Number.isSafeInteger(offset) || offset > allItems.length) {
+    return errorResponse("schedule_list cursor is outside the current result set")
+  }
+
+  const end = Math.min(allItems.length, offset + parsed.data.limit)
+  const nextCursor = end < allItems.length ? String(end) : null
+  return {
+    content: [
+      {
+        type: "text",
+        text: toBoundedToolJson({
+          items: allItems.slice(offset, end),
+          next_cursor: nextCursor,
+          total: allItems.length,
+        }),
+      },
+    ],
+  }
 }
 
 const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
@@ -387,7 +423,7 @@ const handleScheduleDelete = async (props: HandlerProps, args: unknown) => {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ removed: parsed.data.id_or_name, channel: channel.name }, null, 2),
+        text: toBoundedToolJson({ removed: parsed.data.id_or_name, channel: channel.name }),
       },
     ],
   }
@@ -438,6 +474,10 @@ const resolveTenantTokens = (input: {
 const errorResponse = (
   message: string,
 ): { content: { type: "text"; text: string }[]; isError: true } => ({
-  content: [{ type: "text", text: message }],
+  // Error bodies cross the same MCP boundary as successful results. Slack
+  // can echo attacker-controlled text in an `ok:false` error field, so
+  // returning the raw message would reintroduce the command-output overflow
+  // that successful responses are bounded against.
+  content: [{ type: "text", text: toBoundedToolJson({ error: message }) }],
   isError: true,
 })

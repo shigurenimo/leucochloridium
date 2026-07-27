@@ -2,6 +2,7 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { formatStatus } from "@/cli/utils/format-status"
 import { readCliBody } from "@/cli/utils/read-cli-body"
+import { daemonSupervisionWarning, startDaemon } from "@/daemon/daemon-control"
 import { cliEnvSchema } from "@/env/cli-env-schema"
 
 /**
@@ -27,7 +28,21 @@ export const rootHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: issues.join("\n") })
   }
 
-  const result = c.var.daemon.start({ binPath: c.var.binPath, env: process.env })
+  const result = await startDaemon({
+    daemon: c.var.daemon,
+    binPath: c.var.binPath,
+    env: process.env,
+  })
+  if (result instanceof Error) {
+    throw new HTTPException(500, { message: result.message })
+  }
 
-  return c.text(`leuco: started (pid ${result.pid})\nlog: ${result.logPath}`)
+  const started =
+    result.mode === "launchd"
+      ? `leuco: started via launchd (${result.label})`
+      : `leuco: started (pid ${result.pid})`
+  const lines = [started, `log: ${result.logPath}`]
+  const warning = daemonSupervisionWarning(result)
+  if (warning !== null) lines.push(warning)
+  return c.text(lines.join("\n"))
 })

@@ -176,11 +176,24 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
     expect(result.skip).toBe(true)
   })
 
-  it("skips messages with subtype", () => {
-    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
-    const result = proc.processMessage(baseMessage({ subtype: "channel_join" }))
-    expect(result.skip).toBe(true)
-  })
+  it.each(["file_share", "thread_broadcast"])(
+    "forwards the user-authored %s subtype",
+    (subtype) => {
+      const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+      const event = expectMessage(proc.processMessage(baseMessage({ subtype })))
+      expect(event.text).toBe("hi")
+      expect(event.mentioned).toBe(true)
+    },
+  )
+
+  it.each(["bot_message", "message_changed", "channel_join"])(
+    "skips the non-user message subtype %s",
+    (subtype) => {
+      const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+      const result = proc.processMessage(baseMessage({ subtype }))
+      expect(result.skip).toBe(true)
+    },
+  )
 
   it("skips when botUserId is unknown", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: null })
@@ -230,5 +243,34 @@ describe("LeucoSlackEventProcessor dedup capacity", () => {
     // ts=1 evicted, replay no longer dedups
     const replay = proc.processAppMention(baseMention({ ts: "1" }))
     expect(replay.skip).toBe(false)
+  })
+})
+
+describe("LeucoSlackEventProcessor DM handling", () => {
+  it("does not drop a DM that opens with another user's mention", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const result = proc.processMessage(
+      baseMessage({ channel: "D1", text: "<@UOTHER99> said we should ship it" }),
+    )
+    const event = expectMessage(result)
+    expect(event.mentioned).toBe(true)
+  })
+
+  it("still drops channel messages addressed to another user", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const result = proc.processMessage(
+      baseMessage({ channel: "C1", text: "<@UOTHER99> can you take this?" }),
+    )
+    expect(result.skip).toBe(true)
+  })
+})
+
+describe("LeucoSlackEventProcessor dedup scoping", () => {
+  it("keys message dedup by channel so the same ts in another channel is not eaten", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const first = proc.processMessage(baseMessage({ channel: "C1", ts: "9.9" }))
+    const second = proc.processMessage(baseMessage({ channel: "C2", ts: "9.9" }))
+    expect(first.skip).toBe(false)
+    expect(second.skip).toBe(false)
   })
 })

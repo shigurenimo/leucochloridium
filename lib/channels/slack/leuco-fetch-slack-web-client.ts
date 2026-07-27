@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import { z } from "zod"
 import {
   LeucoSlackWebClient,
@@ -23,6 +24,7 @@ export type SlackFetchPort = (
 
 const SLACK_API_BASE = "https://slack.com/api"
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 /**
  * Raw-fetch implementation of `LeucoSlackWebClient`. Calls
@@ -281,8 +283,58 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       throw new Error(`slack ${method} http ${response.status} ${response.statusText}`)
     }
 
-    return await response.json()
+    return await readJsonResponse(response, method)
   }
+}
+
+const readJsonResponse = async (response: Response, method: string): Promise<unknown> => {
+  const declaredLength = response.headers.get("content-length")
+  const parsedLength = declaredLength === null ? null : Number(declaredLength)
+  if (parsedLength !== null && Number.isFinite(parsedLength) && parsedLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined)
+    throw responseTooLarge(method)
+  }
+
+  const body = response.body
+  if (body === null) throw new Error(`slack ${method}: response body is empty`)
+  const chunks = await readBoundedChunks(body.getReader(), [], 0, method)
+  const text = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`slack ${method}: response is not valid JSON`)
+  }
+}
+
+const readBoundedChunks = async (
+  reader: ByteReader,
+  chunks: Uint8Array[],
+  byteLength: number,
+  method: string,
+): Promise<Uint8Array[]> => {
+  const next = await reader.read()
+  if (next.done) return chunks
+
+  const chunk = next.value
+  const nextByteLength = byteLength + chunk.byteLength
+  if (nextByteLength > MAX_RESPONSE_BYTES) {
+    await reader.cancel().catch(() => undefined)
+    throw responseTooLarge(method)
+  }
+  chunks.push(chunk)
+  return await readBoundedChunks(reader, chunks, nextByteLength, method)
+}
+
+type ByteReader = {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>
+  cancel(): Promise<void>
+}
+
+const responseTooLarge = (method: string): Error => {
+  return new Error(
+    `slack ${method}: response exceeded ${MAX_RESPONSE_BYTES} bytes; retry with a smaller limit, cursor, or filter`,
+  )
 }
 
 const FORM_ENCODED_METHODS = new Set([

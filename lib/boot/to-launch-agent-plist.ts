@@ -11,9 +11,10 @@ type Props = {
 
 /**
  * Build the macOS LaunchAgent plist text for the leuco daemon. The agent runs
- * `bun <binPath> run` in the foreground; launchd is the supervisor, so
- * `KeepAlive` is true and `RunAtLoad` triggers a launch on login. Values are
- * XML-escaped so paths or env values containing `&`/`<` don't break the plist.
+ * `bun <binPath> run` in the foreground; launchd restarts unsuccessful exits
+ * while allowing an intentional `leuco stop` (exit 0) to stay stopped.
+ * `RunAtLoad` starts it again at login. Values are XML-escaped so paths or env
+ * values containing `&`/`<` don't break the plist.
  *
  * When `keepAwake` is true, the program is wrapped with `caffeinate -is` so
  * the system stays awake while leuco runs. `-s` extends suppression to
@@ -62,7 +63,10 @@ ${programBlock}
   <true/>
 
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
 
   <key>ThrottleInterval</key>
   <integer>60</integer>

@@ -18,9 +18,32 @@ export type LeucoEngineProps = {
   mcpTokenForProject?: (projectId: string) => string | null
   onLog?: (line: string) => void
   bus?: LeucoEventBus
+  buildGateway?: GatewayBuilder
 }
 
 type Logger = (line: string) => void
+
+type TenantRetryState = {
+  attempt: number
+  projectName: string
+  signature: string | null
+  retryAt: number
+}
+
+type GatewayLifecycle = {
+  start(): unknown
+  stop(): Promise<void>
+}
+
+type GatewayBuilder = (props: {
+  engine: LeucoEngine
+  port: number
+  mcpTokenForProject: (projectId: string) => string | null
+  onLog: Logger
+}) => GatewayLifecycle
+
+const TENANT_RETRY_INITIAL_MS = 30_000
+const TENANT_RETRY_MAX_MS = 5 * 60_000
 
 export type ThreadEntry = {
   tenantKey: string
@@ -44,8 +67,16 @@ export class LeucoEngine {
   private readonly log: Logger
   private readonly bus: LeucoEventBus
   private readonly mcpTokenForProject: ((projectId: string) => string | null) | undefined
-  private gateway: LeucoGatewayServer | null = null
+  private readonly buildGateway: GatewayBuilder
+  private readonly tenantSignatures: Map<string, string>
+  private readonly tenantRetries = new Map<string, TenantRetryState>()
+  private gateway: GatewayLifecycle | null = null
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private retryTimerAt: number | null = null
+  private startPromise: Promise<void> | null = null
+  private stopPromise: Promise<void> | null = null
   private reconcileQueue: Promise<void> = Promise.resolve()
+  private startInProgress = false
   private stopped = false
 
   constructor(props: LeucoEngineProps) {
@@ -56,74 +87,85 @@ export class LeucoEngine {
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
     this.mcpTokenForProject = props.mcpTokenForProject
+    this.buildGateway =
+      props.buildGateway ?? ((gatewayProps) => new LeucoGatewayServer(gatewayProps))
+    this.tenantSignatures = this.loadInitialTenantSignatures()
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.startPromise !== null) return this.startPromise
+
+    const startPromise = this.runStart()
+    this.startPromise = startPromise
+    return startPromise
+  }
+
+  private async runStart(): Promise<void> {
+    this.startInProgress = true
     const started: LeucoTenant[] = []
     try {
+      this.startGateway()
       for (const tenant of this.tenants) {
-        await tenant.start()
-        started.push(tenant)
-      }
-    } catch (error) {
-      for (const tenant of started.reverse()) {
-        await tenant.stop().catch((err: unknown) => {
-          this.log(`[leuco] start rollback: ${tenant.key}: ${errorMessage(err)}`)
-        })
-      }
-      this.tenants = []
-      throw error
-    }
-
-    if (this.port !== undefined && this.mcpTokenForProject !== undefined) {
-      this.gateway = new LeucoGatewayServer({
-        engine: this,
-        port: this.port,
-        onLog: this.log,
-        mcpTokenForProject: this.mcpTokenForProject,
-      })
-      try {
-        this.gateway.start()
-      } catch (error) {
-        for (const tenant of this.tenants.slice().reverse()) {
-          await tenant.stop().catch(() => undefined)
+        if (this.stopped) break
+        if (await this.tryStartInitialTenant(tenant)) {
+          if (this.stopped) {
+            await this.safeStop(tenant)
+            break
+          }
+          started.push(tenant)
         }
-        this.tenants = []
-        this.gateway = null
-        throw error
       }
+      this.tenants = started
+    } finally {
+      this.startInProgress = false
     }
 
+    if (this.stopped) return
+    this.scheduleNextRetry()
     const summary = this.tenants.map((t) => t.key).join(", ") || "(no tenants)"
-    this.log(`[leuco] ready — tenants: ${summary}`)
+    const retrying = Array.from(this.tenantRetries.values())
+      .map((retry) => retry.projectName)
+      .join(", ")
+    const suffix = retrying.length > 0 ? `; retrying: ${retrying}` : ""
+    this.log(`[leuco] ready — tenants: ${summary}${suffix}`)
   }
 
-  async stop(): Promise<void> {
-    if (this.stopped) return
+  stop(): Promise<void> {
+    if (this.stopPromise !== null) return this.stopPromise
+
     this.stopped = true
+    this.cancelRetryTimer()
     this.log("[leuco] shutting down")
+
+    const stopPromise = this.runStop()
+    this.stopPromise = stopPromise
+    return stopPromise
+  }
+
+  private async runStop(): Promise<void> {
+    // A signal can arrive while a tenant is still starting. Wait for that
+    // attempt to settle; runStart observes `stopped`, skips later tenants, and
+    // immediately drains a tenant that finished after shutdown began.
+    await this.startPromise?.catch(() => undefined)
 
     // Drain any in-flight reconcile so it cannot mutate `this.tenants` after
     // we null it out. Errors inside reconcile are already swallowed at the
     // `reconcileQueue` site, so awaiting it is safe and cannot reject.
     await this.reconcileQueue
 
-    if (this.gateway) {
-      await this.gateway.stop()
-      this.gateway = null
-    }
-
-    for (const tenant of this.tenants) {
-      await this.safeStop(tenant)
-    }
+    await this.safeStopTenants(this.tenants)
     this.tenants = []
+    this.tenantSignatures.clear()
+    this.tenantRetries.clear()
 
+    await this.safeStopGateway("shutdown")
     this.bus.stop()
   }
 
   async reconcile(): Promise<void> {
     if (this.stopped) return
-    const result = this.reconcileQueue.then(() => {
+    const result = this.reconcileQueue.then(async () => {
+      await this.startPromise
       if (this.stopped) return
       return this.runReconcile()
     })
@@ -137,19 +179,23 @@ export class LeucoEngine {
   private async runReconcile(): Promise<void> {
     let projects: Project[]
     try {
-      projects = this.projectStore.list()
+      projects = this.getRunnableProjects(true)
     } catch (err) {
       const reason = errorMessage(err)
       this.log(`[leuco] reconcile: failed to load projects: ${reason}`)
       this.bus.emit({ ts: Date.now(), type: "engine.reconcile.failed", reason })
+      this.deferDueRetries()
+      this.scheduleNextRetry()
       return
     }
 
-    const targetById = new Map<string, { project: Project; signature: string }>()
+    const targetById = new Map<string, { project: Project; tenantSignature: string }>()
     for (const project of projects) {
       if (!project.enabled) continue
-      targetById.set(project.id, { project, signature: tenantConfigSignature(project) })
+      const tenantSignature = tenantConfigSignature(project)
+      targetById.set(project.id, { project, tenantSignature })
     }
+    this.clearRetriesOutsideTargets(targetById)
 
     const removed: string[] = []
     const added: string[] = []
@@ -160,28 +206,38 @@ export class LeucoEngine {
       if (target === undefined) {
         this.log(`[leuco] reconcile: stopping ${tenant.key}`)
         await this.safeStop(tenant)
+        this.tenantSignatures.delete(tenant.projectId)
+        this.tenantRetries.delete(tenant.projectId)
         removed.push(tenant.key)
         continue
       }
 
-      if (!this.tenantNeedsRebuild(tenant, target)) {
+      const currentSignature = this.tenantSignatures.get(tenant.projectId)
+      const nameChanged = tenant.key !== target.project.name
+      if (
+        !nameChanged &&
+        (currentSignature === target.tenantSignature ||
+          (currentSignature === undefined && !this.tenantNeedsRebuild(tenant, target)))
+      ) {
+        this.tenantRetries.delete(tenant.projectId)
         keep.push(tenant)
         continue
       }
 
-      const reason =
-        tenant.key !== target.project.name
-          ? `renamed ${tenant.key} → ${target.project.name}`
-          : "config changed (path / channels / tokens / prompts / mcpServers)"
+      const reason = nameChanged
+        ? `renamed ${tenant.key} → ${target.project.name}`
+        : "effective tenant configuration changed"
       this.log(`[leuco] reconcile: ${reason}; rebuilding`)
       await this.safeStop(tenant)
+      this.tenantSignatures.delete(tenant.projectId)
 
-      const rebuilt = await this.tryBuildAndStart(target.project, target.project.name)
+      const rebuilt = await this.tryBuildAndStart(target.project, target.tenantSignature)
       if (rebuilt === null) {
         removed.push(tenant.key)
         continue
       }
       keep.push(rebuilt)
+      this.tenantSignatures.set(target.project.id, target.tenantSignature)
       added.push(`${target.project.name} (rebuilt)`)
     }
     this.tenants = keep
@@ -192,20 +248,31 @@ export class LeucoEngine {
       const target = entry[1]
       if (runningIds.has(id)) continue
 
+      const retry = this.tenantRetries.get(id)
+      if (retry !== undefined) {
+        if (retry.signature !== target.tenantSignature) {
+          this.tenantRetries.delete(id)
+        } else if (retry.retryAt > Date.now()) {
+          continue
+        }
+      }
+
       this.log(`[leuco] reconcile: starting ${target.project.name}`)
-      const started = await this.tryBuildAndStart(target.project, target.project.name)
+      const started = await this.tryBuildAndStart(target.project, target.tenantSignature)
       if (started === null) continue
 
       this.tenants.push(started)
+      this.tenantSignatures.set(target.project.id, target.tenantSignature)
       added.push(target.project.name)
     }
 
     this.bus.emit({ ts: Date.now(), type: "engine.reconcile", added, removed })
+    this.scheduleNextRetry()
   }
 
   private tenantNeedsRebuild(
     tenant: LeucoTenant,
-    target: { project: Project; signature: string },
+    target: { project: Project; tenantSignature: string },
   ): boolean {
     if (tenant.key !== target.project.name) return true
 
@@ -213,27 +280,62 @@ export class LeucoEngine {
     // / path / prompt changes are picked up. Test-built tenants without one
     // fall back to comparing the enabled-channel-name set.
     if (tenant.configSignature !== null) {
-      return tenant.configSignature !== target.signature
+      return tenant.configSignature !== target.tenantSignature
     }
 
     const currentSig = tenant.listPlugins().slice().sort().join(",")
     return currentSig !== enabledChannelSignature(target.project)
   }
 
-  private async tryBuildAndStart(project: Project, keyForLog: string): Promise<LeucoTenant | null> {
+  private async tryStartInitialTenant(tenant: LeucoTenant): Promise<boolean> {
+    try {
+      await tenant.start()
+      this.tenantRetries.delete(tenant.projectId)
+      return true
+    } catch (err) {
+      const signature =
+        this.tenantSignatures.get(tenant.projectId) ??
+        this.getCurrentProjectSignature(tenant.projectId)
+      this.tenantSignatures.delete(tenant.projectId)
+      await this.safeStop(tenant)
+      this.recordTenantFailure({
+        projectId: tenant.projectId,
+        projectName: tenant.key,
+        signature,
+        phase: "start",
+        error: err,
+      })
+      return false
+    }
+  }
+
+  private async tryBuildAndStart(project: Project, signature: string): Promise<LeucoTenant | null> {
     let built: LeucoTenant
     try {
       built = this.buildTenant(project)
     } catch (err) {
-      this.log(`[leuco] reconcile: ${keyForLog}: build failed: ${errorMessage(err)}`)
+      this.recordTenantFailure({
+        projectId: project.id,
+        projectName: project.name,
+        signature,
+        phase: "build",
+        error: err,
+      })
       return null
     }
     try {
       await built.start()
+      this.tenantRetries.delete(project.id)
       return built
     } catch (err) {
-      this.log(`[leuco] reconcile: ${keyForLog}: start failed: ${errorMessage(err)}`)
-      await built.stop().catch(() => undefined)
+      await this.safeStop(built)
+      this.recordTenantFailure({
+        projectId: project.id,
+        projectName: project.name,
+        signature,
+        phase: "start",
+        error: err,
+      })
       return null
     }
   }
@@ -246,6 +348,159 @@ export class LeucoEngine {
     }
   }
 
+  private async safeStopTenants(tenants: ReadonlyArray<LeucoTenant>): Promise<void> {
+    await Promise.all(tenants.map((tenant) => this.safeStop(tenant)))
+  }
+
+  private recordTenantFailure(input: {
+    projectId: string
+    projectName: string
+    signature: string | null
+    phase: "build" | "start"
+    error: unknown
+  }): void {
+    const previous = this.tenantRetries.get(input.projectId)
+    const continuesSameFailure = previous !== undefined && previous.signature === input.signature
+    const attempt = continuesSameFailure ? previous.attempt + 1 : 1
+    const now = Date.now()
+    const retryDelay = retryDelayMs(attempt)
+    const retryAt = now + retryDelay
+    const reason = `tenant ${input.projectName} ${input.phase} failed: ${errorMessage(input.error)}`
+
+    this.tenantRetries.set(input.projectId, {
+      attempt,
+      projectName: input.projectName,
+      signature: input.signature,
+      retryAt,
+    })
+    this.log(`[leuco] ${reason}; retry ${attempt} in ${Math.ceil(retryDelay / 1000)}s`)
+    this.bus.emit({
+      ts: now,
+      type: "engine.reconcile.failed",
+      reason,
+      project: input.projectName,
+      attempt,
+      retryAt,
+    })
+    this.scheduleNextRetry()
+  }
+
+  private clearRetriesOutsideTargets(
+    targets: ReadonlyMap<string, { project: Project; tenantSignature: string }>,
+  ): void {
+    for (const projectId of this.tenantRetries.keys()) {
+      if (!targets.has(projectId)) {
+        this.tenantRetries.delete(projectId)
+      }
+    }
+  }
+
+  private deferDueRetries(): void {
+    const now = Date.now()
+    for (const entry of this.tenantRetries) {
+      const projectId = entry[0]
+      const retry = entry[1]
+      if (retry.retryAt > now) continue
+
+      const attempt = retry.attempt + 1
+      this.tenantRetries.set(projectId, {
+        ...retry,
+        attempt,
+        retryAt: now + retryDelayMs(attempt),
+      })
+    }
+  }
+
+  private scheduleNextRetry(): void {
+    if (this.stopped || this.startInProgress) return
+
+    let retryAt: number | null = null
+    for (const retry of this.tenantRetries.values()) {
+      retryAt = retryAt === null ? retry.retryAt : Math.min(retryAt, retry.retryAt)
+    }
+
+    if (retryAt === null) {
+      this.cancelRetryTimer()
+      return
+    }
+    if (this.retryTimer !== null && this.retryTimerAt === retryAt) return
+
+    this.cancelRetryTimer()
+    this.retryTimerAt = retryAt
+    this.retryTimer = setTimeout(
+      () => {
+        this.retryTimer = null
+        this.retryTimerAt = null
+        if (this.stopped) return
+
+        void this.reconcile().catch((err: unknown) => {
+          const reason = `retry reconcile failed: ${errorMessage(err)}`
+          this.log(`[leuco] ${reason}`)
+          this.bus.emit({ ts: Date.now(), type: "engine.reconcile.failed", reason })
+          this.deferDueRetries()
+          this.scheduleNextRetry()
+        })
+      },
+      Math.max(0, retryAt - Date.now()),
+    )
+    this.retryTimer.unref()
+  }
+
+  private cancelRetryTimer(): void {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer)
+    }
+    this.retryTimer = null
+    this.retryTimerAt = null
+  }
+
+  private startGateway(): void {
+    const mcpTokenForProject = this.mcpTokenForProject
+    if (this.port === undefined || mcpTokenForProject === undefined) return
+
+    const gateway = this.buildGateway({
+      engine: this,
+      port: this.port,
+      onLog: this.log,
+      mcpTokenForProject,
+    })
+    gateway.start()
+    this.gateway = gateway
+  }
+
+  private async safeStopGateway(context: string): Promise<void> {
+    const gateway = this.gateway
+    if (gateway === null) return
+
+    this.gateway = null
+    try {
+      await gateway.stop()
+    } catch (err) {
+      this.log(`[leuco] ${context}: gateway stop failed: ${errorMessage(err)}`)
+    }
+  }
+
+  private loadInitialTenantSignatures(): Map<string, string> {
+    const signatures = new Map<string, string>()
+    for (const tenant of this.tenants) {
+      if (tenant.configSignature !== null) {
+        signatures.set(tenant.projectId, tenant.configSignature)
+      }
+    }
+    return signatures
+  }
+
+  private getCurrentProjectSignature(projectId: string): string | null {
+    try {
+      const project = this.getRunnableProjects(false).find(
+        (candidate) => candidate.id === projectId,
+      )
+      return project === undefined ? null : tenantConfigSignature(project)
+    } catch {
+      return null
+    }
+  }
+
   getCwd(): string {
     return this.tenants[0]?.projectPath ?? ""
   }
@@ -253,7 +508,7 @@ export class LeucoEngine {
   listProjects(): EngineProjectSummary[] {
     let projects: Project[]
     try {
-      projects = this.projectStore.list()
+      projects = this.getRunnableProjects(true)
     } catch (err) {
       this.log(`[leuco] listProjects: ${errorMessage(err)}`)
       return []
@@ -267,6 +522,27 @@ export class LeucoEngine {
       enabled: project.enabled,
       tenantRunning: runningIds.has(project.id),
     }))
+  }
+
+  private getRunnableProjects(shouldReportIssues: boolean): Project[] {
+    if (typeof this.projectStore.listRunnable !== "function") {
+      return this.projectStore.list()
+    }
+
+    const runnable = this.projectStore.listRunnable()
+    if (shouldReportIssues) {
+      for (const issue of runnable.issues) {
+        const reason = `project ${issue.project} is invalid and was skipped: ${issue.error}`
+        this.log(`[leuco] ${reason}`)
+        this.bus.emit({
+          ts: Date.now(),
+          type: "engine.reconcile.failed",
+          reason,
+          project: issue.project,
+        })
+      }
+    }
+    return runnable.projects
   }
 
   isCodexRunning(): boolean {
@@ -305,10 +581,15 @@ export class LeucoEngine {
   }
 }
 
+const retryDelayMs = (attempt: number): number => {
+  const exponent = Math.min(Math.max(attempt - 1, 0), 4)
+  return Math.min(TENANT_RETRY_INITIAL_MS * 2 ** exponent, TENANT_RETRY_MAX_MS)
+}
+
 const enabledChannelSignature = (project: Project): string => {
   return project.channels
-    .filter((c) => c.enabled)
-    .map((c) => c.name)
+    .filter((channel) => channel.enabled)
+    .map((channel) => channel.name)
     .slice()
     .sort()
     .join(",")

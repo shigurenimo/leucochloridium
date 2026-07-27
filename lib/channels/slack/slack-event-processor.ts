@@ -25,6 +25,7 @@ export type ProcessResult = ProcessSkip | ProcessEmit
 
 const DEFAULT_DEDUP_CAPACITY = 10_000
 const DEFAULT_DEDUP_TTL_MS = 5 * 60 * 1000
+const FORWARDED_MESSAGE_SUBTYPES = new Set(["file_share", "thread_broadcast"])
 
 /**
  * Pure decision layer for Slack incoming events. Owns:
@@ -84,7 +85,9 @@ export class LeucoSlackEventProcessor {
     if (!parsed.success) return { skip: true, reason: "message schema failed" }
     const data = parsed.data
 
-    if (data.subtype !== undefined) return { skip: true, reason: `subtype=${data.subtype}` }
+    if (data.subtype !== undefined && !FORWARDED_MESSAGE_SUBTYPES.has(data.subtype)) {
+      return { skip: true, reason: `subtype=${data.subtype}` }
+    }
     if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
     if (data.user === this.botUserId) return { skip: true, reason: "self message" }

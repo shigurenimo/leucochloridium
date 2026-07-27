@@ -13,6 +13,8 @@ export type CodexLineWriter = (line: string) => void
 export type LeucoCodexProtocolProps = {
   writer: CodexLineWriter
   onLog?: (line: string) => void
+  maxFrameChars?: number
+  logPreviewChars?: number
 }
 
 /**
@@ -34,7 +36,9 @@ export type LeucoCodexProtocolProps = {
 export class LeucoCodexProtocol {
   private readonly writer: CodexLineWriter
   private readonly onLog: (line: string) => void
-  private readonly pending = new Map<number, Pending>()
+  private readonly maxFrameChars: number
+  private readonly logPreviewChars: number
+  private readonly pending = new Map<string | number, Pending>()
   private buffer = ""
   private nextId = 1
   private notificationHandler: CodexNotificationHandler | null = null
@@ -42,6 +46,14 @@ export class LeucoCodexProtocol {
   constructor(props: LeucoCodexProtocolProps) {
     this.writer = props.writer
     this.onLog = props.onLog ?? (() => undefined)
+    this.maxFrameChars = props.maxFrameChars ?? MAX_CODEX_PROTOCOL_FRAME_CHARS
+    this.logPreviewChars = props.logPreviewChars ?? MAX_CODEX_PROTOCOL_LOG_PREVIEW_CHARS
+    if (!Number.isSafeInteger(this.maxFrameChars) || this.maxFrameChars < 64) {
+      throw new Error("maxFrameChars must be an integer >= 64")
+    }
+    if (!Number.isSafeInteger(this.logPreviewChars) || this.logPreviewChars < 64) {
+      throw new Error("logPreviewChars must be an integer >= 64")
+    }
   }
 
   onNotification(handler: CodexNotificationHandler | null): void {
@@ -76,15 +88,20 @@ export class LeucoCodexProtocol {
     }
   }
 
-  feedChunk(chunk: string): void {
+  feedChunk(chunk: string): Error | null {
     this.buffer += chunk
-    let idx = this.buffer.indexOf("\n")
-    while (idx >= 0) {
-      const line = this.buffer.slice(0, idx).trim()
-      this.buffer = this.buffer.slice(idx + 1)
-      if (line.length > 0) this.handleLine(line)
-      idx = this.buffer.indexOf("\n")
+
+    while (true) {
+      const newlineIndex = this.buffer.indexOf("\n")
+      if (newlineIndex < 0) break
+      const frameError = this.takeFrame(newlineIndex)
+      if (frameError !== null) return frameError
     }
+
+    if (this.buffer.length > this.maxFrameChars) {
+      return this.failOversizedFrame(this.buffer.length)
+    }
+    return null
   }
 
   fail(err: Error): void {
@@ -95,29 +112,22 @@ export class LeucoCodexProtocol {
   private handleLine(line: string): void {
     const json = tryParse(line)
     if (json === undefined) {
-      this.onLog(`[codex non-json] ${line}`)
-      return
-    }
-
-    // A server-initiated REQUEST (id + method) must get an answer: the zod
-    // union would strip the id and treat it as a notification, and codex
-    // would then wait on the reply forever. approval_policy="never" means we
-    // never expect these — decline explicitly instead of hanging the child.
-    const serverRequestId = extractServerRequestId(json)
-    if (serverRequestId !== null) {
-      const method = (json as { method: string }).method
-      this.onLog(`[codex server-request declined] ${method}`)
-      this.respondMethodNotSupported(serverRequestId, method)
+      this.onLog(`[codex non-json] ${this.toLogPreview(line)}`)
       return
     }
 
     const result = jsonRpcIncomingSchema.safeParse(json)
     if (!result.success) {
-      this.onLog(`[codex unknown] ${line}`)
+      this.onLog(`[codex unknown] ${this.toLogPreview(line)}`)
       return
     }
 
     const msg = result.data
+    if ("id" in msg && "method" in msg) {
+      this.rejectServerRequest(msg.id, msg.method)
+      return
+    }
+
     if ("id" in msg) {
       const pending = this.pending.get(msg.id)
       if (!pending) return
@@ -135,29 +145,56 @@ export class LeucoCodexProtocol {
     }
   }
 
-  private respondMethodNotSupported(id: number | string, method: string): void {
+  private takeFrame(newlineIndex: number): Error | null {
+    if (newlineIndex > this.maxFrameChars) return this.failOversizedFrame(newlineIndex)
+
+    const line = this.buffer.slice(0, newlineIndex).trim()
+    this.buffer = this.buffer.slice(newlineIndex + 1)
+    if (line.length > 0) this.handleLine(line)
+    return null
+  }
+
+  private failOversizedFrame(frameChars: number): Error {
+    const error = new Error(
+      `codex protocol frame exceeded ${this.maxFrameChars} characters (received at least ${frameChars})`,
+    )
+    this.buffer = ""
+    this.fail(error)
+    this.onLog(`[codex protocol] ${error.message}`)
+    return error
+  }
+
+  private toLogPreview(line: string): string {
+    if (line.length <= this.logPreviewChars) return line
+
+    const suffix = `… [${line.length} chars]`
+    const prefixChars = Math.max(0, this.logPreviewChars - suffix.length)
+    return `${line.slice(0, prefixChars)}${suffix}`
+  }
+
+  /**
+   * codex may send server→client requests (approval prompts etc.). leuco has
+   * no terminal to answer them, and silently dropping the frame would leave
+   * codex waiting forever — reply with a JSON-RPC error so the turn can fail
+   * fast instead of stalling until the tenant wall-clock timeout.
+   */
+  private rejectServerRequest(id: string | number, method: string): void {
+    this.onLog(`[codex server request rejected] ${method} (id ${id})`)
     const payload = JSON.stringify({
       jsonrpc: "2.0",
       id,
-      error: { code: -32601, message: `method not supported by leuco client: ${method}` },
+      error: { code: -32601, message: `leuco cannot answer server request "${method}"` },
     })
     try {
       this.writer(`${payload}\n`)
     } catch (err) {
-      this.onLog(`[codex request reply failed] ${errorMessage(err)}`)
+      this.onLog(`[codex server request reply failed] ${errorMessage(err)}`)
     }
   }
 }
 
-const extractServerRequestId = (json: unknown): number | string | null => {
-  if (typeof json !== "object" || json === null) return null
-  if (!("id" in json) || !("method" in json)) return null
-
-  const candidate = json as { id: unknown; method: unknown }
-  if (typeof candidate.method !== "string") return null
-  if (typeof candidate.id === "number" || typeof candidate.id === "string") return candidate.id
-  return null
-}
+const MAX_CODEX_PROTOCOL_FRAME_CHARS = 8 * 1024 * 1024
+const MAX_CODEX_PROTOCOL_LOG_PREVIEW_CHARS = 2_000
 
 const tryParse = (line: string): unknown => {
   try {

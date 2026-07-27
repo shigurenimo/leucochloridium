@@ -34,6 +34,11 @@ const engineReconcileFailedSchema = z.object({
   ...baseTs,
   type: z.literal("engine.reconcile.failed"),
   reason: z.string(),
+  // Tenant-scoped failures carry retry metadata; store-wide reconcile
+  // failures retain the compact `{ reason }` shape.
+  project: z.string().optional(),
+  attempt: z.number().int().positive().optional(),
+  retryAt: z.number().optional(),
 })
 
 const slackEventEnvelopeSchema = z.object({
@@ -89,10 +94,12 @@ const turnRejectedSchema = z.object({
   type: z.literal("turn.rejected"),
   project: z.string(),
   threadKey: z.string(),
-  reason: z.string(),
+  reason: z.enum(["tenant_stopped", "queue_count_limit", "queue_bytes_limit"]),
   queueDepth: z.number().int().nonnegative(),
   queueBytes: z.number().int().nonnegative(),
   inputBytes: z.number().int().nonnegative(),
+  maxQueueDepth: z.number().int().nonnegative(),
+  maxQueueBytes: z.number().int().nonnegative(),
 })
 
 const turnCompleteSchema = z.object({

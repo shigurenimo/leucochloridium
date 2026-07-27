@@ -16,8 +16,13 @@ export const applyCwdShortcut = (
   const head = args[0]
   if (head === undefined || !SHORTCUT_PREFIXES.has(head)) return args
 
-  const project = projectStore.resolveByCwd(cwd)
-  if (project instanceof Error) return args
-
-  return ["projects", project.name, ...args]
+  // `resolveByCwd` throws for an unregistered cwd; the shortcut is
+  // best-effort so fall through to normal routing instead of crashing the
+  // CLI before the router even sees the command.
+  try {
+    const project = projectStore.resolveByCwd(cwd)
+    return ["projects", project.name, ...args]
+  } catch {
+    return args
+  }
 }

@@ -3,6 +3,8 @@ import { z } from "zod"
 import { factory } from "@/cli/cli-factory"
 import { help } from "@/cli/routes/update.help"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { daemonSupervisionWarning, restartDaemon } from "@/daemon/daemon-control"
+import { errorMessage } from "@/error-message"
 
 const registryResponseSchema = z.object({
   version: z.string().min(1),
@@ -40,24 +42,31 @@ export const updateHandler = factory.createHandlers(async (c) => {
 
   // bun add only swaps files in node_modules — the running daemon is still on
   // old code in memory. Restart it so the freshly installed bin is loaded.
+  // `isRunning`, not `pid !== null`: a stale pid file must not make update
+  // boot a daemon that was never running.
   const daemon = c.var.daemon
-  const wasRunning = daemon.status().pid !== null
+  const wasRunning = daemon.status().isRunning
   if (!wasRunning) {
     return c.text(`leuco: updated to ${latest} (daemon not running)`)
   }
 
-  daemon.stop()
-  // daemon.start throws on failure; wrap the message so the user still learns
-  // the update itself succeeded and only the restart needs a manual retry.
-  try {
-    const started = daemon.start({ binPath: c.var.binPath, env: process.env })
-    return c.text(`leuco: updated to ${latest}, daemon restarted (pid ${started.pid})`)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+  const restarted = await restartDaemon({
+    daemon,
+    binPath: c.var.binPath,
+    env: process.env,
+  })
+  if (restarted instanceof Error) {
     throw new HTTPException(500, {
-      message: `updated to ${latest}, but daemon restart failed: ${message}. run \`leuco start\` manually.`,
+      message: `updated to ${latest}, but daemon restart failed: ${errorMessage(restarted)}`,
     })
   }
+
+  const mode =
+    restarted.mode === "launchd" ? `via launchd (${restarted.label})` : `(pid ${restarted.pid})`
+  const lines = [`leuco: updated to ${latest}, daemon restarted ${mode}`]
+  const warning = daemonSupervisionWarning(restarted)
+  if (warning !== null) lines.push(warning)
+  return c.text(lines.join("\n"))
 })
 
 const fetchLatestVersion = async (): Promise<string | Error> => {

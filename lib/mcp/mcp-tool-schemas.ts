@@ -40,6 +40,9 @@ export const scheduleCreateArgsSchema = z.object({
 
 export const scheduleListArgsSchema = z.object({
   channel_name: z.string().optional(),
+  limit: z.number().int().min(1).max(5).default(5),
+  cursor: z.string().regex(/^\d+$/, "must be a cursor returned by schedule_list").optional(),
+  include_prompt: z.boolean().default(false),
 })
 
 export const scheduleDeleteArgsSchema = z.object({

@@ -19,7 +19,6 @@ const BOOLEAN_FLAGS = new Set([
   "cascade",
   "check",
 ])
-
 const TOP_LEAFS = new Set([
   "run",
   "start",

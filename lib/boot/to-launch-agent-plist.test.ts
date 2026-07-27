@@ -13,10 +13,12 @@ describe("toLaunchAgentPlist", () => {
     keepAwake: false,
   }
 
-  it("emits a plist with RunAtLoad and KeepAlive enabled", () => {
+  it("restarts crashes but lets an intentional successful stop stay down", () => {
     const plist = toLaunchAgentPlist(baseProps)
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>")
-    expect(plist).toContain("<key>KeepAlive</key>\n  <true/>")
+    expect(plist).toContain(
+      "<key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>",
+    )
   })
 
   it("invokes bun with the bin path and a `run` argument", () => {

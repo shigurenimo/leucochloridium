@@ -154,6 +154,9 @@ leuco boot install
 leuco boot
 ```
 
+macOSではLaunchAgentの導入を推奨します。導入しなくても`leuco start`は使えますが、
+daemon自体が致命的エラーで終了した場合の自動再起動とログイン時起動は行われません。
+
 ## Using a user token
 
 Leuco also accepts a user token (`xoxp-...`). In that configuration, Slack API calls run as the token's owner rather than as a bot. Set the user token scopes `channels:history`, `im:history`, `im:read`, and `chat:write`, subscribe to `message.channels` and `message.im` as user events rather than bot events, and add `groups:history`, `mpim:history`, `message.groups`, or `message.mpim` as needed. The Socket Mode `xapp-...` token is required exactly as in the bot configuration.
@@ -194,8 +197,8 @@ leuco projects <p> restart                rebuild the tenant
 leuco projects <p> rename <new>           rename the project
 leuco projects <p> relocate <new-path>    move the repository and update the path
 leuco projects <p> cwd <path>             change only Codex's cwd, moving no files
-leuco projects <p> session                show the shared Codex thread state
-leuco projects <p> session reset          discard the shared Codex thread and restart
+leuco projects <p> session                show the stored Codex thread state
+leuco projects <p> session reset          discard stored Codex thread IDs and restart
 leuco projects <p> path [key]             print project-related paths
 leuco projects <p> remove [--cascade]     unregister
 ```
@@ -216,7 +219,8 @@ leuco projects <p> channels <c> remove              remove the connection
 
 ## Schedules
 
-A schedule connection fires prompts into the project's shared Codex thread on a timer:
+schedule接続はtimerからpromptを投入します。project scopeではproject共通thread、
+thread scopeではschedule entryごとのthreadを使います。
 
 ```bash
 leuco projects <p> channels <c> schedules list
@@ -254,14 +258,20 @@ Slack Socket Mode
   → slack connection plugin
   → event validation, dedup, self-bot filtering
   → the project's tenant
-  → the project-wide Codex thread
+  → the Codex thread selected by conversation scope
   → Codex calls the slack_call MCP tool
   → Slack Web API
 ```
 
-Each enabled project runs exactly one Codex `app-server`, spawned over stdio JSON-RPC. All input is serialized into the project-wide Codex thread; messages that arrive while a turn is running are batched into the next turn. Slack messages reach Codex as structured input, and whether to reply is decided by the built-in prompt and Codex itself.
+有効なprojectごとにCodex `app-server`を一つだけstdio JSON-RPCで起動します。
+既定のproject scopeでは全入力を一つのthreadへ直列化します。thread scopeでは
+`threadKey`ごとに履歴とqueueを分け、同じkey内の順序を保ちながら異なるkeyを
+設定上限まで並行実行します。Slack messageは構造化入力としてCodexへ渡され、
+返信するかどうかはbuilt-in promptとCodexが決めます。
 
-The return value of a Codex turn is never posted to Slack directly. A visible reply happens only when Codex calls the `slack_call` MCP tool. This keeps Codex in control of what, where, and whether to post.
+可視の返信はCodexによる`slack_call`を優先します。宛先付きメッセージに対して
+Slackへのpostが一度も成功せず、Codexがfinal textを生成した場合だけ、Leucoが
+同じthreadへその本文をそのままfallback postします。エラー時の定型文は合成しません。
 
 A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
 

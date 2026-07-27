@@ -3,10 +3,9 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
-import { stopProjectTenant } from "@/cli/utils/stop-project-tenant"
-import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
-import { errorMessage } from "@/error-message"
+import { daemonSupervisionWarning, startDaemon } from "@/daemon/daemon-control"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { removeProjectSafely } from "@/projects/remove-project-safely"
 
 const help = `leuco projects <p> remove / unregister a project
 
@@ -37,34 +36,41 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const cascade = flagBool(body.flags.cascade)
   if (project.channels.length > 0 && !cascade) {
     throw new HTTPException(400, {
-      message: `leuco: project '${name}' has ${project.channels.length} channel(s). use --cascade to remove with its channels.`,
+      message: `project '${name}' has ${project.channels.length} channel(s). use --cascade to remove with its channels.`,
     })
   }
 
-  const stopped = await stopProjectTenant({
-    projectId: project.id,
+  // Persist the desired stop even when the project was already disabled: a
+  // missed earlier reload can leave a stale tenant alive. Then terminate the
+  // daemon and wait for Engine.stop() to drain every tenant before rmSync
+  // removes this project's CODEX_HOME.
+  const removed = await removeProjectSafely({
+    project,
     store,
     daemon: c.var.daemon,
-    waitForDown: waitForTenantDown,
+    restart: () =>
+      startDaemon({
+        daemon: c.var.daemon,
+        binPath: c.var.binPath,
+        env: process.env,
+      }),
   })
-  if (stopped instanceof Error) {
-    throw new HTTPException(503, { message: stopped.message })
+  if (removed instanceof Error) {
+    throw new HTTPException(500, {
+      message: `project removal failed: ${removed.message}`,
+    })
   }
 
-  try {
-    store.remove(project.id)
-  } catch (err) {
-    if (stopped.disabledForStop) {
-      try {
-        store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
-        c.var.daemon.reload()
-      } catch {
-        // The original removal failure is more useful than rollback noise.
-      }
-    }
-    throw new HTTPException(500, { message: `remove failed: ${errorMessage(err)}` })
+  if (!removed.daemonWasRunning || removed.restarted === null) {
+    return c.text(`removed project "${name}" (daemon not running)`)
   }
 
-  const tail = stopped.disabledForStop ? " (tenant stopped)" : ""
-  return c.text(`removed project "${name}"${tail}`)
+  const reloadMsg =
+    removed.restarted.mode === "launchd"
+      ? `(daemon restarted via launchd, ${removed.restarted.label})`
+      : `(daemon restarted, pid ${removed.restarted.pid})`
+  const lines = [`removed project "${name}" ${reloadMsg}`]
+  const warning = daemonSupervisionWarning(removed.restarted)
+  if (warning !== null) lines.push(warning)
+  return c.text(lines.join("\n"))
 })

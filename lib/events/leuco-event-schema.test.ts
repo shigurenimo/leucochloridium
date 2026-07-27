@@ -45,6 +45,35 @@ describe("leucoEventSchema", () => {
     expect(recovered.success).toBe(true)
   })
 
+  it("accepts a structured turn.rejected event", () => {
+    const parsed = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "turn.rejected",
+      project: "p",
+      threadKey: "t",
+      reason: "queue_bytes_limit",
+      queueDepth: 2,
+      queueBytes: 1024,
+      inputBytes: 512,
+      maxQueueDepth: 64,
+      maxQueueBytes: 262144,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts a Codex child recovery outcome", () => {
+    const parsed = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "codex.recovery",
+      project: "p",
+      reason: "codex command output exceeded 200000 chars from call_123",
+      status: "succeeded",
+      durationMs: 250,
+      error: null,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
   it("accepts a slack.event with a message payload", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
@@ -88,6 +117,18 @@ describe("leucoEventSchema", () => {
       action: "ws.close",
       message: "socket closed",
       error: null,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts tenant retry details on an engine.reconcile.failed event", () => {
+    const parsed = leucoEventSchema.safeParse({
+      ts: 1700000000000,
+      type: "engine.reconcile.failed",
+      reason: "tenant demo start failed: offline",
+      project: "demo",
+      attempt: 2,
+      retryAt: 1700000060000,
     })
     expect(parsed.success).toBe(true)
   })

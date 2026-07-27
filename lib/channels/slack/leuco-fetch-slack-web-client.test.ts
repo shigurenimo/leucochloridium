@@ -191,6 +191,32 @@ describe("LeucoFetchSlackWebClient", () => {
     await expect(client.authTest()).rejects.toThrow("slack auth.test timed out after 5ms")
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it("rejects an oversized response before parsing it", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "content-length": String(3 * 1024 * 1024) },
+        }),
+    ) as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
+
+    await expect(client.apiCall("conversations.history", {})).rejects.toThrow(
+      "retry with a smaller limit, cursor, or filter",
+    )
+  })
+
+  it("stops reading a chunked response after the byte cap", async () => {
+    globalThis.fetch = vi.fn(
+      async () => new Response("x".repeat(3 * 1024 * 1024), { status: 200 }),
+    ) as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
+
+    await expect(client.apiCall("conversations.history", {})).rejects.toThrow("response exceeded")
+  })
 })
 
 const onlyFetchCall = (

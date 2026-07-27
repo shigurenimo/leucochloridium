@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -113,6 +113,56 @@ describe("LeucoProjectStore", () => {
     expect(result.map((p) => p.name).sort()).toEqual(["alpha", "beta"])
   })
 
+  it("listRunnable isolates an invalid project without rewriting settings", () => {
+    const settingsPath = store.getPaths().settingsPath()
+    mkdirSync(join(home, ".leuco"), { recursive: true })
+    const rawSettings = {
+      keepAwake: true,
+      projects: [
+        sampleProject(),
+        {
+          ...sampleProject({
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "broken",
+          }),
+          channels: [{ type: "unknown-channel" }],
+        },
+      ],
+    }
+    writeFileSync(settingsPath, JSON.stringify(rawSettings))
+
+    const runnable = store.listRunnable()
+
+    expect(runnable.projects.map((project) => project.name)).toEqual(["demo"])
+    expect(runnable.issues).toHaveLength(1)
+    expect(runnable.issues[0]).toMatchObject({ index: 1, project: "broken" })
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(rawSettings)
+    expect(() => store.list()).toThrow()
+  })
+
+  it("listRunnable does not bypass duplicate project id isolation", () => {
+    const settingsPath = store.getPaths().settingsPath()
+    mkdirSync(join(home, ".leuco"), { recursive: true })
+    const rawSettings = {
+      projects: [
+        sampleProject(),
+        sampleProject({ name: "duplicate", path: "/tmp/duplicate" }),
+        { ...sampleProject({ name: "broken" }), id: "not-a-uuid" },
+      ],
+    }
+    writeFileSync(settingsPath, JSON.stringify(rawSettings))
+
+    const runnable = store.listRunnable()
+
+    expect(runnable.projects.map((project) => project.name)).toEqual(["demo"])
+    expect(runnable.issues).toHaveLength(2)
+    expect(runnable.issues[0]).toMatchObject({
+      project: "duplicate",
+      error: `duplicate project id: ${DEMO_ID}`,
+    })
+    expect(runnable.issues[1]).toMatchObject({ project: "broken" })
+  })
+
   it("save() updates an existing project by id", () => {
     store.save(sampleProject({ name: "before" }))
     store.save(sampleProject({ name: "after" }))
@@ -120,6 +170,41 @@ describe("LeucoProjectStore", () => {
     const list = store.list()
     expect(list).toHaveLength(1)
     expect(list[0]!.name).toBe("after")
+  })
+
+  it("save() preserves newer daemon-owned runtime state from a stale config snapshot", () => {
+    const stale = sampleProject({ name: "before" })
+    store.save(stale)
+    store.updateProject(DEMO_ID, (project) => ({
+      ...project,
+      state: {
+        codexThreadId: "thread-new",
+        codexThreadIds: {},
+        scheduleLastFiredAt: { schedule: 123 },
+      },
+    }))
+
+    store.save({ ...stale, name: "after" })
+
+    expect(store.load(DEMO_ID)).toMatchObject({
+      name: "after",
+      state: {
+        codexThreadId: "thread-new",
+        scheduleLastFiredAt: { schedule: 123 },
+      },
+    })
+  })
+
+  it("updateProject mutates intentional state against the latest on-disk project", () => {
+    store.save(sampleProject({ name: "latest" }))
+
+    const updated = store.updateProject(DEMO_ID, (project) => ({
+      ...project,
+      state: { ...project.state, codexThreadId: "thread-1" },
+    }))
+
+    expect(updated.name).toBe("latest")
+    expect(store.load(DEMO_ID).state.codexThreadId).toBe("thread-1")
   })
 
   it("resolveByName() returns a single match", () => {
@@ -265,6 +350,16 @@ describe("LeucoProjectStore", () => {
         channelName: "cron",
         entry: sampleEntry(),
       })
+      store.updateProject(DEMO_ID, (project) => ({
+        ...project,
+        state: {
+          ...project.state,
+          scheduleLastFiredAt: {
+            ...project.state.scheduleLastFiredAt,
+            "44444444-4444-4444-8444-444444444444": 123,
+          },
+        },
+      }))
       store.removeScheduleEntry({
         projectId: DEMO_ID,
         channelName: "cron",
@@ -275,6 +370,7 @@ describe("LeucoProjectStore", () => {
       const channel = project.channels.find((c) => c.name === "cron")!
       if (channel.type !== "schedule") throw new Error("expected schedule channel")
       expect(channel.entries).toEqual([])
+      expect(project.state.scheduleLastFiredAt).toEqual({})
     })
 
     it("removeScheduleEntry by name removes the entry", () => {

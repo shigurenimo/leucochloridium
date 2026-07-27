@@ -7,5 +7,6 @@
 export type LaunchctlPort = {
   bootstrap(plistPath: string): Promise<void | Error>
   bootout(plistPath: string): Promise<void | Error>
+  kickstart(label: string): Promise<void | Error>
   isLoaded(label: string): Promise<boolean | Error>
 }

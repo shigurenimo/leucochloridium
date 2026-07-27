@@ -6,6 +6,7 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
+import { daemonSupervisionWarning, startDaemon, stopDaemonAndVerify } from "@/daemon/daemon-control"
 import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -80,15 +81,32 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   }
 
   // Stop the daemon before moving so running codex children don't hold the
-  // old cwd open. Restart only if it was running originally.
+  // old cwd open. The second status inside stopDaemonAndVerify catches a
+  // launchd start racing the first observation.
   const daemon = c.var.daemon
-  const wasRunning = daemon.status().isRunning
-  if (wasRunning) daemon.stop()
+  const wasRunningInitially = daemon.status().isRunning
+  const stopped = stopDaemonAndVerify(daemon)
+  if (stopped instanceof Error) {
+    throw new HTTPException(500, {
+      message: `cannot relocate while daemon is still running: ${stopped.message}`,
+    })
+  }
+  const wasRunning = wasRunningInitially || stopped.wasRunning
 
   try {
     renameSync(project.path, newPath)
     try {
-      store.updateProject(project.id, (fresh) => ({ ...fresh, path: newPath, name: newName }))
+      const updated = store.updateProject(project.id, (fresh) => {
+        if (fresh.path !== project.path) {
+          throw new Error(`project path changed concurrently: ${fresh.path}`)
+        }
+        return {
+          ...fresh,
+          path: newPath,
+          name: shouldRename ? newName : fresh.name,
+        }
+      })
+      newName = updated.name
     } catch (saveError) {
       // settings.json write failed after the directory move succeeded — roll
       // back the rename so the on-disk repo matches the persisted record.
@@ -101,23 +119,49 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
       }
       throw saveError
     }
-
-    const lines = [
-      newName === project.name
-        ? `relocated project "${oldName}": ${project.path} -> ${newPath}`
-        : `relocated project "${oldName}" to "${newName}": ${project.path} -> ${newPath}`,
-    ]
-    if (wasRunning) {
-      const result = daemon.start({ binPath: c.var.binPath, env: process.env })
-      lines.push(`daemon restarted (pid ${result.pid})`)
-    }
-    return c.text(lines.join("\n"))
   } catch (error) {
     // Restore daemon even when the rename / save failed so the user is not
     // left with a silently-stopped supervisor.
     if (wasRunning && !daemon.status().isRunning) {
-      daemon.start({ binPath: c.var.binPath, env: process.env })
+      const restarted = await startDaemon({
+        daemon,
+        binPath: c.var.binPath,
+        env: process.env,
+      })
+      if (restarted instanceof Error) {
+        throw new HTTPException(500, {
+          message: `relocate failed (${errorMessage(error)}); daemon restart also failed: ${restarted.message}`,
+        })
+      }
+      const warning = daemonSupervisionWarning(restarted)
+      if (warning !== null) process.stderr.write(`[leuco] ${warning}\n`)
     }
     throw error
   }
+
+  const lines = [
+    newName === project.name
+      ? `relocated project "${oldName}": ${project.path} -> ${newPath}`
+      : `relocated project "${oldName}" to "${newName}": ${project.path} -> ${newPath}`,
+  ]
+  if (wasRunning) {
+    const result = await startDaemon({
+      daemon,
+      binPath: c.var.binPath,
+      env: process.env,
+    })
+    if (result instanceof Error) {
+      throw new HTTPException(500, {
+        message: `project was relocated, but daemon restart failed: ${result.message}`,
+      })
+    }
+    lines.push(
+      result.mode === "launchd"
+        ? `daemon restarted via launchd (${result.label})`
+        : `daemon restarted (pid ${result.pid})`,
+    )
+    const warning = daemonSupervisionWarning(result)
+    if (warning !== null) lines.push(warning)
+  }
+  return c.text(lines.join("\n"))
 })

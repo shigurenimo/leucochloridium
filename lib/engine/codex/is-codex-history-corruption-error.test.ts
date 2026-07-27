@@ -19,4 +19,12 @@ describe("isCodexHistoryCorruptionError", () => {
   it("does not reset a session for transient turn failures", () => {
     expect(isCodexHistoryCorruptionError(new Error("codex turn timed out after 600s"))).toBe(false)
   })
+
+  it.each([
+    "authentication failed: 401",
+    "network connection reset",
+    "invalid_request_error: current input is too long",
+  ])("does not classify a general failure as history corruption: %s", (message) => {
+    expect(isCodexHistoryCorruptionError(new Error(message))).toBe(false)
+  })
 })

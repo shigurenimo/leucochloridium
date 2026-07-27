@@ -14,7 +14,7 @@ Leuco daemon
 └─ Project
    └─ LeucoTenant
       ├─ Codex app-server child × 1
-      ├─ Codex thread × 1
+      ├─ Codex thread × 1..N
       └─ ChannelPlugin × N
          ├─ slack
          └─ schedule
@@ -22,9 +22,9 @@ Leuco daemon
 
 - `Project` が設定と実行の唯一のユーザー向け単位。有効なproject一つから
   `LeucoTenant` 一つとCodex子プロセス一つを作る。
-- project内のすべてのSlack接続、Slack会話、Slack thread、scheduleは
-  一つの `codexThreadId` を共有する。pluginが渡す `threadKey` はplugin内の
-  bookkeeping用で、tenantはCodex routingに使わない。
+- `conversationScope: project` が既定で、project内のSlackとscheduleは一つの
+  `codexThreadId` と直列queueを共有する。`thread` ではpluginが渡す
+  `threadKey` ごとにCodex threadと直列queueを分け、異なるkeyは上限付きで並行する。
 - `Channel` はSlack上のconversationではなく、project配下の接続plugin設定。
   Slack conversation IDは受信eventの `channel` 属性に乗る。
 - 現行schemaにLeuco独自の `Agent` entityや `agents` 配列はない。
@@ -80,7 +80,7 @@ Flume Socket Mode source
   → LeucoSlackChannelPlugin
   → LeucoSlackEventProcessor
   → LeucoTenant.runTextTurn
-  → project共通のturn queue
+  → conversation scopeに対応するturn queue
   → LeucoCodexClient
   → codex app-server
 ```
@@ -95,10 +95,12 @@ codex child
   → Slack Web API
 ```
 
-`runTextTurn` のassistant textは内部出力で、pluginはそれを直接Slackへpostしない。
-可視の返信はCodexが `slack_call` を呼ぶことで行う。
+可視の返信はCodexが `slack_call` を呼ぶ経路を優先する。明示的なpostがなく、
+宛先付きturnがfinal textを返した場合だけ、Slack pluginが同じthreadへその本文を
+そのままfallback postする。失敗時の定型文は合成しない。
 
-scheduleも `ChannelPluginContext.runTextTurn` へ合流し、同じ共通threadを使う。
+scheduleも `ChannelPluginContext.runTextTurn` へ合流する。project scopeでは共通thread、
+thread scopeではschedule entryの `threadKey` に対応するthreadを使う。
 `LeucoEventBus` は並行して `events.db` へ `slack.event`、`slack.connection`、
 `slack.error`、`turn.start`、`turn.complete`、`turn.error`、`schedule.fired`、
 `codex.notification` などを書く。

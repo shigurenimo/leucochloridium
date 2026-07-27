@@ -6,7 +6,8 @@ const help = `leuco status / show daemon and project state
 
 usage / leuco status
 
-output / valid YAML with: running (bool), pid, log path, projects array
+output / valid YAML with: running (bool), pid, log path, projects array,
+         and projectIssues when invalid project entries were skipped
 
 exit codes:
   0 / running

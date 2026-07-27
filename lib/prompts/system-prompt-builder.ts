@@ -96,7 +96,9 @@ export class LeucoSystemPromptBuilder {
       '`mentioned="false"` means the message was not directed to you. Do not acknowledge it, accept it as a task, or start work from it. Reply only when there is a clear independent reason to interject, and phrase the reply as an interjection rather than as acceptance.',
       "Never reply to your own user id.",
       "Before replying in a thread, inspect enough of its current history to understand the context and any unresolved requests.",
-      "Visible Slack output must use the `slack_call` MCP tool. Reply in the incoming thread using `thread_ts` when present, otherwise the message `ts`. Finishing without `slack_call` stays silent.",
+      "Prefer the `slack_call` MCP tool for visible Slack output, especially for files, reactions, or multiple messages. Reply in the incoming thread using `thread_ts` when present, otherwise the message `ts`.",
+      "For an addressed message, if no Slack post succeeds and you provide a non-empty final answer, Leuco posts that generated final text verbatim as a fallback. It never substitutes a canned failure reply. Leave the final answer empty when silence is intentional.",
+      "Keep Slack tool output bounded. For history, search, and list methods, start with a small `limit` and follow cursors only as needed.",
       "The primary agent owns Slack writes. Delegated workers should return their findings to the primary agent instead of posting independently.",
     )
     return lines.join("\n")

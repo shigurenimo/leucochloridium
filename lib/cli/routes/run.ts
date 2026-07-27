@@ -1,6 +1,7 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { LeucoDaemon } from "@/daemon/leuco-daemon"
 import { LeucoEnv } from "@/env/leuco-env"
 import { errorMessage } from "@/error-message"
 import { LeucoRuntime } from "@/runtime/runtime"
@@ -29,6 +30,17 @@ export const runHandler = factory.createHandlers(async (c) => {
     process.stdout.write(`[leuco] env files: ${sources.join(", ")}\n`)
   }
 
+  const daemon = new LeucoDaemon()
+  try {
+    daemon.claimCurrentProcess()
+  } catch (err) {
+    process.stderr.write(`leuco: ${errorMessage(err)}\n`)
+    process.exit(1)
+  }
+  process.once("exit", () => {
+    daemon.releaseCurrentProcess()
+  })
+
   let runtime: LeucoRuntime
   try {
     runtime = LeucoRuntime.build({
@@ -46,7 +58,10 @@ export const runHandler = factory.createHandlers(async (c) => {
     if (stopping) return
     stopping = true
     process.stdout.write(`\n[leuco] received ${signal}\n`)
-    await runtime.stop()
+    const stopError = await stopWithin(runtime, SHUTDOWN_TIMEOUT_MS)
+    if (stopError !== null) {
+      process.stderr.write(`[leuco] shutdown incomplete: ${stopError.message}\n`)
+    }
     process.exit(exitCode)
   }
 
@@ -78,8 +93,9 @@ export const runHandler = factory.createHandlers(async (c) => {
     // Node's default for unhandledRejection is also abort (since v15), and
     // attaching this listener replaces the default. Exit non-zero so launchd
     // restarts us instead of running with poisoned promise state. The exit
-    // code rides through shutdown() itself — a chained .then(exit(1)) would
-    // never run because shutdown exits the process.
+    // code must ride through `shutdown` itself — it calls `process.exit`
+    // internally, so a chained `.then(() => process.exit(1))` never runs.
+    // If a signal-driven shutdown is already in flight, let it finish.
     void shutdown("unhandledRejection", 1)
   })
 
@@ -95,3 +111,25 @@ export const runHandler = factory.createHandlers(async (c) => {
   // index.ts doesn't append a trailing body line.
   return new Promise<Response>(() => {})
 })
+
+const SHUTDOWN_TIMEOUT_MS = 12_000
+
+const stopWithin = async (runtime: LeucoRuntime, timeoutMs: number): Promise<Error | null> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<Error>((resolve) => {
+    timer = setTimeout(
+      () => resolve(new Error(`runtime stop timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs,
+    )
+  })
+  const stopped = runtime
+    .stop()
+    .then(() => null)
+    .catch((err: unknown) => (err instanceof Error ? err : new Error(errorMessage(err))))
+
+  try {
+    return await Promise.race([stopped, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}

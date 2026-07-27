@@ -49,6 +49,16 @@ export class LaunchctlBin implements LaunchctlPort {
     )
   }
 
+  async kickstart(label: string): Promise<void | Error> {
+    const result = await runLaunchctl(["kickstart", `${this.target()}/${label}`])
+    if (result instanceof Error) return result
+    if (result.exitCode === 0) return undefined
+
+    return new Error(
+      `launchctl kickstart failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`,
+    )
+  }
+
   async isLoaded(label: string): Promise<boolean | Error> {
     const result = await runLaunchctl(["print", `${this.target()}/${label}`])
     if (result instanceof Error) return result
