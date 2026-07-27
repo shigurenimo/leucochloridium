@@ -661,6 +661,33 @@ describe("LeucoTenant introspection", () => {
     const tenant = buildTenant({ codex: fakeCodex({ isRunning: () => false }) })
     expect(tenant.isCodexRunning()).toBe(false)
   })
+
+  it("clears a corrupt codex history so the next turn starts a fresh thread", async () => {
+    const startThread = vi
+      .fn<CodexClientPort["startThread"]>()
+      .mockResolvedValueOnce({ thread: { id: "corrupt-thread" } })
+      .mockResolvedValueOnce({ thread: { id: "fresh-thread" } })
+    const runTextTurn = vi
+      .fn<CodexClientPort["runTextTurn"]>()
+      .mockResolvedValueOnce(
+        new Error(
+          "[ObjectParam] [input[381].arguments.bad] invalid_request_error: property name is too long",
+        ),
+      )
+      .mockResolvedValueOnce("ok")
+    const tenant = buildTenant({ codex: fakeCodex({ startThread, runTextTurn }) })
+
+    const failed = await tenant.runTextTurn("k", "first")
+
+    expect(failed).toEqual(
+      new Error("codex session history was corrupted and has been reset; please resend"),
+    )
+    expect(tenant.listThreads()).toEqual([])
+
+    await expect(tenant.runTextTurn("k", "second")).resolves.toBe("ok")
+    expect(startThread).toHaveBeenCalledTimes(2)
+    expect(tenant.listThreads()).toEqual([{ threadKey: tenant.key, threadId: "fresh-thread" }])
+  })
 })
 
 describe("LeucoTenant developer instructions", () => {
