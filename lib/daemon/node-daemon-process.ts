@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { readFileSync, readlinkSync } from "node:fs"
 import { DaemonProcessPort } from "@/daemon/daemon-process-port"
+import { getNodeProcessCommand } from "@/daemon/legacy-pid-lease/get-node-process-command"
 
 export class NodeDaemonProcess extends DaemonProcessPort {
   private readonly bootIdentity: string
@@ -10,6 +11,10 @@ export class NodeDaemonProcess extends DaemonProcessPort {
     super()
     this.bootIdentity = getBootIdentity()
     Object.freeze(this)
+  }
+
+  getCommand(pid: number): string | null {
+    return getNodeProcessCommand(pid)
   }
 
   getIdentity(pid: number): string | null {

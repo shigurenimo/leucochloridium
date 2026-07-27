@@ -6,6 +6,7 @@ type SignalCall = {
 }
 
 type Props = {
+  commands?: ReadonlyArray<{ pid: number; command: string }>
   identities?: ReadonlyArray<{ pid: number; identity: string }>
   liveLegacyPids?: ReadonlyArray<number>
   onSignal?: (call: SignalCall, process: MemoryDaemonProcess) => boolean
@@ -14,18 +15,26 @@ type Props = {
 export class MemoryDaemonProcess extends DaemonProcessPort {
   readonly signals: SignalCall[] = []
   readonly sleeps: number[] = []
+  private readonly commands = new Map<number, string>()
   private readonly identities = new Map<number, string>()
   private readonly liveLegacyPids = new Set<number>()
   private clockMs = 0
 
   constructor(private readonly props: Props = {}) {
     super()
+    for (const entry of props.commands ?? []) {
+      this.commands.set(entry.pid, entry.command)
+    }
     for (const entry of props.identities ?? []) {
       this.identities.set(entry.pid, entry.identity)
     }
     for (const pid of props.liveLegacyPids ?? []) {
       this.liveLegacyPids.add(pid)
     }
+  }
+
+  getCommand(pid: number): string | null {
+    return this.commands.get(pid) ?? null
   }
 
   getIdentity(pid: number): string | null {

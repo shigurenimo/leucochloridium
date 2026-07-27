@@ -77,7 +77,68 @@ describe("LeucoDaemon", () => {
     expect(existsSync(paths.daemonPidPath())).toBe(false)
   })
 
-  it("does not signal a live legacy lease", () => {
+  it("migrates and stops a verified legacy Leuco daemon lease", () => {
+    writeFileSync(paths.daemonPidPath(), "12345\n")
+    let leaseAtSignal = ""
+    const processPort = new MemoryDaemonProcess({
+      commands: [
+        {
+          pid: 12345,
+          command: "/Users/i/.bun/bin/bun /Users/i/leucochloridium/lib/index.ts run",
+        },
+      ],
+      identities: [{ pid: 12345, identity: "legacy-daemon" }],
+      onSignal: (call, memory) => {
+        leaseAtSignal = readFileSync(paths.daemonPidPath(), "utf8")
+        memory.setIdentity(call.pid, null)
+        return true
+      },
+    })
+    const daemon = new LeucoDaemon({ paths, processPort })
+
+    expect(daemon.stop()).toEqual({ stopped: true, pid: 12345 })
+    expect(JSON.parse(leaseAtSignal)).toEqual({
+      version: 1,
+      pid: 12345,
+      processIdentity: "legacy-daemon",
+    })
+    expect(processPort.signals).toEqual([{ pid: 12345, signal: "SIGTERM" }])
+    expect(existsSync(paths.daemonPidPath())).toBe(false)
+  })
+
+  it("does not migrate or signal a legacy pid owned by an unrelated process", () => {
+    writeFileSync(paths.daemonPidPath(), "12345\n")
+    const processPort = new MemoryDaemonProcess({
+      commands: [{ pid: 12345, command: "/usr/bin/bun /tmp/unrelated/lib/index.ts run" }],
+      identities: [{ pid: 12345, identity: "unrelated-process" }],
+    })
+    const daemon = new LeucoDaemon({ paths, processPort })
+
+    expect(daemon.stop()).toEqual({ stopped: false, pid: 12345 })
+    expect(daemon.reload()).toEqual({ signalled: false, pid: 12345 })
+    expect(processPort.signals).toEqual([])
+    expect(readFileSync(paths.daemonPidPath(), "utf8")).toBe("12345\n")
+  })
+
+  it("migrates a verified legacy Leuco daemon lease before reload", () => {
+    writeFileSync(paths.daemonPidPath(), "12345\n")
+    const processPort = new MemoryDaemonProcess({
+      commands: [
+        {
+          pid: 12345,
+          command: "/Users/i/.bun/bin/bun /Users/i/leucochloridium/lib/index.ts run",
+        },
+      ],
+      identities: [{ pid: 12345, identity: "legacy-daemon" }],
+    })
+    const daemon = new LeucoDaemon({ paths, processPort })
+
+    expect(daemon.reload()).toEqual({ signalled: true, pid: 12345 })
+    expect(processPort.signals).toEqual([{ pid: 12345, signal: "SIGHUP" }])
+    expect(readFileSync(paths.daemonPidPath(), "utf8")).toBe(leaseText(12345, "legacy-daemon"))
+  })
+
+  it("does not signal a live legacy lease without a verifiable process identity", () => {
     writeFileSync(paths.daemonPidPath(), "12345\n")
     const processPort = new MemoryDaemonProcess({ liveLegacyPids: [12345] })
     const daemon = new LeucoDaemon({ paths, processPort })

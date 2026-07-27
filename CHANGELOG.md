@@ -2,6 +2,13 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.16.1 - 2026-07-28
+
+### Fixed
+
+- 0.16より前の数値PIDファイルを、安全確認後にupdate、restart、stop、reload前に移行。
+- `leuco doctor` でversion付きdaemon PID leaseを正しく診断。
+
 ## 0.16.0 - 2026-07-28
 
 ### Changed

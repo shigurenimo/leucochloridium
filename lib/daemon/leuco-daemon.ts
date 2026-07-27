@@ -12,7 +12,10 @@ import {
   truncateSync,
   unlinkSync,
 } from "node:fs"
+import type { DaemonPidLease } from "@/daemon/daemon-pid-lease"
 import type { DaemonProcessPort } from "@/daemon/daemon-process-port"
+import { parseLegacyDaemonPid } from "@/daemon/legacy-pid-lease/parse-legacy-daemon-pid"
+import { toVerifiedLegacyDaemonPidLease } from "@/daemon/legacy-pid-lease/to-verified-legacy-daemon-pid-lease"
 import { NodeDaemonProcess } from "@/daemon/node-daemon-process"
 import { atomicWriteText } from "@/fs/atomic-write-text"
 import { withFileLock } from "@/fs/with-file-lock"
@@ -47,12 +50,6 @@ export type DaemonStartResult = {
 export type DaemonStopResult = {
   stopped: boolean
   pid: number | null
-}
-
-type DaemonPidLease = {
-  version: 1
-  pid: number
-  processIdentity: string | null
 }
 
 /**
@@ -251,24 +248,26 @@ export class LeucoDaemon {
     const lease = readPidLease(pidPath)
     if (lease === null) return { stopped: false, pid: null }
 
-    const signalSent = this.withPidLeaseLock(() =>
-      this.sendSignalIfOwned(pidPath, lease, "SIGTERM"),
-    )
+    const signalLease = this.withPidLeaseLock(() => this.toSignalSafeLease(pidPath, lease))
+    const signalSent =
+      signalLease !== null &&
+      this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGTERM"))
 
-    if (signalSent) {
-      this.waitForExit(lease, SHUTDOWN_GRACE_MS)
-      if (this.isLeaseVerified(lease)) {
-        this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, lease, "SIGKILL"))
-        this.waitForExit(lease, SIGKILL_GRACE_MS)
+    if (signalLease !== null && signalSent) {
+      this.waitForExit(signalLease, SHUTDOWN_GRACE_MS)
+      if (this.isLeaseVerified(signalLease)) {
+        this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGKILL"))
+        this.waitForExit(signalLease, SIGKILL_GRACE_MS)
       }
     }
 
-    const isRunning = this.isLeaseRunning(lease)
+    const observedLease = signalLease ?? lease
+    const isRunning = this.isLeaseRunning(observedLease)
     const stopped = signalSent && !isRunning
     // launchd may already have started a replacement after the old process
     // exited. Never let the old stop operation erase the replacement's lease.
     if (!isRunning) {
-      this.withPidLeaseLock(() => removePidFileIfOwned(pidPath, lease))
+      this.withPidLeaseLock(() => removePidFileIfOwned(pidPath, observedLease))
     }
     return { stopped, pid: lease.pid }
   }
@@ -279,7 +278,10 @@ export class LeucoDaemon {
     const lease = readPidLease(pidPath)
     if (lease === null) return { signalled: false, pid: null }
 
-    const signalled = this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, lease, "SIGHUP"))
+    const signalLease = this.withPidLeaseLock(() => this.toSignalSafeLease(pidPath, lease))
+    const signalled =
+      signalLease !== null &&
+      this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGHUP"))
     return { signalled, pid: lease.pid }
   }
 
@@ -307,6 +309,23 @@ export class LeucoDaemon {
   private isLeaseVerified(lease: DaemonPidLease): boolean {
     if (lease.processIdentity === null) return false
     return this.processPort.getIdentity(lease.pid) === lease.processIdentity
+  }
+
+  private toSignalSafeLease(pidPath: string, lease: DaemonPidLease): DaemonPidLease | null {
+    if (lease.processIdentity !== null) return lease
+    if (!isSameLease(readPidLease(pidPath), lease)) return null
+
+    const processIdentity = this.processPort.getIdentity(lease.pid)
+    const migratedLease = toVerifiedLegacyDaemonPidLease({
+      pid: lease.pid,
+      processCommand: this.processPort.getCommand(lease.pid),
+      processIdentity,
+    })
+    if (migratedLease === null) return null
+    if (this.processPort.getIdentity(lease.pid) !== processIdentity) return null
+
+    writePidLease(pidPath, migratedLease)
+    return isSameLease(readPidLease(pidPath), migratedLease) ? migratedLease : null
   }
 
   private sendSignalIfOwned(
@@ -347,11 +366,8 @@ export class LeucoDaemon {
 const readPidLease = (path: string): DaemonPidLease | null => {
   try {
     const text = readFileSync(path, "utf8").trim()
-    if (/^[1-9]\d*$/.test(text)) {
-      const pid = Number(text)
-      if (!Number.isSafeInteger(pid)) return null
-      return { version: 1, pid, processIdentity: null }
-    }
+    const legacyPid = parseLegacyDaemonPid(text)
+    if (legacyPid !== null) return { version: 1, pid: legacyPid, processIdentity: null }
 
     const value: unknown = JSON.parse(text)
     if (typeof value !== "object" || value === null) return null

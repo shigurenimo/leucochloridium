@@ -3,6 +3,8 @@ import { join } from "node:path"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
+import type { DoctorCheck } from "@/cli/utils/doctor-check"
+import { toDaemonDoctorChecks } from "@/cli/utils/to-daemon-doctor-checks"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore, type RunnableProjectList } from "@/projects/project-store"
 
@@ -27,10 +29,7 @@ exit codes:
   0 / all checks passed
   1 / one or more issues found`
 
-type Check = {
-  status: "ok" | "warn" | "error"
-  message: string
-}
+type Check = DoctorCheck
 
 type ZombieProcess = {
   pid: number
@@ -68,51 +67,6 @@ type DoctorReport = {
 const ok = (message: string): Check => ({ status: "ok", message })
 const warn = (message: string): Check => ({ status: "warn", message })
 const error = (message: string): Check => ({ status: "error", message })
-
-const checkDaemon = (pidPath: string, logPath: string): Record<string, Check> => {
-  const checks: Record<string, Check> = {}
-
-  if (!existsSync(pidPath)) {
-    checks.pid = warn("no pid file — daemon is not running")
-    checks.process = error("daemon not running")
-    return checks
-  }
-
-  const pidText = readFileSync(pidPath, "utf8").trim()
-  const pid = Number.parseInt(pidText, 10)
-
-  if (!Number.isFinite(pid)) {
-    checks.pid = error(`pid file contains invalid value: ${pidText}`)
-    checks.process = error("daemon not running")
-    return checks
-  }
-
-  checks.pid = ok(`pid ${pid}`)
-
-  try {
-    process.kill(pid, 0)
-    checks.process = ok(`process ${pid} alive`)
-  } catch (err) {
-    if (err instanceof Error && "code" in err && err.code === "EPERM") {
-      checks.process = ok(`process ${pid} alive (permission restricted)`)
-    } else {
-      checks.process = error(`process ${pid} not found — stale pid file`)
-    }
-  }
-
-  if (existsSync(logPath)) {
-    const logStat = statSync(logPath)
-    const ageSec = (Date.now() - logStat.mtimeMs) / 1000
-    checks.log =
-      ageSec < 600
-        ? ok(`log active (${Math.round(ageSec)}s ago)`)
-        : warn(`log stale (${Math.round(ageSec)}s since last write)`)
-  } else {
-    checks.log = warn("log file missing")
-  }
-
-  return checks
-}
 
 const checkCodex = (): Record<string, Check> => {
   const checks: Record<string, Check> = {}
@@ -448,7 +402,18 @@ export const doctorHandler = factory.createHandlers(async (c) => {
     // settings parse failed — handled by checkSettings
   }
 
-  const daemonChecks = checkDaemon(paths.daemonPidPath(), paths.daemonLogPath())
+  const daemonStatus = c.var.daemon.status()
+  const hasPidFile = existsSync(daemonStatus.pidPath)
+  const pidText = hasPidFile ? readFileSync(daemonStatus.pidPath, "utf8").trim() : null
+  const logAgeSeconds = existsSync(daemonStatus.logPath)
+    ? (Date.now() - statSync(daemonStatus.logPath).mtimeMs) / 1000
+    : null
+  const daemonChecks = toDaemonDoctorChecks({
+    daemonStatus,
+    hasPidFile,
+    pidText,
+    logAgeSeconds,
+  })
   const isDaemonRunning = daemonChecks.process?.status === "ok"
   const daemonPidMatch = daemonChecks.pid?.message.match(/pid (\d+)/)
   const daemonPid = daemonPidMatch ? Number.parseInt(daemonPidMatch[1]!, 10) : null
