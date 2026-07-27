@@ -16,7 +16,7 @@ const statusProjectsSchema = z
  * sleep a fixed 400ms and hope the SIGHUP-driven reconcile had read the
  * disabled state in time — when reconcile was busy (a tenant stop can take
  * the full 5s codex SIGTERM grace), the re-enable landed first and "restarted"
- * was a silent no-op, leaving e.g. a rotated MCP token unpicked.
+ * was a silent no-op, leaving changed tenant configuration unpicked.
  *
  * Returns true only when the tenant is confirmed down. A temporarily
  * unreachable gateway remains unknown and is retried until timeout.

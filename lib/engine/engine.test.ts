@@ -97,7 +97,6 @@ describe("LeucoEngine.start / stop", () => {
       projectStore: fakeStore(),
       buildTenant: noBuild,
       port: 7331,
-      mcpTokenForProject: () => "token",
       onLog: () => {},
       buildGateway: () => ({
         start: () => {
@@ -158,7 +157,6 @@ describe("LeucoEngine.start / stop", () => {
       projectStore: fakeStore(projects),
       buildTenant: noBuild,
       port: 7331,
-      mcpTokenForProject: () => "token",
       onLog: () => {},
       bus,
       buildGateway: () => ({
@@ -203,7 +201,6 @@ describe("LeucoEngine.start / stop", () => {
       projectStore: fakeStore([makeProject("alpha")]),
       buildTenant: noBuild,
       port: 7331,
-      mcpTokenForProject: () => "token",
       onLog: () => {},
       buildGateway: () => ({
         start: () => {
@@ -450,7 +447,6 @@ describe("LeucoEngine.start / stop", () => {
       projectStore: fakeStore([makeProject("alpha"), makeProject("bravo")]),
       buildTenant: noBuild,
       port: 7331,
-      mcpTokenForProject: () => "token",
       onLog: () => {},
       buildGateway: () => ({
         start: () => {

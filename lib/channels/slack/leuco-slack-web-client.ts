@@ -1,5 +1,5 @@
 /**
- * Outbound port for Slack Web API. The adapter and the `slack_call` action
+ * Outbound port for Slack Web API. The adapter and the `leuco slack call` action
  * depend on this abstract class. Real traffic goes through
  * `LeucoFetchSlackWebClient` (raw fetch over `https://slack.com/api/...`); tests
  * substitute `LeucoMemorySlackWebClient`.

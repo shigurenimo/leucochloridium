@@ -19,7 +19,7 @@ export const projectsSessionHandler = factory.createHandlers(async (c) => {
 
   const projectName = c.req.param("project")!
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
   const activeThreadIds =
     project.conversationScope === "project"
       ? project.state.codexThreadId === null

@@ -29,7 +29,7 @@ export const projectsPathHandler = factory.createHandlers(async (c) => {
 
   const paths = new LeucoPaths()
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   if (key === "home" || key === "codex") {
     return c.text(paths.projectHome(project.id))

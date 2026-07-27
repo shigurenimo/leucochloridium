@@ -2,8 +2,10 @@ import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
 import { FunnelLogSqliteSink } from "@interactive-inc/claude-funnel/logger"
 import { factory } from "@/cli/cli-factory"
-import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { resolveProjectFilter } from "@/cli/utils/lookup-config"
+import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import type { LeucoEvent } from "@/events/leuco-event-types"
+import { LeucoProjectStore } from "@/projects/project-store"
 
 const PRESETS: Record<string, { types: string[]; description: string }> = {
   turns: {
@@ -168,7 +170,8 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   })
 
   const limit = parseLimitFlag(body.flags.limit)
-  const projectFilter = typeof body.flags.project === "string" ? body.flags.project : undefined
+  const projectFilter =
+    resolveProjectFilter(c, new LeucoProjectStore(), flagString(body.flags.project)) ?? undefined
   const asJson = flagBool(body.flags.json)
 
   const presetName = typeof body.flags.preset === "string" ? body.flags.preset : null

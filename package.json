@@ -7,7 +7,6 @@
     "bun",
     "codex",
     "gateway",
-    "mcp",
     "slack"
   ],
   "homepage": "https://github.com/shigurenimo/leucochloridium#readme",
@@ -64,7 +63,6 @@
   "dependencies": {
     "@interactive-inc/claude-funnel": "0.66.0",
     "@interactive-inc/flume": "0.10.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4.12.32",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"

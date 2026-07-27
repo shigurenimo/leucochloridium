@@ -1,28 +1,35 @@
+import type { Project } from "@/config/config-schema"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
 const SHORTCUT_PREFIXES = new Set(["channels"])
 
+type Props = {
+  args: string[]
+  cwd: string
+  projectStore: LeucoProjectStore
+  scopedProject: Project | null
+}
+
 /**
- * If the first argv token is `channels` and the user's cwd matches a
- * registered project's path, inject `projects <projectName>` before the rest
- * of the args. Lets users type `leuco channels list` from inside the repo
- * instead of `leuco projects <p> channels list`.
+ * If the first argv token is `channels`, inject `projects <projectName>`
+ * before the rest of the args. A tenant Codex scope always wins; an operator
+ * shell falls back to matching the current working directory.
  */
-export const applyCwdShortcut = (
-  args: string[],
-  cwd: string,
-  projectStore: LeucoProjectStore,
-): string[] => {
-  const head = args[0]
-  if (head === undefined || !SHORTCUT_PREFIXES.has(head)) return args
+export const applyCwdShortcut = (props: Props): string[] => {
+  const head = props.args[0]
+  if (head === undefined || !SHORTCUT_PREFIXES.has(head)) return props.args
+
+  if (props.scopedProject !== null) {
+    return ["projects", props.scopedProject.name, ...props.args]
+  }
 
   // `resolveByCwd` throws for an unregistered cwd; the shortcut is
   // best-effort so fall through to normal routing instead of crashing the
   // CLI before the router even sees the command.
   try {
-    const project = projectStore.resolveByCwd(cwd)
-    return ["projects", project.name, ...args]
+    const project = props.projectStore.resolveByCwd(props.cwd)
+    return ["projects", project.name, ...props.args]
   } catch {
-    return args
+    return props.args
   }
 }

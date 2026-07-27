@@ -67,6 +67,7 @@ const pickEnvVars = (env: NodeJS.ProcessEnv): Record<string, string> => {
 
   for (const key of Object.keys(env)) {
     if (!key.startsWith("LEUCO_")) continue
+    if (key === "LEUCO_PROJECT_ID") continue
     const value = env[key]
     if (typeof value === "string") out[key] = value
   }

@@ -25,7 +25,7 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const name = c.req.param("project")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, name, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, name)
 
   // Removing a project deletes its CODEX_HOME — an agent doing this to its
   // own project would erase its memory out from under the running codex.

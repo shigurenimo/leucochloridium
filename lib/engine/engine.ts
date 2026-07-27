@@ -10,12 +10,9 @@ export type LeucoEngineProps = {
   tenants: LeucoTenant[]
   projectStore: LeucoProjectStore
   buildTenant: (project: Project) => LeucoTenant
-  /** Production callers (runtime.ts) always supply both `port` and
-   * `mcpTokenForProject`. They are optional here only so tests can drive
-   * `engine.start()` / `engine.reconcile()` without bringing up a real
-   * Bun.serve gateway. */
+  /** Production callers supply `port`. It is optional here so tests can drive
+   * the engine without bringing up a real Bun.serve gateway. */
   port?: number
-  mcpTokenForProject?: (projectId: string) => string | null
   onLog?: (line: string) => void
   bus?: LeucoEventBus
   buildGateway?: GatewayBuilder
@@ -38,7 +35,6 @@ type GatewayLifecycle = {
 type GatewayBuilder = (props: {
   engine: LeucoEngine
   port: number
-  mcpTokenForProject: (projectId: string) => string | null
   onLog: Logger
 }) => GatewayLifecycle
 
@@ -66,7 +62,6 @@ export class LeucoEngine {
   private readonly port: number | undefined
   private readonly log: Logger
   private readonly bus: LeucoEventBus
-  private readonly mcpTokenForProject: ((projectId: string) => string | null) | undefined
   private readonly buildGateway: GatewayBuilder
   private readonly tenantSignatures: Map<string, string>
   private readonly tenantRetries = new Map<string, TenantRetryState>()
@@ -86,7 +81,6 @@ export class LeucoEngine {
     this.port = props.port
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
     this.bus = props.bus ?? new LeucoEventBus()
-    this.mcpTokenForProject = props.mcpTokenForProject
     this.buildGateway =
       props.buildGateway ?? ((gatewayProps) => new LeucoGatewayServer(gatewayProps))
     this.tenantSignatures = this.loadInitialTenantSignatures()
@@ -455,14 +449,12 @@ export class LeucoEngine {
   }
 
   private startGateway(): void {
-    const mcpTokenForProject = this.mcpTokenForProject
-    if (this.port === undefined || mcpTokenForProject === undefined) return
+    if (this.port === undefined) return
 
     const gateway = this.buildGateway({
       engine: this,
       port: this.port,
       onLog: this.log,
-      mcpTokenForProject,
     })
     gateway.start()
     this.gateway = gateway

@@ -21,6 +21,10 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("/tmp/demo")
     expect(out).toContain("The local `leuco` CLI controls the same runtime")
     expect(out).toContain("`leuco --help`")
+    expect(out).toContain("locked to project `demo` by `LEUCO_PROJECT_ID`")
+    expect(out).toContain("Never unset or override it")
+    expect(out).toContain("Leuco operations are CLI-only")
+    expect(out).toContain("Do not look for or call a built-in Leuco MCP server")
   })
 
   it("omits Slack instructions when no Slack channel is connected", () => {
@@ -75,7 +79,9 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("## Slack runtime")
     expect(out).toContain("Never reply to your own user id")
     expect(out).toContain("inspect enough of its current history")
-    expect(out).toContain("`slack_call` MCP tool")
+    expect(out).toContain("`leuco slack call <method>")
+    expect(out).toContain("Do not pass `--project`")
+    expect(out).toContain("`leuco channels <channel-config> download-file")
     expect(out).toContain("`thread_ts`")
     expect(out).toContain("generated final text verbatim")
     expect(out).toContain("Leave the final answer empty when silence is intentional")
@@ -102,6 +108,7 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("## Local command hygiene")
     expect(out).toContain("Keep shell output bounded")
     expect(out).toContain("`rg -m`")
+    expect(out).toContain("Do not run machine-wide Leuco administration commands")
   })
 
   it("explains explicit Slack writes and generated final-answer fallback", () => {
@@ -111,11 +118,12 @@ describe("LeucoSystemPromptBuilder", () => {
     }).build()
 
     expect(out).toContain("## Slack runtime")
-    expect(out).toContain("`slack_call` MCP tool")
+    expect(out).toContain("`leuco slack call <method>")
+    expect(out).not.toContain("slack_call")
     expect(out).toContain("`thread_ts`")
     expect(out).toContain("posts that generated final text verbatim")
     expect(out).toContain("never substitutes a canned failure reply")
-    expect(out).toContain("Keep Slack tool output bounded")
+    expect(out).toContain("Slack CLI output is bounded")
     expect(out).toContain("small `limit`")
   })
 
@@ -175,7 +183,7 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).not.toContain("schedule_create")
   })
 
-  it("lists schedule channels and the schedule_* MCP tools when present", () => {
+  it("lists schedule channels and their scoped CLI commands when present", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
       identities: [
@@ -186,9 +194,10 @@ describe("LeucoSystemPromptBuilder", () => {
 
     expect(out).toContain("## Scheduled prompts")
     expect(out).toContain("`cron`")
-    expect(out).toContain("`schedule_create`")
-    expect(out).toContain("`schedule_list`")
-    expect(out).toContain("`schedule_delete`")
+    expect(out).toContain("`leuco channels <channel-config> schedules add")
+    expect(out).toContain("`leuco channels <channel-config> schedules list`")
+    expect(out).toContain("`leuco channels <channel-config> schedules remove")
+    expect(out).not.toContain("schedule_create")
     expect(out).toContain("<schedule channel=")
     expect(out).toContain("Do not send an external message")
     expect(out).toContain("avoid duplicate messages")

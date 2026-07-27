@@ -10,8 +10,7 @@ const PAST_GRACE_MS = 60_000
 /**
  * Validate a `runAt` string before persisting it. Throws an `Error` describing
  * whether cron parsing or ISO parsing failed; otherwise returns the input
- * unchanged. Used by both the CLI `schedules add` route and the MCP
- * `schedule_create` tool so the two paths reject the same garbage.
+ * unchanged. Used by the CLI `schedules add` route.
  * `now` is injectable for tests and defaults to the real clock.
  */
 export const validateRunAt = (runAt: string, now: () => number = () => Date.now()): string => {

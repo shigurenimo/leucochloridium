@@ -21,7 +21,7 @@ export const channelsRemoveHandler = factory.createHandlers(async (c) => {
   const channelName = c.req.param("channel")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   findChannel(project, channelName)
 

@@ -27,13 +27,22 @@ export const schedulesAddHandler = factory.createHandlers(async (c) => {
         "usage: leuco projects <p> channels <c> schedules add --name <n> --run-at <expr> --prompt <text>",
     })
   }
+  if (name.length > 200) {
+    throw new HTTPException(400, { message: "schedule entry name must be at most 200 characters" })
+  }
+  if (runAt.length > 200) {
+    throw new HTTPException(400, { message: "--run-at must be at most 200 characters" })
+  }
+  if (prompt.length > 10_000) {
+    throw new HTTPException(400, { message: "--prompt must be at most 10000 characters" })
+  }
 
   const validatedName = validateLeucoName(name, "schedule entry name")
 
   const validatedRunAt = validateRunAt(runAt)
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   const channel = findChannel(project, channelName)
 

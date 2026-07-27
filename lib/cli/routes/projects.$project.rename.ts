@@ -30,7 +30,7 @@ export const projectsRenameHandler = factory.createHandlers(async (c) => {
   assertRoutableName(newName, "project name")
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, oldName)
 
   store.updateProject(project.id, (fresh) => ({ ...fresh, name: newName }))
 

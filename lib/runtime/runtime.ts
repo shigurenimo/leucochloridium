@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto"
 import {
   chmodSync,
   existsSync,
@@ -27,12 +26,13 @@ import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { LeucoPromptPresets } from "@/prompts/presets"
+import { buildCodexChildEnv } from "@/runtime/build-codex-child-env"
 
 type Logger = (line: string) => void
 
 export type LeucoRuntimeProps = {
   env: NodeJS.ProcessEnv
-  /** Gateway port for `/mcp/<projectId>`. Defaults to the CLI port (7331). */
+  /** Loopback gateway port for daemon health, status, and thread control. */
   port?: number
   home?: string
   codexBin?: string
@@ -42,8 +42,6 @@ export type LeucoRuntimeProps = {
   /** Optional override owned and closed by the runtime. */
   eventBus?: LeucoEventBus
 }
-
-const LEUCO_MCP_TOKEN_ENV = "LEUCO_MCP_TOKEN"
 
 /**
  * Composition root: reads every registered project from unified settings,
@@ -94,18 +92,7 @@ export class LeucoRuntime {
       })
     }
 
-    // One bearer token per project, generated lazily and held for the daemon
-    // lifetime: tenant A's codex child cannot present its token against
-    // tenant B's `/mcp/:project` route.
-    const mcpTokens = new Map<string, string>()
-    const mcpTokenForProject = (projectId: string): string => {
-      const existing = mcpTokens.get(projectId)
-      if (existing !== undefined) return existing
-      const fresh = randomBytes(32).toString("hex")
-      mcpTokens.set(projectId, fresh)
-      return fresh
-    }
-    const mcpPort = buildProps.port ?? DEFAULT_LEUCO_PORT
+    const gatewayPort = buildProps.port ?? DEFAULT_LEUCO_PORT
 
     const buildTenantFn =
       buildProps.buildTenantForProject ??
@@ -119,8 +106,6 @@ export class LeucoRuntime {
           bus,
           projectStore,
           projectStateStore,
-          mcpToken: mcpTokenForProject(project.id),
-          mcpPort,
           turnTimeoutMs: globalSettings.turnTimeoutMs,
           turnIdleTimeoutMs: globalSettings.turnIdleTimeoutMs,
           turnConcurrency: globalSettings.turnConcurrency,
@@ -147,12 +132,11 @@ export class LeucoRuntime {
 
     const engine = new LeucoEngine({
       tenants,
-      port: mcpPort,
+      port: gatewayPort,
       onLog,
       projectStore,
       buildTenant: buildTenantFn,
       bus,
-      mcpTokenForProject: (projectId) => mcpTokens.get(projectId) ?? null,
     })
 
     return new LeucoRuntime({
@@ -199,8 +183,6 @@ type BuildTenantProps = {
   bus: LeucoEventBus
   projectStore: LeucoProjectStore
   projectStateStore: LeucoProjectStateStore
-  mcpToken: string
-  mcpPort: number
   turnTimeoutMs: number
   turnIdleTimeoutMs: number
   turnConcurrency: number
@@ -222,18 +204,15 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
   const codexHome = ensureCodexHome(props.paths, props.project.id)
   ensureTenantConfigToml(codexHome, {
     projectPath: props.project.path,
-    projectId: props.project.id,
-    projectName: props.project.name,
-    mcpEndpoint: { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}` },
     extraMcpServers: props.project.mcpServers,
   })
   ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
 
-  const childEnv: NodeJS.ProcessEnv = {
-    ...props.env,
-    CODEX_HOME: codexHome,
-    [LEUCO_MCP_TOKEN_ENV]: props.mcpToken,
-  }
+  const childEnv = buildCodexChildEnv({
+    env: props.env,
+    codexHome,
+    projectId: props.project.id,
+  })
 
   const codex = new LeucoCodexClient({
     bin: props.codexBin,
@@ -306,20 +285,10 @@ const ensureTenantConfigToml = (
   codexHome: string,
   tenant: {
     projectPath: string
-    projectId: string
-    projectName: string
-    mcpEndpoint: { url: string }
     extraMcpServers: Record<string, McpServer>
   },
 ): void => {
   const path = join(codexHome, "config.toml")
-  const autoApproveTools = [
-    "slack_call",
-    "slack_download_file",
-    "schedule_create",
-    "schedule_list",
-    "schedule_delete",
-  ]
   const lines = [
     `model = "gpt-5.6-terra"`,
     `model_reasoning_effort = "xhigh"`,
@@ -333,18 +302,9 @@ const ensureTenantConfigToml = (
     `[projects.${tomlString(tenant.projectPath)}]`,
     `trust_level = "trusted"`,
     "",
-    `[mcp_servers.leuco]`,
-    `url = ${tomlString(tenant.mcpEndpoint.url)}`,
-    `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
-    "",
   ]
 
-  for (const tool of autoApproveTools) {
-    lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")
-  }
-
   for (const [name, server] of Object.entries(tenant.extraMcpServers)) {
-    if (name === "leuco") continue
     lines.push(
       `[mcp_servers.${name}]`,
       `command = ${tomlString(server.command)}`,

@@ -30,7 +30,7 @@ export const channelsRenameHandler = factory.createHandlers(async (c) => {
   assertRoutableName(newName, "channel name")
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   findChannel(project, oldName)
 

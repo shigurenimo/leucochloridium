@@ -25,7 +25,7 @@ export const channelsRestartHandler = factory.createHandlers(async (c) => {
   const channelName = c.req.param("channel")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
   if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
     throw new HTTPException(400, {
       message: selfProjectGuardMessage(projectName, `restart channel "${channelName}" for`),

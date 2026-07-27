@@ -94,13 +94,11 @@ const migratePromptPresets = (value: unknown): unknown => {
 }
 
 /**
- * One extra stdio MCP server to attach to this project's codex, on top of the
- * built-in `leuco` server. leuco stays agnostic about what the server does:
- * it only forwards `command`/`args`/`env` verbatim into the tenant's
- * CODEX_HOME `config.toml` as a `[mcp_servers.<key>]` block. Per-project `env`
- * is how callers scope a shared MCP binary to a specific identity (e.g. a
- * token-vault MCP keyed by the owner's email), without leuco needing to model
- * that identity itself.
+ * One external stdio MCP server to attach to this project's Codex child.
+ * Leuco stays agnostic about what the server does and only forwards
+ * `command`/`args`/`env` into the tenant's CODEX_HOME `config.toml` as a
+ * `[mcp_servers.<key>]` block. Per-project `env` lets callers scope a shared
+ * MCP binary to a specific identity without Leuco modeling that identity.
  */
 const mcpServerSchema = z.object({
   command: z.string().min(1),

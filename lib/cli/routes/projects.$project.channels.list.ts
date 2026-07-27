@@ -21,7 +21,7 @@ export const channelsListHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   return c.text(
     renderYaml({

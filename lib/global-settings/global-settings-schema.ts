@@ -38,8 +38,8 @@ const globalSettingsShape = {
     .array(projectSchema)
     .default([])
     .superRefine((projects, ctx) => {
-      // Two projects sharing an id would share CODEX_HOME and the /mcp/<id>
-      // route and silently overwrite each other's config.toml — fail loudly.
+      // Two projects sharing an id would share CODEX_HOME and silently
+      // overwrite each other's config.toml — fail loudly.
       const seen = new Set<string>()
       for (const project of projects) {
         if (seen.has(project.id)) {

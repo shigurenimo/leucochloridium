@@ -7,7 +7,7 @@ import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-
 import { resolveSlackTokens } from "@/actions/slack/slack-call"
 import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
 import { factory } from "@/cli/cli-factory"
-import { resolveProject } from "@/cli/utils/lookup-config"
+import { resolveProjectArgument } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
 import type { LeucoEvent } from "@/events/leuco-event-types"
@@ -15,14 +15,15 @@ import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco slack dm / diagnose the latest inbound direct message
 
-usage / leuco slack dm [conversation-id] --project <p> [--limit <N>] [--json]
+usage / leuco slack dm [conversation-id] [--project <p>] [--limit <N>] [--json]
 
 arguments:
   [conversation-id] / optional Slack DM ID (for example D0123ABC)
                       omitted: inspect the newest human message across all DMs
 
 options:
-  --project <p> / project whose Slack bot should be inspected
+  --project <p> / project whose Slack bot should be inspected; optional inside
+                  a tenant Codex session and required otherwise
   --limit <N> / Slack history messages to inspect (default 50, max 100)
   --json / print JSON instead of YAML
 
@@ -63,10 +64,9 @@ export const slackDmHandler = factory.createHandlers(async (c) => {
   }
 
   const projectName = flagString(body.flags.project)
-  if (projectName === null) throw new HTTPException(400, { message: "--project is required" })
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProjectArgument(c, store, projectName)
   const tokens = resolveSlackTokens({ project })
   const client = new LeucoFetchSlackWebClient({ botToken: tokens.botToken })
   const limit = parseLimit(flagString(body.flags.limit))

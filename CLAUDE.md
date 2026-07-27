@@ -40,9 +40,10 @@ Bun 1.3以上、TypeScript、ESM。HTTPはHonoで、CLIもargvを同じHono app�
 POSTする。wire値はZodでparseし、型は `z.infer` から作る。
 
 Slack受信は `@interactive-inc/flume` のSocket Mode source、送信はraw `fetch`。
-`@slack/bolt` と `@slack/web-api` には依存しない。MCPは
-`@modelcontextprotocol/sdk`。Codex `app-server` はstdio JSON-RPCでspawnし、
-Leuco MCPはdaemon内のstreamable HTTPで公開する。
+`@slack/bolt` と `@slack/web-api` には依存しない。Codex `app-server` は
+stdio JSON-RPCでspawnする。Leuco内蔵MCPはなく、Slackとscheduleの操作は
+project scope付きのローカル `leuco` CLIへ一本化する。project設定の
+`mcpServers` は利用者がCodexへ追加する外部stdio MCPだけを表す。
 
 event logは `@interactive-inc/claude-funnel` の `FunnelLogSqliteSink`。toolchainは
 vite-plus、Vitest、TypeScript compiler、Bun test。
@@ -58,14 +59,13 @@ lib/
 ├─ engine/                  Engine、Tenant、ChannelPlugin、Codex client
 ├─ channels/                channel host、Slack plugin、schedule plugin
 ├─ actions/slack/           Slack API、file、DM診断
-├─ config/                  Project、Channel、Schedule、MCPのZod schema
+├─ config/                  Project、Channel、Schedule、外部MCPのZod schema
 ├─ global-settings/         機械全体設定のstoreとschema
 ├─ projects/                registry、runtime state、scaffolder
 ├─ daemon/                  一マシン一daemonのpid・log・spawn supervisor
 ├─ boot/                    macOS LaunchAgent
 ├─ events/                  typed event busとSQLite sink
-├─ gateway/                 IPC・status・thread・MCP用HTTP gateway
-├─ mcp/                     project scopeのMCP serverとtool schemas
+├─ gateway/                 IPC・status・thread用loopback HTTP gateway
 ├─ fs/                      atomic writeとfile lock
 ├─ paths/leuco-paths.ts     `~/.leuco/` pathの唯一の組み立て元
 └─ env/                     CLI env schemaとdotenv reader
@@ -89,13 +89,15 @@ CodexがSlackへ返信する経路は次のとおり。
 
 ```text
 codex child
-  → http://127.0.0.1:<port>/mcp/<project-id>
-  → slack_call MCP tool
+  → LEUCO_PROJECT_IDで固定されたlocal leuco CLI
+  → leuco slack call
+  → slackCall action
   → LeucoFetchSlackWebClient
   → Slack Web API
 ```
 
-可視の返信はCodexが `slack_call` を呼ぶ経路を優先する。明示的なpostがなく、
+可視の返信はCodexが `leuco slack call` を実行する経路を優先する。明示的な
+postがなく、
 宛先付きturnがfinal textを返した場合だけ、Slack pluginが同じthreadへその本文を
 そのままfallback postする。失敗時の定型文は合成しない。
 
@@ -112,11 +114,11 @@ thread scopeではschedule entryの `threadKey` に対応するthreadを使う�
 - `~/.leuco/settings.json` の `projects` を `LeucoProjectStore` で読む
 - enabled projectごとにenabled channelだけをplugin化する
 - projectごとに独立 `CODEX_HOME` とCodex子プロセスを作る
-- projectごとにdaemon起動中だけ有効なbearer tokenを発行する
+- Codex子へそのprojectの `LEUCO_PROJECT_ID` を渡す
 - `LeucoEngine` がtenantのstart、stop、SIGHUP reconcileを所有する
-- Hono gatewayがIPCと `/mcp/:projectId` を一つのportで受ける
+- Hono gatewayがhealth、status、thread制御をloopback portで受ける
 
-project設定のsignatureにpath、prompt、model、MCP、enabled channel、Slack tokenを
+project設定のsignatureにpath、prompt、model、外部MCP、enabled channel、Slack tokenを
 含め、reconcileで変化を検出したtenantだけを再構築する。schedule entryは
 pluginがtickごとに再読み込みするためsignatureから除外する。
 
@@ -143,7 +145,7 @@ projectごとのruntime directoryは `~/.leuco/projects/<id>/`。現行の永続
 そのprojectの意図的な別ログインとみなして上書きしない。
 
 `events.db`はSlack本文を含むため本体、WAL、SHMを0600へ寄せる。
-tenantの `config.toml` もMCP設定を含むため0600。
+tenantの `config.toml` は利用者設定の外部MCP環境変数を含み得るため0600。
 
 ## CLI route
 
@@ -171,6 +173,10 @@ help textはplain ASCII、2space indent、隣のhelpと同じ書式にする。
 引数なしの `leuco` はdaemon停止中ならbackground start、起動済みなら
 status表示。登録済みprojectのpathとcwdが完全一致する場合だけ
 `leuco channels ...` を `leuco projects <p> channels ...` へ展開する。
+Codex子では `LEUCO_PROJECT_ID` に対応するprojectをcwdより優先し、cwd変更後も
+同じ短縮形をそのprojectへ展開する。projectを解決するCLI routeは明示された
+project IDがscopeと一致しなければ403で拒否する。Codex子からこの環境変数を
+解除・上書きしてはならない。
 
 `.env.local` と `.env` を読むのはforegroundの `leuco run` だけ。その他のCLIや
 `leuco start` で読むと、呼び出しcwdの無関係なsecretをdaemonへ固定するため
@@ -243,14 +249,18 @@ vp check && \
   `lib/engine/codex/codex-protocol.ts` のwire扱いを参照する。
 - `codex.stop()` はSIGTERM後5秒待ち、終了しなければSIGKILLへ昇格する。
   ストリームturnのaborterも必ずsettleさせる。
-- project一つのturn queueは直列。一turnのwall-clock timeoutは10分で、
-  timeoutまたはcommand output上限超過時はCodex子を再起動する。
+- project scopeではproject一つのturn queueを直列化する。thread scopeでは
+  `threadKey` ごとに直列化し、異なるkeyを設定上限まで並行する。一turnの
+  wall-clock timeoutは10分で、timeoutまたはcommand output上限超過時は
+  Codex子を再起動する。
 - tenantの `config.toml` は `approval_policy = "never"` と
   `sandbox_mode = "danger-full-access"` を強制する。daemonには承認promptに
   答えるterminalがなく、macOS seatbeltのnetwork制限が無音で失敗するため。
-- MCP bearer tokenはdaemon起動ごと・projectごとに発行し、
-  `LEUCO_MCP_TOKEN` で該当Codex子だけへ渡す。project Aのtokenでproject Bの
-  `/mcp/<id>` は呼べない。
+- Codex子へは `LEUCO_PROJECT_ID` を注入する。`leuco channels ...` と
+  `--project` を省いた `leuco slack ...` はそのprojectを使い、別projectを
+  明示した操作は拒否する。これは誤操作防止であり、shellから環境変数を
+  意図的に解除できないsecurity sandboxではないため、built-in promptでも
+  解除・上書きを禁止する。
 - Slack pluginはstart時に `auth.test` でbot user IDを確定する。失敗または
   user ID欠落はfail-fastし、全messageを無音でdropする状態を許容しない。
 - reaction eventはtelemetryにだけ流し、Codex turnを起動しない。

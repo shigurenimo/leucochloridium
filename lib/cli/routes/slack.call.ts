@@ -2,22 +2,24 @@ import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
 import { resolveSlackTokens, slackCall } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
-import { resolveProject } from "@/cli/utils/lookup-config"
+import { resolveProjectArgument } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { toBoundedJson } from "@/cli/utils/to-bounded-json"
 import { errorMessage } from "@/error-message"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco slack call / forward a Slack Web API call
 
-usage / leuco slack call <method> --project <p> [--body '<json>'] [--channel <c>]
+usage / leuco slack call <method> [--project <p>] [--body '<json>'] [--channel <c>]
 
 options:
   <method> / Slack Web API method (e.g. chat.postMessage)
   --body '<json>' / JSON body for the method (default: {})
-  --project <p> / project whose stored bot token is used
+  --project <p> / project whose stored bot token is used; optional inside a
+                  tenant Codex session and required otherwise
   --channel <c> / pick a specific channel when the project has multiple
 
-output / raw Slack JSON response`
+output / bounded Slack JSON response`
 
 export const slackCallHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -26,25 +28,31 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
   const method = body.args[0]
   if (!method) {
     throw new HTTPException(400, {
-      message: "usage: leuco slack call <method> [--body '<json>'] --project <p> [--channel <c>]",
+      message: "usage: leuco slack call <method> [--body '<json>'] [--project <p>] [--channel <c>]",
+    })
+  }
+  const parsedMethod = slackMethodSchema.safeParse(method)
+  if (!parsedMethod.success) {
+    throw new HTTPException(400, {
+      message: "<method>: must be a dotted Slack API method name",
     })
   }
 
   const projectName = flagString(body.flags.project)
-  if (!projectName) {
-    throw new HTTPException(400, { message: "--project is required" })
-  }
-
   const channelName = flagString(body.flags.channel) ?? undefined
   const rawBody = flagString(body.flags.body)
   const parsedBody = parseJsonBody(rawBody)
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProjectArgument(c, store, projectName)
   const tokens = resolveSlackTokens({ project, channelName })
-  const result = await slackCall({ botToken: tokens.botToken, method, body: parsedBody })
+  const result = await slackCall({
+    botToken: tokens.botToken,
+    method: parsedMethod.data,
+    body: parsedBody,
+  })
 
-  return c.text(JSON.stringify(result, null, 2))
+  return c.text(toBoundedJson(result))
 })
 
 const parseJsonBody = (raw: string | null): Record<string, unknown> => {
@@ -63,3 +71,4 @@ const parseJsonBody = (raw: string | null): Record<string, unknown> => {
 }
 
 const jsonBodySchema = z.record(z.string(), z.unknown())
+const slackMethodSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*$/)

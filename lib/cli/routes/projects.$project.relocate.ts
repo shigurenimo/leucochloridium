@@ -40,7 +40,7 @@ export const projectsRelocateHandler = factory.createHandlers(async (c) => {
   const shouldRename = renameFlag === "false" || renameFlag === false ? false : true
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, oldName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, oldName)
 
   // Relocate stops the whole daemon and moves the repo the agent is running
   // in — from inside the project's own codex session that is self-termination.

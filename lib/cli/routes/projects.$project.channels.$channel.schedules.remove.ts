@@ -20,7 +20,7 @@ export const schedulesRemoveHandler = factory.createHandlers(async (c) => {
   }
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   store.removeScheduleEntry({
     projectId: project.id,

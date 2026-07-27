@@ -11,6 +11,7 @@ export type Env = {
   Variables: {
     daemon: LeucoDaemon
     cwd: string
+    projectIdScope: string | null
     binPath: string
     envFiles: EnvFiles
     version: string

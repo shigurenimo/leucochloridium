@@ -2,6 +2,14 @@
 
 All notable changes to Leuco are documented here.
 
+## Unreleased
+
+### Changed
+
+- Leuco内蔵MCP serverを廃止し、Slack、file、schedule操作をproject scope付きCLIへ一本化。
+- Codex子へ `LEUCO_PROJECT_ID` を渡し、別projectを明示したCLI操作を実行前に拒否。
+- system promptとtenant設定から内蔵MCP tool、endpoint、bearer tokenを削除。利用者設定の外部MCPは維持。
+
 ## 0.15.1 - 2026-07-26
 
 ### Changed

@@ -1,15 +1,15 @@
-export const MAX_MCP_TOOL_OUTPUT_CHARS = 80_000
+export const MAX_CLI_JSON_CHARS = 80_000
 
-const MIN_MCP_TOOL_OUTPUT_CHARS = 512
+const MIN_CLI_JSON_CHARS = 512
 
 /**
- * Keep MCP text safely below Codex's command-output ceiling. Oversized values
+ * Keep CLI text safely below Codex's command-output ceiling. Oversized values
  * remain valid JSON and carry a preview, so the model can issue a narrower
  * paginated/filtering call instead of losing the entire turn.
  */
-export const toBoundedToolJson = (value: unknown, maxChars = MAX_MCP_TOOL_OUTPUT_CHARS): string => {
-  if (!Number.isSafeInteger(maxChars) || maxChars < MIN_MCP_TOOL_OUTPUT_CHARS) {
-    throw new Error(`maxChars must be an integer >= ${MIN_MCP_TOOL_OUTPUT_CHARS}`)
+export const toBoundedJson = (value: unknown, maxChars = MAX_CLI_JSON_CHARS): string => {
+  if (!Number.isSafeInteger(maxChars) || maxChars < MIN_CLI_JSON_CHARS) {
+    throw new Error(`maxChars must be an integer >= ${MIN_CLI_JSON_CHARS}`)
   }
 
   const serialized = JSON.stringify(value, null, 2)
@@ -20,7 +20,7 @@ export const toBoundedToolJson = (value: unknown, maxChars = MAX_MCP_TOOL_OUTPUT
     truncated: true,
     originalChars: fullText.length,
     message:
-      "Tool output was truncated before reaching Codex. Request a narrower page, cursor, limit, or filter.",
+      "CLI output was truncated before reaching Codex. Request a narrower page, cursor, limit, or filter.",
     continuation: continuationHints(value),
   }
   const emptyEnvelope = JSON.stringify({ _leuco: metadata, preview: "" }, null, 2)
@@ -37,7 +37,7 @@ export const toBoundedToolJson = (value: unknown, maxChars = MAX_MCP_TOOL_OUTPUT
   )
 
   if (envelope.length > maxChars) {
-    throw new Error(`bounded MCP output invariant failed (${envelope.length} > ${maxChars})`)
+    throw new Error(`bounded CLI output invariant failed (${envelope.length} > ${maxChars})`)
   }
   return envelope
 }

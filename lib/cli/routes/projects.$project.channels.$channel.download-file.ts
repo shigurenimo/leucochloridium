@@ -31,40 +31,27 @@ export const channelsDownloadFileHandler = factory.createHandlers(async (c) => {
 
   const projectName = c.req.param("project")!
   const channelName = c.req.param("channel")!
-  const botToken = resolveSlackBotToken({ projectName, channelName, cwd: c.var.cwd })
+  const store = new LeucoProjectStore()
+  const project = resolveProject(c, store, projectName)
+  const channel = findChannel(project, channelName)
+  if (channel.type !== "slack") {
+    throw new HTTPException(400, {
+      message: `channel "${channelName}" is not a slack channel`,
+    })
+  }
   const fileUrl = await resolveFileUrl({
-    botToken,
+    botToken: channel.botToken,
     fileId: flagString(body.flags.file),
     directUrl: flagString(body.flags.url),
   })
   const result = await slackDownloadFile({
-    botToken,
+    botToken: channel.botToken,
     url: fileUrl,
     outputPath,
   })
 
   return c.text(`saved: ${result.outputPath}\nsize: ${result.size}`)
 })
-
-type ResolveSlackBotTokenProps = {
-  projectName: string
-  channelName: string
-  cwd: string
-}
-
-const resolveSlackBotToken = (props: ResolveSlackBotTokenProps): string => {
-  const store = new LeucoProjectStore()
-  const project = resolveProject(store, props.projectName, { preferCwd: props.cwd })
-  const channel = findChannel(project, props.channelName)
-
-  if (channel.type !== "slack") {
-    throw new HTTPException(400, {
-      message: `channel "${props.channelName}" is not a slack channel`,
-    })
-  }
-
-  return channel.botToken
-}
 
 type ResolveFileUrlProps = {
   botToken: string

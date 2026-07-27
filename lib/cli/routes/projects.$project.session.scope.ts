@@ -26,7 +26,7 @@ export const projectsSessionScopeHandler = factory.createHandlers(async (c) => {
 
   const projectName = c.req.param("project")!
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
   const requested = body.args[0]
   if (requested === undefined) {
     return c.text(project.conversationScope)

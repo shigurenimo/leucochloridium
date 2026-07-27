@@ -48,16 +48,34 @@ if (!binPath) {
 const paths = new LeucoPaths()
 const daemon = new LeucoDaemon({ paths })
 const projectStore = new LeucoProjectStore({ paths })
+const projectIdScope = process.env.LEUCO_PROJECT_ID ?? null
+const scopedProject =
+  projectIdScope === null
+    ? null
+    : (() => {
+        try {
+          return projectStore.load(projectIdScope)
+        } catch {
+          process.stderr.write(`leuco: scoped project not found: ${projectIdScope}\n`)
+          process.exit(1)
+        }
+      })()
 
-// When the user is inside a registered project's cwd, allow the shorter
-// `leuco channels …` form by injecting `projects <name>` before parsing.
-const argsAfterShortcut = applyCwdShortcut(args, cwd, projectStore)
+// A tenant Codex child always expands the shorter `leuco channels …` form to
+// its injected project scope. Operator shells use a registered cwd match.
+const argsAfterShortcut = applyCwdShortcut({
+  args,
+  cwd,
+  projectStore,
+  scopedProject,
+})
 
 const cli = factory.createApp()
 
 cli.use((c, next) => {
   c.set("daemon", daemon)
   c.set("cwd", cwd)
+  c.set("projectIdScope", projectIdScope)
   c.set("binPath", binPath)
   c.set("envFiles", envFiles)
   c.set("version", pkg.version)

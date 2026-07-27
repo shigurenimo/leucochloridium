@@ -59,7 +59,7 @@ const addSlackChannel = async (c: Context<Env>, body: CliBody, projectName: stri
   validateSlackTokens({ botToken, appToken })
 
   const store = new LeucoProjectStore({ paths: new LeucoPaths() })
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   if (project.channels.some((ch) => ch.name === channelName)) {
     throw new HTTPException(400, {
@@ -120,7 +120,7 @@ const addScheduleChannel = async (c: Context<Env>, body: CliBody, projectName: s
   )
 
   const store = new LeucoProjectStore({ paths: new LeucoPaths() })
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   if (project.channels.some((ch) => ch.name === channelName)) {
     throw new HTTPException(400, {

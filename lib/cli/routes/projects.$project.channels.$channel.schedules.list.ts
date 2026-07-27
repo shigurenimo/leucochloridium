@@ -14,7 +14,7 @@ export const schedulesListHandler = factory.createHandlers(async (c) => {
   const channelName = c.req.param("channel")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
 
   const channel = findChannel(project, channelName)
 

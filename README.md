@@ -247,7 +247,9 @@ leuco projects <p> channels <c> download-file \
   --out ./download.bin
 ```
 
-The same operations are exposed to Codex as MCP tools.
+Leuco内で動くCodexも同じCLIを使います。Codex子プロセスではprojectが
+`LEUCO_PROJECT_ID` で固定されるため、Slack操作では `--project` を省略し、
+scheduleとfile操作では短い `leuco channels ...` 形式を使います。
 
 ## How it works
 
@@ -259,7 +261,8 @@ Slack Socket Mode
   → event validation, dedup, self-bot filtering
   → the project's tenant
   → the Codex thread selected by conversation scope
-  → Codex calls the slack_call MCP tool
+  → Codex runs the project-scoped leuco CLI
+  → leuco slack call
   → Slack Web API
 ```
 
@@ -269,13 +272,19 @@ Slack Socket Mode
 設定上限まで並行実行します。Slack messageは構造化入力としてCodexへ渡され、
 返信するかどうかはbuilt-in promptとCodexが決めます。
 
-可視の返信はCodexによる`slack_call`を優先します。宛先付きメッセージに対して
+可視の返信はCodexによる`leuco slack call`を優先します。宛先付きメッセージに対して
 Slackへのpostが一度も成功せず、Codexがfinal textを生成した場合だけ、Leucoが
 同じthreadへその本文をそのままfallback postします。エラー時の定型文は合成しません。
 
 A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
 
 Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
+
+各Codex子にはそのprojectのUUIDを `LEUCO_PROJECT_ID` として渡します。
+`leuco channels ...` はshellのcwdを変更しても固定projectへ展開され、
+projectを省略した `leuco slack ...` も同じprojectを使います。別projectを
+明示したCLI操作は実行前に拒否されます。Leuco操作用の内蔵MCP serverはありません。
+project設定に追加された外部MCP serverは別機能としてCodex設定へ引き続き渡されます。
 
 ## Where data lives
 
@@ -298,7 +307,7 @@ Each project gets its own `CODEX_HOME`, separating configuration and Codex memor
 
 ## Configuration
 
-`LEUCO_CODEX_BIN` sets the path to the Codex executable and defaults to `codex`. `LEUCO_PORT` sets the port of the loopback MCP gateway and defaults to 7331.
+`LEUCO_CODEX_BIN` sets the path to the Codex executable and defaults to `codex`. `LEUCO_PORT` sets the port of the loopback daemon gateway for health, status, and thread control, and defaults to 7331.
 
 `.env.local` and `.env` are read from the current directory only by `leuco run`. Other commands, including `leuco start`, deliberately ignore them so that secrets from an unrelated working directory never leak into the daemon environment. Variables already present in the process environment take precedence over both files.
 

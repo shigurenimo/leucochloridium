@@ -315,7 +315,7 @@ export class LeucoSlackChannelPlugin implements ChannelPlugin {
   }
 
   /**
-   * Prefer explicit `slack_call` writes, but do not discard a real final
+   * Prefer explicit `leuco slack call` writes, but do not discard a real final
    * answer to an addressed message. If Codex completed with final text and
    * no bot reply is visible, post that exact generated text as a fallback.
    * Errors remain reaction/event-only; no canned failure copy is synthesized.

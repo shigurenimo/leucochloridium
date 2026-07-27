@@ -70,7 +70,7 @@ const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
 
 /**
  * Timer-driven channel. On each minute tick the plugin re-reads its entry
- * list (so CLI/MCP mutations are picked up without a daemon restart) and,
+ * list (so CLI mutations are picked up without a daemon restart) and,
  * for every enabled entry, decides whether to fire:
  *
  *   - cron expression (whitespace inside `runAt`): fire when the parsed
@@ -79,8 +79,8 @@ const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
  *     remove the entry only after successful delivery.
  *
  * The plugin never posts directly to the user — like the Slack channel, it
- * forwards through `ctx.runTextTurn` and lets codex decide whether to call
- * `slack_call` (or anything else) to surface a visible reply. Errors from
+ * forwards through `ctx.runTextTurn` and lets Codex decide whether to run
+ * `leuco slack call` to surface a visible reply. Errors from
  * `runTextTurn` are caught so a single failing entry does not derail the
  * tick loop for the others.
  */
@@ -133,7 +133,7 @@ export class LeucoScheduleChannelPlugin implements ChannelPlugin {
     // Kick off the first tick (catch-up + any past one-shots) WITHOUT awaiting
     // it — a `runTextTurn` inside the first fire can take up to the tenant's
     // codex wall-clock timeout, and blocking `daemon ready` on that would
-    // delay the gateway, MCP endpoint, and every other plugin start for a
+    // delay the gateway and every other plugin start for a
     // single overdue schedule entry.
     this.startupTick = this.tickOnce()
     void this.startupTick

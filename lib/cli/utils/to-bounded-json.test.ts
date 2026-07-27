@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest"
-import { MAX_MCP_TOOL_OUTPUT_CHARS, toBoundedToolJson } from "@/mcp/to-bounded-tool-json"
+import { MAX_CLI_JSON_CHARS, toBoundedJson } from "@/cli/utils/to-bounded-json"
 
-describe("toBoundedToolJson", () => {
+describe("toBoundedJson", () => {
   it("keeps a small result unchanged", () => {
-    expect(toBoundedToolJson({ ok: true, messages: [] })).toBe(
+    expect(toBoundedJson({ ok: true, messages: [] })).toBe(
       JSON.stringify({ ok: true, messages: [] }, null, 2),
     )
   })
 
   it("returns valid bounded JSON with a preview for a huge tool result", () => {
-    const text = toBoundedToolJson({
+    const text = toBoundedJson({
       ok: true,
       messages: [{ text: `${'\\"\n'.repeat(80_000)}${"応答".repeat(80_000)}` }],
     })
     const parsed: unknown = JSON.parse(text)
 
-    expect(text.length).toBeLessThanOrEqual(MAX_MCP_TOOL_OUTPUT_CHARS)
+    expect(text.length).toBeLessThanOrEqual(MAX_CLI_JSON_CHARS)
     expect(parsed).toEqual(
       expect.objectContaining({
         _leuco: expect.objectContaining({
@@ -29,11 +29,11 @@ describe("toBoundedToolJson", () => {
   })
 
   it("rejects an unusably small bound", () => {
-    expect(() => toBoundedToolJson({ ok: true }, 100)).toThrow("maxChars")
+    expect(() => toBoundedJson({ ok: true }, 100)).toThrow("maxChars")
   })
 
   it("preserves pagination hints that occur after a truncated payload", () => {
-    const text = toBoundedToolJson(
+    const text = toBoundedJson(
       {
         ok: true,
         messages: [{ text: "x".repeat(20_000) }],
