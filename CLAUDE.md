@@ -158,6 +158,32 @@ read-modify-writeするため、project変更は必ず `updateProject()` を使�
 `events.db` はSlack本文を含むため本体、WAL、SHMを0600へ寄せる。
 projectの `config.toml` は外部MCP環境変数を含み得るため0600。
 
+## Codex compatibility hackの方針
+
+Codex内部実装への依存は少数のcompatibility seamへ閉じ込める。現行の意図的な
+hackは次の三つ。
+
+- `lib/runtime/runtime.ts` の `ensureAuthSymlink()` がprojectの
+  `CODEX_HOME/auth.json` を `~/.codex/auth.json` へsymlinkする。これは
+  login共有のためのfilesystem-level hackであり、security boundaryではない。
+- `lib/engine/codex/codex-schemas.ts` が、Codex `app-server` の一部error responseで
+  `jsonrpc` fieldが欠ける挙動を許容する。
+- `lib/engine/codex/is-codex-history-corruption-error.ts` が、復旧可能な履歴破損を
+  narrowなerror textで判定する。
+
+新しいintegrationはCodex CLI、app-server protocol、環境変数、公開設定を優先する。
+内部file layout、undocumented field、error textへ依存するworkaroundを安易に増やさない。
+必要になった場合は次をすべて満たす。
+
+- 一つのadapterまたはhelperへ局所化し、domain modelやconsumerへ漏らさない
+- 依存するCodex挙動と必要な理由を隣接commentに書く
+- 正常系、Codex側の変化、壊れたstateのtestを置く
+- `leuco doctor` またはactionable errorで故障を発見できるようにする
+- この一覧へ追加し、不要になった時点でcompatibility codeごと削除する
+
+project別 `CODEX_HOME` はconfig、memory、sessionの整理上の分離であり、
+同一OS userと `danger-full-access` の間にsecurity isolationを作るものではない。
+
 ## CLI route
 
 `lib/cli/utils/parse-cli-invocation.ts` がargvをcommand pathとJSON bodyへ変換し、

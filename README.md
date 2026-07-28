@@ -274,6 +274,24 @@ A single turn has a wall-clock timeout of ten minutes. A second watchdog treats 
 
 Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
 
+### Codex認証共有の注意
+
+このsymlinkは、Codexのログインをprojectごとに繰り返さずに済ませるための、意図的で
+局所的なcompatibility hackです。Leucoは現在のCodexが認証を
+`~/.codex/auth.json` に保存する実装へ依存しているため、Codex側の保存場所や方式が
+変わればログイン共有は動かなくなる可能性があります。`leuco doctor` はmissingまたは
+danglingなリンクを検出します。
+
+これはsecurity boundaryではありません。すべてのCodex子は同じOS userで動き、
+Leucoの既定設定ではfilesystemへ直接アクセスできます。projectごとの `.codex/` は
+config、memory、sessionを整理・分離するためのもので、認証だけを共有します。
+project側の `auth.json` がregular fileなら、個別ログインの意図があるものとして
+Leucoは上書きしません。
+
+認証に関するfilesystem workaroundはこのsymlinkへ限定します。新しいCodex統合では
+可能な限りCLI、app-server protocol、環境変数、公開設定を使い、Codex内部fileの参照や
+error text依存を増やさない方針です。
+
 各Codex子にはそのprojectのUUIDを `LEUCO_PROJECT_ID` として渡します。
 `leuco connectors ...` はshellのcwdを変更しても固定projectへ展開され、
 projectを省略した `leuco slack ...` も同じprojectを使います。別projectを

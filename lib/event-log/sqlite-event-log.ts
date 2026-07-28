@@ -6,6 +6,10 @@ import type { EventLogEntry } from "@/event-log/event-log-entry"
 import type { EventLogStore, EventLogRelay } from "@/event-log/event-log-store"
 
 type IndexValues<I extends ReadonlyArray<string>> = Record<I[number], string | null>
+type IndexPrefixes<I extends ReadonlyArray<string>> = Partial<Record<I[number], string>>
+type IndexSets<I extends ReadonlyArray<string>> = Partial<
+  Record<I[number], ReadonlyArray<string | null>>
+>
 
 /**
  * Constructor props. The shape narrows on `I`: when no indexes are
@@ -38,10 +42,16 @@ export type SqliteEventLogProps<E, I extends ReadonlyArray<string>> = I extends 
 export type SqliteEventLogQuery<I extends ReadonlyArray<string>> = {
   /** Return only records with seq strictly greater than this. */
   sinceSeq?: number
+  /** Match one sequence number exactly instead of using `sinceSeq`. */
+  seq?: number
   /** Filter by the top-level `event.type` discriminator. */
   type?: string
   /** Filter by indexed columns. Keys are constrained to the declared `indexes`. */
   where?: Partial<IndexValues<I>>
+  /** Prefix-match indexed text columns. */
+  wherePrefix?: IndexPrefixes<I>
+  /** Match any value in a set for indexed columns. */
+  whereIn?: IndexSets<I>
   /** Maximum rows returned. Default 1000. */
   limit?: number
   /**
@@ -265,8 +275,16 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
   }
 
   query(props: SqliteEventLogQuery<I> = {}): EventLogEntry<E>[] {
-    const conditions: string[] = ["seq > ?"]
-    const params: SQLQueryBindings[] = [props.sinceSeq ?? 0]
+    const conditions: string[] = []
+    const params: SQLQueryBindings[] = []
+
+    if (props.seq !== undefined) {
+      conditions.push("seq = ?")
+      params.push(props.seq)
+    } else {
+      conditions.push("seq > ?")
+      params.push(props.sinceSeq ?? 0)
+    }
 
     if (typeof props.type === "string") {
       conditions.push("type = ?")
@@ -275,6 +293,14 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
 
     if (props.where) {
       this.appendWhereConditions(props.where, conditions, params)
+    }
+
+    if (props.wherePrefix) {
+      this.appendPrefixConditions(props.wherePrefix, conditions, params)
+    }
+
+    if (props.whereIn) {
+      this.appendSetConditions(props.whereIn, conditions, params)
     }
 
     const limit = props.limit ?? 1000
@@ -325,9 +351,8 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
     conditions: string[],
     params: SQLQueryBindings[],
   ): void {
-    const widened = where as unknown as Partial<Record<string, string | null>>
-    for (const col of this.indexes) {
-      const value = widened[col]
+    for (const col of this.indexKeys()) {
+      const value = where[col]
       if (value === undefined) continue
       if (value === null) {
         conditions.push(`${col} IS NULL`)
@@ -335,6 +360,48 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
         conditions.push(`${col} = ?`)
         params.push(value)
       }
+    }
+  }
+
+  private appendPrefixConditions(
+    prefixes: IndexPrefixes<I>,
+    conditions: string[],
+    params: SQLQueryBindings[],
+  ): void {
+    for (const col of this.indexKeys()) {
+      const value = prefixes[col]
+      if (value === undefined) continue
+
+      conditions.push(`${col} LIKE ? ESCAPE '\\'`)
+      params.push(`${escapeLike(value)}%`)
+    }
+  }
+
+  private appendSetConditions(
+    sets: IndexSets<I>,
+    conditions: string[],
+    params: SQLQueryBindings[],
+  ): void {
+    for (const col of this.indexKeys()) {
+      const values = sets[col]
+      if (values === undefined) continue
+      if (values.length === 0) {
+        conditions.push("1 = 0")
+        continue
+      }
+
+      const nonNull = values.filter((value): value is string => value !== null)
+      const hasNull = nonNull.length !== values.length
+      const alternatives: string[] = []
+
+      if (nonNull.length > 0) {
+        alternatives.push(`${col} IN (${nonNull.map(() => "?").join(", ")})`)
+        params.push(...nonNull)
+      }
+
+      if (hasNull) alternatives.push(`${col} IS NULL`)
+
+      conditions.push(`(${alternatives.join(" OR ")})`)
     }
   }
 
@@ -349,6 +416,10 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
     }
 
     this.maybeTrimBytes()
+  }
+
+  private indexKeys(): ReadonlyArray<I[number]> {
+    return this.indexes
   }
 
   /**
@@ -434,6 +505,10 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
       apply()
     }
   }
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")
 }
 
 function validateIndexNames(names: ReadonlyArray<string>): void {
