@@ -6,11 +6,12 @@ type RunningStub = {
 
 const captured = vi.hoisted(() => ({
   sourceOptions: null as Record<string, unknown> | null,
-  flumeOptions: null as {
+  flumeOptions: [] as Array<{
     onEvent: (item: unknown) => void
     signal?: AbortSignal
-  } | null,
-  openResult: null as Promise<RunningStub | Error> | null,
+  }>,
+  openResults: [] as Array<RunningStub | Error | Promise<RunningStub | Error>>,
+  openCalls: 0,
   close: vi.fn(async () => {}),
 }))
 
@@ -25,24 +26,31 @@ vi.mock("@interactive-inc/flume/slack", () => ({
 vi.mock("@interactive-inc/flume", () => ({
   Flume: class {
     constructor(options: { onEvent: (item: unknown) => void }) {
-      captured.flumeOptions = options
+      captured.flumeOptions.push(options)
     }
 
     async open() {
-      if (captured.openResult !== null) return await captured.openResult
+      captured.openCalls += 1
+      const result = captured.openResults.shift()
+      if (result !== undefined) return await result
       return { close: captured.close }
     }
   },
 }))
 
-import { LeucoFlumeSlackEventSource } from "@/channels/slack/leuco-flume-slack-event-source"
+import {
+  LeucoFlumeSlackEventSource,
+  type LeucoSlackWakeClock,
+} from "@/channels/slack/leuco-flume-slack-event-source"
 
 describe("LeucoFlumeSlackEventSource", () => {
   beforeEach(() => {
     captured.sourceOptions = null
-    captured.flumeOptions = null
-    captured.openResult = null
-    captured.close.mockClear()
+    captured.flumeOptions = []
+    captured.openResults = []
+    captured.openCalls = 0
+    captured.close.mockReset()
+    captured.close.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -62,7 +70,7 @@ describe("LeucoFlumeSlackEventSource", () => {
       appToken: "xapp-test",
       botToken: "xoxb-test",
     })
-    expect(captured.flumeOptions?.signal).toBeInstanceOf(AbortSignal)
+    expect(captured.flumeOptions[0]?.signal).toBeInstanceOf(AbortSignal)
     expect(captured.close).toHaveBeenCalledTimes(1)
   })
 
@@ -80,7 +88,7 @@ describe("LeucoFlumeSlackEventSource", () => {
       onStatus: (status) => statuses.push(status),
     })
 
-    const onEvent = captured.flumeOptions?.onEvent
+    const onEvent = captured.flumeOptions[0]?.onEvent
     if (onEvent === undefined) throw new Error("expected Flume onEvent callback")
 
     onEvent({
@@ -126,7 +134,7 @@ describe("LeucoFlumeSlackEventSource", () => {
   it("aborts an open that exceeds the startup deadline and closes a late success", async () => {
     vi.useFakeTimers()
     const deferred = Promise.withResolvers<RunningStub | Error>()
-    captured.openResult = deferred.promise
+    captured.openResults.push(deferred.promise)
     const source = new LeucoFlumeSlackEventSource({
       appToken: "xapp-test",
       botToken: "xoxb-test",
@@ -140,7 +148,7 @@ describe("LeucoFlumeSlackEventSource", () => {
     await vi.advanceTimersByTimeAsync(25)
     await rejected
 
-    expect(captured.flumeOptions?.signal?.aborted).toBe(true)
+    expect(captured.flumeOptions[0]?.signal?.aborted).toBe(true)
     deferred.resolve({ close: captured.close })
     await Promise.resolve()
     await Promise.resolve()
@@ -149,7 +157,7 @@ describe("LeucoFlumeSlackEventSource", () => {
 
   it("aborts an in-progress open immediately when stopped and closes a late success", async () => {
     const deferred = Promise.withResolvers<RunningStub | Error>()
-    captured.openResult = deferred.promise
+    captured.openResults.push(deferred.promise)
     const source = new LeucoFlumeSlackEventSource({
       appToken: "xapp-test",
       botToken: "xoxb-test",
@@ -160,10 +168,144 @@ describe("LeucoFlumeSlackEventSource", () => {
     await source.stop()
     await rejected
 
-    expect(captured.flumeOptions?.signal?.aborted).toBe(true)
+    expect(captured.flumeOptions[0]?.signal?.aborted).toBe(true)
     deferred.resolve({ close: captured.close })
     await Promise.resolve()
     await Promise.resolve()
     expect(captured.close).toHaveBeenCalledTimes(1)
   })
+
+  it("rebuilds the Slack socket when timer drift indicates host suspension", async () => {
+    const wake = createWakeClock()
+    const logs: string[] = []
+    const statuses: string[] = []
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeCheckIntervalMs: 100,
+      wakeDriftThresholdMs: 200,
+      wakeClock: wake.clock,
+    })
+
+    await source.start({
+      onEvent: async () => {},
+      onLog: (log) => logs.push(log.action),
+      onStatus: (status) => statuses.push(status),
+    })
+
+    wake.advance(100)
+    await Promise.resolve()
+    expect(captured.openCalls).toBe(1)
+
+    wake.advance(301)
+    await vi.waitFor(() => {
+      expect(captured.openCalls).toBe(2)
+      expect(logs).toContain("wake.reconnected")
+    })
+
+    expect(logs).toContain("wake.detected")
+    expect(statuses).toContain("reconnecting")
+    expect(captured.close).toHaveBeenCalledTimes(1)
+    expect(captured.flumeOptions[0]?.signal?.aborted).toBe(true)
+    expect(captured.flumeOptions[1]?.signal?.aborted).toBe(false)
+
+    await source.stop()
+    expect(captured.close).toHaveBeenCalledTimes(2)
+    expect(wake.clearCalls()).toBe(1)
+  })
+
+  it("retries a failed wake reconnect on the next watchdog check", async () => {
+    const wake = createWakeClock()
+    const logs: string[] = []
+    const statuses: string[] = []
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeCheckIntervalMs: 100,
+      wakeDriftThresholdMs: 200,
+      wakeClock: wake.clock,
+    })
+
+    await source.start({
+      onEvent: async () => {},
+      onLog: (log) => logs.push(log.action),
+      onStatus: (status) => statuses.push(status),
+    })
+    captured.openResults.push(new Error("Slack reconnect failed"))
+
+    wake.advance(301)
+    await vi.waitFor(() => {
+      expect(logs).toContain("wake.reconnect.failed")
+    })
+    expect(captured.openCalls).toBe(2)
+    expect(statuses).toContain("disconnected")
+
+    wake.advance(100)
+    await vi.waitFor(() => {
+      expect(captured.openCalls).toBe(3)
+      expect(logs.filter((action) => action === "wake.reconnected")).toHaveLength(1)
+    })
+
+    await source.stop()
+    expect(captured.close).toHaveBeenCalledTimes(2)
+  })
+
+  it("cancels an in-progress wake reconnect when stopped", async () => {
+    const wake = createWakeClock()
+    const deferred = Promise.withResolvers<RunningStub | Error>()
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeCheckIntervalMs: 100,
+      wakeDriftThresholdMs: 200,
+      wakeClock: wake.clock,
+    })
+
+    await source.start({ onEvent: async () => {} })
+    captured.openResults.push(deferred.promise)
+    wake.advance(301)
+    await vi.waitFor(() => {
+      expect(captured.openCalls).toBe(2)
+      expect(captured.close).toHaveBeenCalledTimes(1)
+    })
+
+    await source.stop()
+    expect(source.status()).toBe("disconnected")
+    expect(captured.flumeOptions[1]?.signal?.aborted).toBe(true)
+    expect(wake.clearCalls()).toBe(1)
+
+    deferred.resolve({ close: captured.close })
+    await vi.waitFor(() => {
+      expect(captured.close).toHaveBeenCalledTimes(2)
+    })
+  })
 })
+
+const createWakeClock = (): {
+  clock: LeucoSlackWakeClock
+  advance: (elapsedMs: number) => void
+  clearCalls: () => number
+} => {
+  let now = 0
+  let handler: (() => void) | null = null
+  let clears = 0
+  const handle = 1 as unknown as ReturnType<typeof setInterval>
+  return {
+    clock: {
+      now: () => now,
+      setInterval: (nextHandler) => {
+        handler = nextHandler
+        return handle
+      },
+      clearInterval: () => {
+        clears += 1
+        handler = null
+      },
+    },
+    advance: (elapsedMs) => {
+      now += elapsedMs
+      handler?.()
+    },
+    clearCalls: () => clears,
+  }
+}

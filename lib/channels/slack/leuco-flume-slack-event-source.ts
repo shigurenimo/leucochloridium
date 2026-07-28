@@ -19,6 +19,12 @@ export type LeucoFlumeSlackEventSourceProps = {
   botToken: string
   appToken: string
   startTimeoutMs?: number
+  /** How often to check for a wall-clock jump caused by host suspension. */
+  wakeCheckIntervalMs?: number
+  /** Extra delay beyond one normal check that is treated as host suspension. */
+  wakeDriftThresholdMs?: number
+  /** Clock/timer injection for deterministic lifecycle tests. */
+  wakeClock?: LeucoSlackWakeClock
 }
 
 type StartProps = {
@@ -27,7 +33,26 @@ type StartProps = {
   onLog?: (log: LeucoSlackSourceLog) => void
 }
 
+export type LeucoSlackWakeClock = {
+  now(): number
+  setInterval(handler: () => void, intervalMs: number): ReturnType<typeof setInterval>
+  clearInterval(handle: ReturnType<typeof setInterval>): void
+}
+
+type SlackSession = {
+  controller: AbortController
+  running: FlumeRunning | null
+  dispose: () => void
+}
+
 const DEFAULT_START_TIMEOUT_MS = 30_000
+const DEFAULT_WAKE_CHECK_INTERVAL_MS = 30_000
+const DEFAULT_WAKE_DRIFT_THRESHOLD_MS = 60_000
+const SYSTEM_WAKE_CLOCK: LeucoSlackWakeClock = {
+  now: () => Date.now(),
+  setInterval: (handler, intervalMs) => setInterval(handler, intervalMs),
+  clearInterval: (handle) => clearInterval(handle),
+}
 
 /**
  * `LeucoSlackEventSource` backed by `@interactive-inc/flume` (>= 0.9). The
@@ -37,16 +62,33 @@ const DEFAULT_START_TIMEOUT_MS = 30_000
  * from flume.
  */
 export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
-  private running: FlumeRunning | null = null
   private lifecycleController: AbortController | null = null
+  private session: SlackSession | null = null
   private currentStatus: LeucoSlackSourceStatus = "disconnected"
+  private wakeTimer: ReturnType<typeof setInterval> | null = null
+  private wakeLastCheckAt = 0
+  private wakeReconnectNeeded = false
+  private wakeReconnectPromise: Promise<void> | null = null
+  private readonly startTimeoutMs: number
+  private readonly wakeCheckIntervalMs: number
+  private readonly wakeDriftThresholdMs: number
+  private readonly wakeClock: LeucoSlackWakeClock
 
   constructor(private readonly props: LeucoFlumeSlackEventSourceProps) {
     super()
-    const startTimeoutMs = props.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS
-    if (!Number.isSafeInteger(startTimeoutMs) || startTimeoutMs <= 0) {
-      throw new Error("startTimeoutMs must be a positive integer")
-    }
+    this.startTimeoutMs = positiveInteger(
+      "startTimeoutMs",
+      props.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS,
+    )
+    this.wakeCheckIntervalMs = positiveInteger(
+      "wakeCheckIntervalMs",
+      props.wakeCheckIntervalMs ?? DEFAULT_WAKE_CHECK_INTERVAL_MS,
+    )
+    this.wakeDriftThresholdMs = positiveInteger(
+      "wakeDriftThresholdMs",
+      props.wakeDriftThresholdMs ?? DEFAULT_WAKE_DRIFT_THRESHOLD_MS,
+    )
+    this.wakeClock = props.wakeClock ?? SYSTEM_WAKE_CLOCK
   }
 
   async start(props: StartProps): Promise<void> {
@@ -56,16 +98,23 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
 
     const controller = new AbortController()
     this.lifecycleController = controller
+    const session = this.createSession(controller)
+    this.session = session
 
     try {
-      const flume = this.buildFlume(props, controller)
-      const running = await this.openWithinDeadline(flume, controller, props.onLog)
+      const running = await this.openSession(session, props)
       if (controller.signal.aborted || this.lifecycleController !== controller) {
-        void running.close().catch(() => undefined)
+        session.running = running
+        await this.closeSession(session).catch(() => undefined)
         throw abortError(controller.signal)
       }
-      this.running = running
+      session.running = running
+      this.armWakeWatchdog(controller, props)
     } catch (error) {
+      if (this.session === session) {
+        this.session = null
+        await this.closeSession(session).catch(() => undefined)
+      }
       if (this.lifecycleController === controller) {
         this.lifecycleController = null
         this.currentStatus = "disconnected"
@@ -77,16 +126,27 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   async stop(): Promise<void> {
     const controller = this.lifecycleController
     this.lifecycleController = null
+    this.disarmWakeWatchdog()
+    this.wakeReconnectNeeded = false
     if (controller !== null && !controller.signal.aborted) {
       controller.abort(new Error("Slack event source start cancelled"))
     }
 
-    const running = this.running
-    this.running = null
+    const session = this.session
+    this.session = null
+    const wakeReconnectPromise = this.wakeReconnectPromise
     this.currentStatus = "disconnected"
-    if (running === null) return
 
-    await running.close()
+    let closeError: unknown = null
+    if (session !== null) {
+      try {
+        await this.closeSession(session)
+      } catch (error) {
+        closeError = error
+      }
+    }
+    if (wakeReconnectPromise !== null) await wakeReconnectPromise
+    if (closeError !== null) throw closeError
   }
 
   status(): LeucoSlackSourceStatus {
@@ -121,15 +181,50 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     })
   }
 
+  private createSession(lifecycleController: AbortController): SlackSession {
+    const controller = new AbortController()
+    const onLifecycleAbort = (): void => {
+      if (!controller.signal.aborted) {
+        controller.abort(abortError(lifecycleController.signal))
+      }
+    }
+    if (lifecycleController.signal.aborted) {
+      onLifecycleAbort()
+    } else {
+      lifecycleController.signal.addEventListener("abort", onLifecycleAbort, { once: true })
+    }
+    return {
+      controller,
+      running: null,
+      dispose: () => lifecycleController.signal.removeEventListener("abort", onLifecycleAbort),
+    }
+  }
+
+  private async openSession(session: SlackSession, props: StartProps): Promise<FlumeRunning> {
+    const flume = this.buildFlume(props, session.controller)
+    return await this.openWithinDeadline(flume, session.controller, props.onLog)
+  }
+
+  private async closeSession(session: SlackSession): Promise<void> {
+    session.dispose()
+    if (!session.controller.signal.aborted) {
+      session.controller.abort(new Error("Slack socket session replaced"))
+    }
+    const running = session.running
+    session.running = null
+    if (running !== null) await running.close()
+  }
+
   private async openWithinDeadline(
     flume: Flume,
     controller: AbortController,
     onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
   ): Promise<FlumeRunning> {
-    const timeoutMs = this.props.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS
     const timeout = setTimeout(() => {
-      controller.abort(new Error(`Slack event source start timed out after ${timeoutMs}ms`))
-    }, timeoutMs)
+      controller.abort(
+        new Error(`Slack event source start timed out after ${this.startTimeoutMs}ms`),
+      )
+    }, this.startTimeoutMs)
     const aborted = waitForAbort(controller.signal)
     const opened = flume.open()
     void opened.then(
@@ -143,6 +238,132 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     } finally {
       clearTimeout(timeout)
       aborted.dispose()
+    }
+  }
+
+  private armWakeWatchdog(controller: AbortController, props: StartProps): void {
+    this.disarmWakeWatchdog()
+    this.wakeLastCheckAt = this.wakeClock.now()
+    try {
+      this.wakeTimer = this.wakeClock.setInterval(() => {
+        this.checkForWake(controller, props)
+      }, this.wakeCheckIntervalMs)
+    } catch (error) {
+      const normalized = normalizeError(error)
+      this.emitSourceLog(props.onLog, {
+        level: "error",
+        action: "wake.watchdog.schedule.failed",
+        message: normalized.message,
+        error: normalized,
+        detail: null,
+        timestamp: this.wakeClock.now(),
+      })
+    }
+  }
+
+  private disarmWakeWatchdog(): void {
+    if (this.wakeTimer === null) return
+    const timer = this.wakeTimer
+    this.wakeTimer = null
+    try {
+      this.wakeClock.clearInterval(timer)
+    } catch {
+      // Stopping the socket must continue even if an injected/runtime timer
+      // implementation refuses to clear an already-fired handle.
+    }
+  }
+
+  private checkForWake(controller: AbortController, props: StartProps): void {
+    if (controller.signal.aborted || this.lifecycleController !== controller) return
+
+    const now = this.wakeClock.now()
+    const elapsedMs = now - this.wakeLastCheckAt
+    this.wakeLastCheckAt = now
+    const driftMs = elapsedMs - this.wakeCheckIntervalMs
+    if (driftMs >= this.wakeDriftThresholdMs) {
+      this.wakeReconnectNeeded = true
+      this.emitSourceLog(props.onLog, {
+        level: "warn",
+        action: "wake.detected",
+        message: `event loop resumed after ${elapsedMs}ms; rebuilding Slack socket`,
+        error: null,
+        detail: { elapsedMs, driftMs },
+        timestamp: now,
+      })
+    }
+    if (this.wakeReconnectNeeded) this.requestWakeReconnect(controller, props)
+  }
+
+  private requestWakeReconnect(controller: AbortController, props: StartProps): void {
+    if (this.wakeReconnectPromise !== null) return
+
+    const reconnecting = this.reconnectAfterWake(controller, props).catch((error: unknown) => {
+      if (controller.signal.aborted || this.lifecycleController !== controller) return
+      const normalized = normalizeError(error)
+      this.wakeReconnectNeeded = true
+      this.currentStatus = "disconnected"
+      props.onStatus?.("disconnected")
+      this.emitSourceLog(props.onLog, {
+        level: "error",
+        action: "wake.reconnect.failed",
+        message: normalized.message,
+        error: normalized,
+        detail: null,
+        timestamp: this.wakeClock.now(),
+      })
+    })
+    this.wakeReconnectPromise = reconnecting
+    void reconnecting.finally(() => {
+      if (this.wakeReconnectPromise === reconnecting) this.wakeReconnectPromise = null
+    })
+  }
+
+  private async reconnectAfterWake(controller: AbortController, props: StartProps): Promise<void> {
+    this.currentStatus = "reconnecting"
+    props.onStatus?.("reconnecting")
+
+    const previous = this.session
+    if (previous !== null) {
+      this.session = null
+      try {
+        await this.closeSession(previous)
+      } catch (error) {
+        const normalized = normalizeError(error)
+        this.emitSourceLog(props.onLog, {
+          level: "error",
+          action: "wake.close.failed",
+          message: normalized.message,
+          error: normalized,
+          detail: null,
+          timestamp: this.wakeClock.now(),
+        })
+      }
+    }
+    if (controller.signal.aborted || this.lifecycleController !== controller) return
+
+    const next = this.createSession(controller)
+    this.session = next
+    try {
+      const running = await this.openSession(next, props)
+      if (controller.signal.aborted || this.lifecycleController !== controller) {
+        next.running = running
+        await this.closeSession(next).catch(() => undefined)
+        return
+      }
+      next.running = running
+      this.wakeReconnectNeeded = false
+      this.emitSourceLog(props.onLog, {
+        level: "info",
+        action: "wake.reconnected",
+        message: "Slack socket rebuilt after host resume",
+        error: null,
+        detail: null,
+        timestamp: this.wakeClock.now(),
+      })
+    } catch (error) {
+      if (this.session === next) this.session = null
+      await this.closeSession(next).catch(() => undefined)
+      throw error
     }
   }
 
@@ -202,6 +423,13 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     }
     if (onLog) onLog(toLeucoLog(log))
   }
+
+  private emitSourceLog(
+    onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
+    log: LeucoSlackSourceLog,
+  ): void {
+    if (onLog) onLog(log)
+  }
 }
 
 const toLeucoEnvelope = (event: FlumeSlackEvent): LeucoSlackEnvelope => {
@@ -242,4 +470,15 @@ const waitForAbort = (signal: AbortSignal): { promise: Promise<never>; dispose: 
 
 const abortError = (signal: AbortSignal): Error => {
   return signal.reason instanceof Error ? signal.reason : new Error("Slack event source aborted")
+}
+
+const positiveInteger = (name: string, value: number): number => {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`)
+  }
+  return value
+}
+
+const normalizeError = (error: unknown): Error => {
+  return error instanceof Error ? error : new Error(String(error))
 }
