@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { diagnoseSlackDirectMessage } from "@/actions/slack/diagnose-slack-direct-message"
-import type { SlackHistoryMessage } from "@/channels/slack/leuco-slack-web-client"
+import type { SlackHistoryMessage } from "@/connectors/slack/leuco-slack-web-client"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const INBOUND: SlackHistoryMessage = {
@@ -49,7 +49,7 @@ describe("diagnoseSlackDirectMessage", () => {
         ts: 1,
         type: "slack.event",
         project: "demo",
-        channel: "D1",
+        connector: "slack",
         event: {
           kind: "message",
           channel: "D1",
@@ -96,7 +96,7 @@ describe("diagnoseSlackDirectMessage", () => {
         ts: 1,
         type: "slack.event",
         project: "demo",
-        channel: "D1",
+        connector: "slack",
         event: {
           kind: "message",
           channel: "D1",

@@ -9,7 +9,6 @@ usage / leuco projects [subcommand]
 
 subcommands:
   (none) / list every project
-  create <path> / scaffold + register a new repo
   add [<path>] / register an existing repo
   <p> / project operations (run \`leuco projects <p> -h\`)`
 
@@ -27,7 +26,7 @@ export const projectsListHandler = factory.createHandlers(async (c) => {
         enabled: p.enabled,
         conversationScope: p.conversationScope,
         path: p.path,
-        channels: p.channels.length,
+        connectors: p.connectors.length,
       })),
     }),
   )

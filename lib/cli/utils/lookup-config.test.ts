@@ -9,19 +9,18 @@ import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 
 const project: Project = {
-  version: 2,
+  version: 3,
   id: "45ec9e03-5da4-4566-aa82-143cc38b8df5",
   name: "demo",
   path: "/tmp/demo",
   enabled: true,
   conversationScope: "project",
-  channels: [],
+  connectors: [],
   prompts: [],
   useCommonInstructions: true,
   model: null,
   developerInstructions: null,
   mcpServers: {},
-  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 }
 
 describe("resolveProject", () => {
@@ -43,16 +42,16 @@ describe("resolveProject", () => {
         context.set("projectIdScope", project.id)
         return next()
       })
-      app.get("/:project", (context) => {
+      app.command("/:project", (context) => {
         const resolved = resolveProject(context, store, context.req.param("project"))
         return context.json({ id: resolved.id })
       })
 
-      const sameName = await app.request("/demo")
+      const sameName = await app.dispatch({ path: "/demo" })
       expect(sameName.status).toBe(200)
       expect(await sameName.json()).toEqual({ id: project.id })
 
-      const otherName = await app.request("/another-project")
+      const otherName = await app.dispatch({ path: "/another-project" })
       expect(otherName.status).toBe(403)
     } finally {
       rmSync(home, { recursive: true, force: true })

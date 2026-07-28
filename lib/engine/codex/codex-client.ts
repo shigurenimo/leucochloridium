@@ -42,7 +42,7 @@ export type LeucoCodexClientProps = {
   /**
    * Called for every JSON-RPC notification from codex BEFORE per-turn handlers
    * (`collectTurn`'s temporary handler chains to whatever was set previously).
-   * Useful for broadcasting to the structured event bus.
+   * Useful for broadcasting to the structured event journal.
    */
   onAnyNotification?: NotificationHandler
   clientName?: string
@@ -181,7 +181,7 @@ export class LeucoCodexClient {
       // A failed spawn (binary missing, EACCES) emits `error` and never
       // `exit`; `child.pid` stays undefined in that case. Settling here is
       // what keeps `isRunning()` truthful — otherwise the dead child sticks
-      // around forever and the tenant never respawns. When `pid` exists the
+      // around forever and the project runtime never respawns. When `pid` exists the
       // process may still be alive (e.g. a kill failure), so only the
       // in-flight work is failed.
       child.once("error", (err) => {
@@ -547,7 +547,7 @@ export class LeucoCodexClient {
       // `startTurn` always resolves (errors are folded into `| Error`), so a
       // single `.then` is enough — settling here rejects the outer promise
       // when codex never sends `turn/completed`. Without this `runTextTurn`
-      // would hang until the tenant's wall-clock timeout kicks in.
+      // would hang until the project runtime's wall-clock timeout kicks in.
       void this.startTurn(params).then((result) => {
         if (result instanceof Error) {
           teardown()

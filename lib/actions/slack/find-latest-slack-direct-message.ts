@@ -1,7 +1,7 @@
 import type {
   LeucoSlackWebClient,
   SlackHistoryMessage,
-} from "@/channels/slack/leuco-slack-web-client"
+} from "@/connectors/slack/leuco-slack-web-client"
 
 export type LatestSlackDirectMessage = {
   conversationId: string

@@ -1,6 +1,6 @@
-import type { LeucoEngine } from "@/engine/engine"
+import type { DaemonControl } from "@/control/daemon-control"
 
 export type GatewayRouteDeps = {
   selfPid: number
-  engine: LeucoEngine
+  control: DaemonControl
 }

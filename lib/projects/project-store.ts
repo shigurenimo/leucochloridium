@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { z } from "zod"
 import {
-  type Channel,
+  type ConnectorConfig,
   type Project,
   type ScheduleEntry,
   projectSchema,
@@ -11,12 +11,14 @@ import { atomicWriteJson } from "@/fs/atomic-write-json"
 import { withFileLock } from "@/fs/with-file-lock"
 import { globalSettingsSchema } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
+import { migrateLegacyProjectState } from "@/projects/migrate-legacy-project-state"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 export type LeucoProjectStoreProps = {
   paths?: LeucoPaths
 }
 
-type ScheduleChannelWritable = Extract<Channel, { type: "schedule" }>
+type ScheduleConnectorWritable = Extract<ConnectorConfig, { type: "schedule" }>
 
 export type RunnableProjectIssue = {
   index: number
@@ -32,9 +34,8 @@ export type RunnableProjectList = {
 /**
  * Project registry backed by the `projects` array inside
  * `~/.leuco/settings.json`. All CRUD goes through a single atomic file
- * (chmod 600 because channel configs embed Slack tokens). Per-project
- * runtime state is stored with the project in that file; each project's
- * CODEX_HOME stays in its UUID directory under `~/.leuco/projects/<id>/`.
+ * (chmod 600 because connector configs embed Slack tokens). Per-project
+ * runtime state is stored separately under each project's UUID directory.
  */
 export class LeucoProjectStore {
   private readonly paths: LeucoPaths
@@ -100,11 +101,7 @@ export class LeucoProjectStore {
       const next = settings.projects.slice()
 
       if (index >= 0) {
-        const current = next[index]!
-        // Runtime state is written independently by the daemon. Configuration
-        // commands commonly carry a snapshot read before that write, so a
-        // plain replacement would roll a fresh thread/schedule marker back.
-        next[index] = { ...project, state: current.state }
+        next[index] = project
       } else {
         next.push(project)
       }
@@ -155,78 +152,78 @@ export class LeucoProjectStore {
     const list = this.list()
     const match = list.find((p) => resolvePath(p.path) === cwdAbs)
     if (!match) {
-      throw new Error(
-        `no project registered at ${cwdAbs}. run \`leuco projects create ${cwdAbs}\` or \`leuco projects add ${cwdAbs}\`.`,
-      )
+      throw new Error(`no project registered at ${cwdAbs}. run \`leuco projects add ${cwdAbs}\`.`)
     }
     return match
   }
 
   addScheduleEntry(input: {
     projectId: string
-    channelName: string
+    connectorName: string
     entry: ScheduleEntry
   }): string {
-    return this.mutateScheduleChannel(input, (channel) => {
-      if (channel.entries.some((e) => e.id === input.entry.id)) {
+    return this.mutateScheduleConnector(input, (connector) => {
+      if (connector.entries.some((e) => e.id === input.entry.id)) {
         throw new Error(`schedule entry id already exists: ${input.entry.id}`)
       }
-      if (channel.entries.some((e) => e.name === input.entry.name)) {
+      if (connector.entries.some((e) => e.name === input.entry.name)) {
         throw new Error(`schedule entry name already exists: ${input.entry.name}`)
       }
-      return { ...channel, entries: [...channel.entries, input.entry] }
+      return { ...connector, entries: [...connector.entries, input.entry] }
     })
   }
 
   removeScheduleEntry(input: {
     projectId: string
-    channelName: string
+    connectorName: string
     entryIdOrName: string
   }): string {
+    const removedIds: string[] = []
     this.updateProject(input.projectId, (project) => {
-      const channel = findScheduleChannel(project, input.channelName)
-      const removedIds = channel.entries
+      const connector = findScheduleConnector(project, input.connectorName)
+      const matches = connector.entries
         .filter((entry) => entry.id === input.entryIdOrName || entry.name === input.entryIdOrName)
         .map((entry) => entry.id)
-      if (removedIds.length === 0) {
+      if (matches.length === 0) {
         throw new Error(`schedule entry not found: ${input.entryIdOrName}`)
       }
+      removedIds.push(...matches)
 
-      const nextChannels: Channel[] = project.channels.map((candidate) =>
-        candidate.name === channel.name
+      const nextConnectors: ConnectorConfig[] = project.connectors.map((candidate) =>
+        candidate.name === connector.name
           ? {
-              ...channel,
-              entries: channel.entries.filter((entry) => !removedIds.includes(entry.id)),
+              ...connector,
+              entries: connector.entries.filter((entry) => !removedIds.includes(entry.id)),
             }
           : candidate,
       )
-      const nextLastFiredAt = { ...project.state.scheduleLastFiredAt }
-      for (const entryId of removedIds) delete nextLastFiredAt[entryId]
-
       return {
         ...project,
-        channels: nextChannels,
-        state: { ...project.state, scheduleLastFiredAt: nextLastFiredAt },
+        connectors: nextConnectors,
       }
     })
+    const stateStore = new LeucoProjectStateStore({ paths: this.paths })
+    for (const entryId of removedIds) {
+      stateStore.removeScheduleEntry(input.projectId, entryId)
+    }
     return this.paths.settingsPath()
   }
 
   updateScheduleEntry(input: {
     projectId: string
-    channelName: string
+    connectorName: string
     entryId: string
     patch: Partial<ScheduleEntry>
   }): string {
-    return this.mutateScheduleChannel(input, (channel) => {
+    return this.mutateScheduleConnector(input, (connector) => {
       let touched = false
-      const next = channel.entries.map((e) => {
+      const next = connector.entries.map((e) => {
         if (e.id !== input.entryId) return e
         touched = true
         return { ...e, ...input.patch, id: e.id }
       })
       if (!touched) throw new Error(`schedule entry not found: ${input.entryId}`)
-      return { ...channel, entries: next }
+      return { ...connector, entries: next }
     })
   }
 
@@ -236,6 +233,7 @@ export class LeucoProjectStore {
 
     const raw = readFileSync(path, "utf8")
     const json: unknown = JSON.parse(raw)
+    migrateLegacyProjectState(json, this.paths)
     return globalSettingsSchema.parse(json)
   }
 
@@ -244,6 +242,7 @@ export class LeucoProjectStore {
     if (!existsSync(path)) return { projects: [], issues: [] }
 
     const raw: unknown = JSON.parse(readFileSync(path, "utf8"))
+    migrateLegacyProjectState(raw, this.paths)
     const shell = z
       .object({ projects: z.array(z.unknown()).default([]) })
       .passthrough()
@@ -296,31 +295,34 @@ export class LeucoProjectStore {
     return withFileLock({ lockPath: `${this.paths.settingsPath()}.lock` }, fn)
   }
 
-  private mutateScheduleChannel(
-    input: { projectId: string; channelName: string },
-    transform: (channel: ScheduleChannelWritable) => ScheduleChannelWritable,
+  private mutateScheduleConnector(
+    input: { projectId: string; connectorName: string },
+    transform: (connector: ScheduleConnectorWritable) => ScheduleConnectorWritable,
   ): string {
     this.updateProject(input.projectId, (project) => {
-      const channel = findScheduleChannel(project, input.channelName)
-      const updated = transform(channel)
-      const nextChannels: Channel[] = project.channels.map((candidate) =>
-        candidate.name === channel.name ? updated : candidate,
+      const connector = findScheduleConnector(project, input.connectorName)
+      const updated = transform(connector)
+      const nextConnectors: ConnectorConfig[] = project.connectors.map((candidate) =>
+        candidate.name === connector.name ? updated : candidate,
       )
-      return { ...project, channels: nextChannels }
+      return { ...project, connectors: nextConnectors }
     })
     return this.paths.settingsPath()
   }
 }
 
-const findScheduleChannel = (project: Project, channelName: string): ScheduleChannelWritable => {
-  const channel = project.channels.find((candidate) => candidate.name === channelName)
-  if (channel === undefined) {
-    throw new Error(`channel '${channelName}' not found in ${project.name}`)
+const findScheduleConnector = (
+  project: Project,
+  connectorName: string,
+): ScheduleConnectorWritable => {
+  const connector = project.connectors.find((candidate) => candidate.name === connectorName)
+  if (connector === undefined) {
+    throw new Error(`connector '${connectorName}' not found in ${project.name}`)
   }
-  if (channel.type !== "schedule") {
-    throw new Error(`channel '${channelName}' is not a schedule channel`)
+  if (connector.type !== "schedule") {
+    throw new Error(`connector '${connectorName}' is not a schedule connector`)
   }
-  return channel
+  return connector
 }
 
 const legacyProjectLabel = (value: unknown, index: number): string => {

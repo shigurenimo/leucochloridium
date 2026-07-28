@@ -3,6 +3,7 @@ import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 export const help = `leuco projects <p> session / show Codex session state
 
@@ -20,19 +21,20 @@ export const projectsSessionHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
   const store = new LeucoProjectStore()
   const project = resolveProject(c, store, projectName)
+  const state = new LeucoProjectStateStore({ paths: store.getPaths() }).load(project.id)
   const activeThreadIds =
     project.conversationScope === "project"
-      ? project.state.codexThreadId === null
+      ? state.codexThreadId === null
         ? []
-        : [project.state.codexThreadId]
-      : Object.values(project.state.codexThreadIds)
+        : [state.codexThreadId]
+      : Object.values(state.codexThreadIds)
 
   return c.text(
     renderYaml({
       project: project.name,
       conversationScope: project.conversationScope,
-      codexThreadId: project.state.codexThreadId,
-      codexThreadIds: project.state.codexThreadIds,
+      codexThreadId: state.codexThreadId,
+      codexThreadIds: state.codexThreadIds,
       activeSessionCount: activeThreadIds.length,
       hasSession: activeThreadIds.length > 0,
       enabled: project.enabled,

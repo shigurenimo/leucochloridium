@@ -25,7 +25,7 @@ type Props = {
 }
 
 /**
- * Owns the hard deadline for the whole tenant turn and the renewable idle
+ * Owns the hard deadline for the whole project runtime turn and the renewable idle
  * deadline for the Codex portion of that turn.
  */
 export class LeucoTurnTimeouts {

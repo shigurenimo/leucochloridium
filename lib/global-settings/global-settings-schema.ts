@@ -11,7 +11,7 @@ import {
 /**
  * Machine-wide leuco settings that live in `~/.leuco/settings.json`.
  * The `projects` array holds every registered project — including
- * per-channel secrets (Slack tokens), so the file is chmod 600.
+ * per-connector secrets (Slack tokens), so the file is chmod 600.
  *
  * `leuco config set/get` operates only on the scalar keys (keepAwake
  * etc.); the projects array is managed exclusively by LeucoProjectStore.
@@ -30,9 +30,9 @@ const globalSettingsShape = {
   turnIdleTimeoutMs: z.number().int().min(1_000).default(DEFAULT_TURN_IDLE_TIMEOUT_MS),
   /** Maximum different conversation threads one project may run concurrently. */
   turnConcurrency: z.number().int().min(1).max(32).default(DEFAULT_TURN_CONCURRENCY),
-  /** Maximum turns retained while a tenant already has work in flight. */
+  /** Maximum turns retained while a project runtime already has work in flight. */
   turnQueueMaxItems: z.number().int().min(1).default(DEFAULT_TURN_QUEUE_MAX_ITEMS),
-  /** Maximum UTF-8 bytes retained across a tenant's pending turns. */
+  /** Maximum UTF-8 bytes retained across a project runtime's pending turns. */
   turnQueueMaxBytes: z.number().int().min(1_024).default(DEFAULT_TURN_QUEUE_MAX_BYTES),
   projects: z
     .array(projectSchema)

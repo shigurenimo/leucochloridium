@@ -505,7 +505,7 @@ describe("LeucoCodexClient spawn failure", () => {
 
     // Spawn failure emits `error` without `exit`; the supervisor must still
     // clear the dead child or every later start() no-ops against a ghost and
-    // the tenant never respawns.
+    // the runtime never respawns.
     expect(client.isRunning()).toBe(false)
   }, 5000)
 

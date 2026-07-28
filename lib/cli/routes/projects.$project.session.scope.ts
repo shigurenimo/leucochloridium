@@ -12,10 +12,10 @@ usage / leuco projects <p> session scope [project|thread] [--force]
 
 scopes:
   project / share one Codex conversation across every Slack thread and schedule
-  thread / keep a separate Codex conversation for each channel-provided threadKey
+  thread / keep a separate Codex conversation for each connector-provided threadKey
 
 Changing scope preserves both sets of saved thread ids, so switching back restores
-the previous conversation history. A running tenant is rebuilt automatically.
+the previous conversation history. A running project runtime is rebuilt automatically.
 
 options:
   --force / allow changing scope from inside this project's own Codex session`
@@ -51,6 +51,8 @@ export const projectsSessionScopeHandler = factory.createHandlers(async (c) => {
     conversationScope: nextScope,
   }))
   const reload = c.var.daemon.reload()
-  const tail = reload.signalled ? " (tenant rebuild requested)" : " (takes effect on next start)"
+  const tail = reload.signalled
+    ? " (project runtime rebuild requested)"
+    : " (takes effect on next start)"
   return c.text(`project "${project.name}" conversation scope set to ${nextScope}${tail}`)
 })

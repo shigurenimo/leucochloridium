@@ -1,13 +1,13 @@
 import { factory } from "@/gateway/gateway-factory"
 
-/** GET /health — liveness + plugin/codex connection snapshot. */
+/** GET /health — liveness plus connector and Codex status. */
 export const healthHandler = factory.createHandlers((c) => {
   const deps = c.var.deps
 
   return c.json({
     ok: true,
     pid: deps.selfPid,
-    plugins: deps.engine.listPlugins(),
-    codexRunning: deps.engine.isCodexRunning(),
+    connectors: deps.control.listConnectors(),
+    codexRunning: deps.control.isCodexRunning(),
   })
 })

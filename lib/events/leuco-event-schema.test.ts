@@ -79,7 +79,7 @@ describe("leucoEventSchema", () => {
       ts: 1700000000000,
       type: "slack.event",
       project: "p",
-      channel: "c",
+      connector: "c",
       event: {
         kind: "message",
         channel: "C123",
@@ -101,7 +101,7 @@ describe("leucoEventSchema", () => {
       ts: 1700000000000,
       type: "slack.connection",
       project: "p",
-      channel: "c",
+      connector: "c",
       status: "reconnecting",
     })
     expect(parsed.success).toBe(true)
@@ -112,7 +112,7 @@ describe("leucoEventSchema", () => {
       ts: 1700000000000,
       type: "slack.error",
       project: "p",
-      channel: "c",
+      connector: "c",
       level: "warn",
       action: "ws.close",
       message: "socket closed",
@@ -121,11 +121,11 @@ describe("leucoEventSchema", () => {
     expect(parsed.success).toBe(true)
   })
 
-  it("accepts tenant retry details on an engine.reconcile.failed event", () => {
+  it("accepts runtime retry details on an supervisor.reconcile.failed event", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
-      type: "engine.reconcile.failed",
-      reason: "tenant demo start failed: offline",
+      type: "supervisor.reconcile.failed",
+      reason: "runtime demo start failed: offline",
       project: "demo",
       attempt: 2,
       retryAt: 1700000060000,

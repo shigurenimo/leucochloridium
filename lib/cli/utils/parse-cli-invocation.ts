@@ -1,0 +1,226 @@
+const SHORT_FLAGS: Record<string, string> = {
+  h: "help",
+  f: "follow",
+  v: "version",
+}
+
+/**
+ * Flags that never take a value. A bare value-taking flag greedily consumes
+ * the next non-flag token, so `--force restart` would otherwise swallow the
+ * `restart` leaf (flags.force="restart" → flagBool false, command unrouted).
+ */
+const BOOLEAN_FLAGS = new Set([
+  "help",
+  "force",
+  "follow",
+  "version",
+  "json",
+  "fix",
+  "cascade",
+  "check",
+])
+const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "events", "doctor"])
+const PROJECT_LEAFS = new Set(["list", "add"])
+const CONNECTOR_LEAFS = new Set(["list", "add"])
+const PROJECT_NAMED_LEAFS = new Set(["remove", "rename", "start", "stop", "restart", "path", "cwd"])
+const CONNECTOR_NAMED_LEAFS = new Set([
+  "remove",
+  "rename",
+  "start",
+  "stop",
+  "restart",
+  "set-tokens",
+  "download-file",
+])
+const PROJECT_SESSION_LEAFS = new Set(["reset", "scope"])
+const SCHEDULE_LEAFS = new Set(["add", "list", "remove"])
+const SLACK_LEAFS = new Set(["call", "dm"])
+const CONFIG_LEAFS = new Set(["list", "get", "set"])
+const BOOT_LEAFS = new Set(["install", "uninstall", "status"])
+
+type Stage =
+  | "top"
+  | "projects"
+  | "named-project"
+  | "project-session"
+  | "connectors"
+  | "named-connector"
+  | "schedules"
+  | "slack"
+  | "config"
+  | "boot"
+  | "done"
+
+export type CliArguments = {
+  args: string[]
+  flags: Record<string, string | boolean>
+}
+
+export type CliInvocation = {
+  path: string
+  body: string
+  parsed: CliArguments
+}
+
+/**
+ * Parse leuco argv into an in-process command path, positional args, and flags.
+ *
+ * The grammar is nested:
+ *   leuco <top-leaf>                                          → /<leaf>
+ *   leuco projects <project-leaf>                             → /projects/<leaf>
+ *   leuco projects <name> <named-leaf>                        → /projects/<name>/<leaf>
+ *   leuco projects <name> connectors <connector-leaf>                 → /projects/<name>/connectors/<leaf>
+ *   leuco projects <name> connectors <name> <named-leaf>        → /projects/<name>/connectors/<name>/<leaf>
+ *   leuco projects <name> connectors <name> schedules <leaf>    → /projects/<name>/connectors/<name>/schedules/<leaf>
+ *
+ * `top-leafs`: run | start | stop | restart | status | logs | events | doctor
+ * `project-leafs`: list | add
+ * `connector-leafs`: list | add
+ * `config-leafs`: list | get | set
+ * `boot-leafs`: install | uninstall | status
+ * project `named-leafs`: remove | rename | start | stop | restart | path
+ * connector `named-leafs`: remove | rename | start | stop | restart | set-tokens | download-file
+ *
+ * Anything past the recognised leaf becomes positional `args`. `--key value`
+ * and bare `--flag` populate `flags`; single-letter `-x` expands via SHORT_FLAGS.
+ */
+export const parseCliInvocation = (args: string[]): CliInvocation => {
+  const segments: string[] = []
+  const positional: string[] = []
+  const flags: Record<string, string | boolean> = {}
+
+  let stage: Stage = "top"
+  let i = 0
+
+  while (i < args.length) {
+    const arg = args[i]!
+
+    if (arg.startsWith("--")) {
+      const body = arg.slice(2)
+      const eqIndex = body.indexOf("=")
+      if (eqIndex !== -1) {
+        flags[body.slice(0, eqIndex)] = body.slice(eqIndex + 1)
+        i++
+        continue
+      }
+
+      const key = body
+      const next = args[i + 1]
+
+      if (!BOOLEAN_FLAGS.has(key) && typeof next === "string" && !isFlagToken(next)) {
+        flags[key] = next
+        i += 2
+      } else {
+        flags[key] = true
+        i++
+      }
+
+      continue
+    }
+
+    if (arg.startsWith("-") && arg.length === 2) {
+      const long = SHORT_FLAGS[arg[1]!]
+      if (long) flags[long] = true
+      i++
+      continue
+    }
+
+    if (stage === "done") {
+      positional.push(arg)
+      i++
+      continue
+    }
+
+    const decision = step(stage, arg)
+
+    if (decision.kind === "segment") {
+      segments.push(arg)
+      stage = decision.next
+    } else {
+      positional.push(arg)
+      stage = "done"
+    }
+
+    i++
+  }
+
+  const path = segments.length > 0 ? `/${segments.join("/")}` : "/"
+  const parsed: CliArguments = { args: positional, flags }
+
+  return {
+    path,
+    body: JSON.stringify(parsed),
+    parsed,
+  }
+}
+
+type StepDecision = { kind: "segment"; next: Stage } | { kind: "positional" }
+
+const step = (stage: Stage, arg: string): StepDecision => {
+  if (stage === "top") {
+    if (TOP_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (arg === "projects") return { kind: "segment", next: "projects" }
+    if (arg === "slack") return { kind: "segment", next: "slack" }
+    if (arg === "config") return { kind: "segment", next: "config" }
+    if (arg === "boot") return { kind: "segment", next: "boot" }
+    return { kind: "segment", next: "done" }
+  }
+
+  if (stage === "boot") {
+    if (BOOT_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "slack") {
+    if (SLACK_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "config") {
+    if (CONFIG_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "projects") {
+    if (PROJECT_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "segment", next: "named-project" }
+  }
+
+  if (stage === "named-project") {
+    if (PROJECT_NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (arg === "session") return { kind: "segment", next: "project-session" }
+    if (arg === "connectors") return { kind: "segment", next: "connectors" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "project-session") {
+    if (PROJECT_SESSION_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "connectors") {
+    if (CONNECTOR_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "segment", next: "named-connector" }
+  }
+
+  if (stage === "named-connector") {
+    if (CONNECTOR_NAMED_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    if (arg === "schedules") return { kind: "segment", next: "schedules" }
+    return { kind: "positional" }
+  }
+
+  if (stage === "schedules") {
+    if (SCHEDULE_LEAFS.has(arg)) return { kind: "segment", next: "done" }
+    return { kind: "positional" }
+  }
+
+  return { kind: "positional" }
+}
+
+const isFlagToken = (token: string): boolean => {
+  if (!token.startsWith("-")) return false
+  if (token.length === 1) return false
+  const tail = token.slice(1)
+  if (tail.startsWith("-")) return true
+  return Number.isNaN(Number(token))
+}

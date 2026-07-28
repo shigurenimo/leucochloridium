@@ -3,20 +3,19 @@ import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
-import { daemonSupervisionWarning, startDaemon } from "@/daemon/daemon-control"
+import { DaemonControlClient } from "@/control/daemon-control-client"
 import { LeucoProjectStore } from "@/projects/project-store"
-import { removeProjectSafely } from "@/projects/remove-project-safely"
 
 const help = `leuco projects <p> remove / unregister a project
 
 usage / leuco projects <p> remove [--cascade] [--force]
 
 options:
-  --cascade / also remove the project's channels from config
+  --cascade / also remove the project's connectors from config
   --force / allow removing the project from inside its own Codex session
 
 The registered project directory itself is not touched.
-~/.leuco/projects/<id>/ (including the tenant's CODEX_HOME) is deleted.`
+~/.leuco/projects/<id>/ (including the project's CODEX_HOME) is deleted.`
 
 export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -34,43 +33,30 @@ export const projectsRemoveHandler = factory.createHandlers(async (c) => {
   }
 
   const cascade = flagBool(body.flags.cascade)
-  if (project.channels.length > 0 && !cascade) {
+  if (project.connectors.length > 0 && !cascade) {
     throw new HTTPException(400, {
-      message: `project '${name}' has ${project.channels.length} channel(s). use --cascade to remove with its channels.`,
+      message: `project '${name}' has ${project.connectors.length} connector(s). use --cascade to remove with its connectors.`,
     })
   }
 
-  // Persist the desired stop even when the project was already disabled: a
-  // missed earlier reload can leave a stale tenant alive. Then terminate the
-  // daemon and wait for Engine.stop() to drain every tenant before rmSync
-  // removes this project's CODEX_HOME.
-  const removed = await removeProjectSafely({
-    project,
-    store,
-    daemon: c.var.daemon,
-    restart: () =>
-      startDaemon({
-        daemon: c.var.daemon,
-        binPath: c.var.binPath,
-        env: process.env,
-      }),
-  })
-  if (removed instanceof Error) {
-    throw new HTTPException(500, {
-      message: `project removal failed: ${removed.message}`,
-    })
+  const daemonRunning = c.var.daemon.status().isRunning
+  const control = new DaemonControlClient()
+  if (daemonRunning) {
+    const paused = await control.pauseProject(project.id)
+    if (!paused) {
+      throw new HTTPException(503, {
+        message: "daemon became unavailable before the project runtime was drained",
+      })
+    }
   }
 
-  if (!removed.daemonWasRunning || removed.restarted === null) {
-    return c.text(`removed project "${name}" (daemon not running)`)
+  try {
+    store.remove(project.id)
+  } catch (error) {
+    if (daemonRunning) await control.resumeProject(project.id).catch(() => false)
+    throw error
   }
 
-  const reloadMsg =
-    removed.restarted.mode === "launchd"
-      ? `(daemon restarted via launchd, ${removed.restarted.label})`
-      : `(daemon restarted, pid ${removed.restarted.pid})`
-  const lines = [`removed project "${name}" ${reloadMsg}`]
-  const warning = daemonSupervisionWarning(removed.restarted)
-  if (warning !== null) lines.push(warning)
-  return c.text(lines.join("\n"))
+  if (daemonRunning) await control.reload()
+  return c.text(`removed project "${name}"${daemonRunning ? " (runtime drained)" : ""}`)
 })

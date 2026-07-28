@@ -1,11 +1,10 @@
-import type { Context } from "hono"
 import { HTTPException } from "hono/http-exception"
-import type { Env } from "@/cli/cli-factory"
-import type { Channel, Project } from "@/config/config-schema"
+import type { CliContext } from "@/cli/cli-factory"
+import type { ConnectorConfig, Project } from "@/config/config-schema"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
 export const resolveProject = (
-  context: Context<Env>,
+  context: CliContext,
   store: LeucoProjectStore,
   name: string,
 ): Project => {
@@ -20,7 +19,7 @@ export const resolveProject = (
 }
 
 export const resolveProjectArgument = (
-  context: Context<Env>,
+  context: CliContext,
   store: LeucoProjectStore,
   name: string | null,
 ): Project => {
@@ -29,7 +28,7 @@ export const resolveProjectArgument = (
   const projectIdScope = context.var.projectIdScope ?? null
   if (projectIdScope === null) {
     throw new HTTPException(400, {
-      message: "--project is required outside a tenant Codex session",
+      message: "--project is required outside a project runtime Codex session",
     })
   }
 
@@ -37,7 +36,7 @@ export const resolveProjectArgument = (
 }
 
 export const resolveProjectFilter = (
-  context: Context<Env>,
+  context: CliContext,
   store: LeucoProjectStore,
   name: string | null,
 ): string | null => {
@@ -45,10 +44,10 @@ export const resolveProjectFilter = (
   return resolveProjectArgument(context, store, name).name
 }
 
-export const findChannel = (project: Project, name: string): Channel => {
-  const channel = project.channels.find((ch) => ch.name === name)
-  if (!channel) throw new Error(`channel '${name}' not found in project '${project.name}'`)
-  return channel
+export const findConnector = (project: Project, name: string): ConnectorConfig => {
+  const connector = project.connectors.find((candidate) => candidate.name === name)
+  if (!connector) throw new Error(`connector '${name}' not found in project '${project.name}'`)
+  return connector
 }
 
 const projectScopeError = (name: string): HTTPException =>

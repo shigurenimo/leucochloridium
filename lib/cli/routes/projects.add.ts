@@ -15,7 +15,7 @@ options:
   <path> / absolute or cwd-relative path to the repository root (default: cwd)
   --name <name> / project identifier (default: basename of <path>)
 
-The path itself is left untouched. Use \`leuco projects create\` to scaffold instead.`
+The path itself is left untouched; Leuco never scaffolds or moves repositories.`
 
 export const projectsAddHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)
@@ -39,16 +39,15 @@ export const projectsAddHandler = factory.createHandlers(async (c) => {
     id: crypto.randomUUID(),
     name,
     path,
-    version: 2,
+    version: 3,
     enabled: true,
     conversationScope: "project",
     useCommonInstructions: true,
     model: null,
     developerInstructions: null,
     prompts: [...DEFAULT_PROMPT_PRESET_NAMES],
-    channels: [],
+    connectors: [],
     mcpServers: {},
-    state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
   }
   store.save(project)
 

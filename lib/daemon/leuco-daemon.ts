@@ -55,7 +55,7 @@ export type DaemonStopResult = {
 /**
  * Machine-wide background daemon manager. State lives at
  * `~/.leuco/daemon/{pid,log}`; the daemon supervises every registered
- * project's tenants in one process, so there is exactly one daemon per
+ * project runtimes in one process, so there is exactly one daemon per
  * machine regardless of how many projects are configured.
  */
 export class LeucoDaemon {
@@ -272,7 +272,7 @@ export class LeucoDaemon {
     return { stopped, pid: lease.pid }
   }
 
-  /** Send SIGHUP so a running daemon re-reads config and reconciles tenants. */
+  /** Send SIGHUP so a running daemon re-reads config and reconciles projects. */
   reload(): { signalled: boolean; pid: number | null } {
     const pidPath = this.paths.daemonPidPath()
     const lease = readPidLease(pidPath)

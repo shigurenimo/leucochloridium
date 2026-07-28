@@ -12,8 +12,8 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Project } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoTenant } from "@/engine/tenant"
-import { LeucoEventBus } from "@/events/leuco-event-bus"
+import { LeucoProjectRuntime } from "@/project/project-runtime"
+import { LeucoEventJournal } from "@/events/leuco-event-journal"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { PromptPreset } from "@/prompts/presets"
@@ -22,7 +22,7 @@ import { LeucoRuntime } from "@/runtime/runtime"
 const PROJECT_ID = "00000000-0000-4000-8000-000000000000"
 
 const makeProject = (name: string, suffix: string): Project => ({
-  version: 2,
+  version: 3,
   id: `00000000-0000-4000-8000-${suffix.padStart(12, "0").slice(0, 12)}`,
   name,
   path: `/tmp/${name}`,
@@ -32,9 +32,8 @@ const makeProject = (name: string, suffix: string): Project => ({
   model: null,
   developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK],
-  channels: [],
+  connectors: [],
   mcpServers: {},
-  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 })
 
 const sampleProject = (): Project => makeProject("demo", "0")
@@ -64,7 +63,7 @@ describe("LeucoRuntime", () => {
     rmSync(home, { recursive: true, force: true })
   })
 
-  it("forces gpt-5.6-terra with bounded tool output in generated tenant config", () => {
+  it("forces gpt-5.6-terra with bounded tool output in generated runtime config", () => {
     const paths = new LeucoPaths({ home })
     const store = new LeucoProjectStore({ paths })
     store.save({
@@ -96,7 +95,7 @@ describe("LeucoRuntime", () => {
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
   })
 
-  it("starts healthy tenants and supervises a project whose initial build failed", async () => {
+  it("starts healthy runtimes and supervises a project whose initial build failed", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"))
 
@@ -112,26 +111,20 @@ describe("LeucoRuntime", () => {
     let brokenStarts = 0
     let brokenBuildAttempts = 0
     const logs: string[] = []
-    const retryAttempts: Array<number | undefined> = []
-    const eventBus = new LeucoEventBus()
-    eventBus.subscribe((event) => {
-      if (event.type === "engine.reconcile.failed" && event.project === "broken") {
-        retryAttempts.push(event.attempt)
-      }
-    })
+    const eventJournal = new LeucoEventJournal()
     const runtime = LeucoRuntime.build({
       env: {},
       home,
       port: 7331,
       onLog: (line) => logs.push(line),
-      eventBus,
-      buildTenantForProject: (project) => {
+      eventJournal,
+      buildProjectRuntime: (project) => {
         if (project.name === "broken") {
           brokenBuildAttempts++
           if (brokenBuildAttempts < 3) throw new Error("broken composition")
         }
 
-        return new LeucoTenant({
+        return new LeucoProjectRuntime({
           projectId: project.id,
           projectName: project.name,
           projectPath: project.path,
@@ -139,7 +132,7 @@ describe("LeucoRuntime", () => {
             if (project.name === "healthy") healthyStarts++
             if (project.name === "broken") brokenStarts++
           }),
-          plugins: [],
+          connectors: [],
           onLog: () => {},
         })
       },
@@ -153,12 +146,18 @@ describe("LeucoRuntime", () => {
       expect(brokenBuildAttempts).toBe(2)
       expect(brokenStarts).toBe(0)
       expect(logs.some((line) => line.includes("broken initial build failed"))).toBe(true)
-      expect(retryAttempts).toEqual([undefined, 1])
+      expect(
+        eventJournal
+          .query({ type: "supervisor.reconcile.failed", project: "broken" })
+          .map((entry) => entry.event)
+          .filter((event) => event.type === "supervisor.reconcile.failed")
+          .map((event) => event.attempt),
+      ).toEqual([undefined, 1])
       expect(
         runtime
-          .getEngine()
+          .getSupervisor()
           .listProjects()
-          .map((project) => project.tenantRunning),
+          .map((project) => project.isRunning),
       ).toEqual([true, false])
 
       await vi.advanceTimersByTimeAsync(29_999)
@@ -171,9 +170,9 @@ describe("LeucoRuntime", () => {
       expect(brokenStarts).toBe(1)
       expect(
         runtime
-          .getEngine()
+          .getSupervisor()
           .listProjects()
-          .map((project) => project.tenantRunning),
+          .map((project) => project.isRunning),
       ).toEqual([true, true])
     } finally {
       await runtime.stop()
@@ -182,7 +181,7 @@ describe("LeucoRuntime", () => {
     expect(gatewayStop).toHaveBeenCalledTimes(1)
   })
 
-  it("builds valid tenants when another project entry is malformed", async () => {
+  it("builds valid runtimes when another project entry is malformed", async () => {
     const paths = new LeucoPaths({ home })
     const store = new LeucoProjectStore({ paths })
     const healthy = makeProject("healthy", "5")
@@ -202,15 +201,15 @@ describe("LeucoRuntime", () => {
       home,
       port: 7331,
       onLog: (line) => logs.push(line),
-      eventBus: new LeucoEventBus(),
-      buildTenantForProject: (project) => {
+      eventJournal: new LeucoEventJournal(),
+      buildProjectRuntime: (project) => {
         built.push(project.name)
-        return new LeucoTenant({
+        return new LeucoProjectRuntime({
           projectId: project.id,
           projectName: project.name,
           projectPath: project.path,
           codex: fakeCodex(() => undefined),
-          plugins: [],
+          connectors: [],
           onLog: () => {},
         })
       },
@@ -219,7 +218,7 @@ describe("LeucoRuntime", () => {
     expect(built).toEqual(["healthy"])
     expect(
       runtime
-        .getEngine()
+        .getSupervisor()
         .listProjects()
         .map((project) => project.name),
     ).toEqual(["healthy"])
@@ -230,27 +229,27 @@ describe("LeucoRuntime", () => {
     await runtime.stop()
   })
 
-  it("preserves a tenant-specific auth file instead of replacing it with a symlink", async () => {
+  it("preserves a runtime-specific auth file instead of replacing it with a symlink", async () => {
     const paths = new LeucoPaths({ home })
     const store = new LeucoProjectStore({ paths })
-    const project = makeProject("tenant-auth", "3")
+    const project = makeProject("runtime-auth", "3")
     store.save(project)
 
     mkdirSync(paths.projectHome(project.id), { recursive: true })
     mkdirSync(join(home, ".codex"), { recursive: true })
     writeFileSync(paths.codexAuthPath(), "shared credentials")
-    const tenantAuthPath = join(paths.projectHome(project.id), "auth.json")
-    writeFileSync(tenantAuthPath, "tenant credentials")
+    const projectAuthPath = join(paths.projectHome(project.id), "auth.json")
+    writeFileSync(projectAuthPath, "runtime credentials")
 
     const runtime = LeucoRuntime.build({
       env: {},
       home,
       port: 7331,
-      eventBus: new LeucoEventBus(),
+      eventJournal: new LeucoEventJournal(),
     })
 
-    expect(lstatSync(tenantAuthPath).isSymbolicLink()).toBe(false)
-    expect(readFileSync(tenantAuthPath, "utf8")).toBe("tenant credentials")
+    expect(lstatSync(projectAuthPath).isSymbolicLink()).toBe(false)
+    expect(readFileSync(projectAuthPath, "utf8")).toBe("runtime credentials")
     await runtime.stop()
   })
 
@@ -273,7 +272,7 @@ describe("LeucoRuntime", () => {
       env: {},
       home,
       port: 7331,
-      eventBus: new LeucoEventBus(),
+      eventJournal: new LeucoEventJournal(),
     })
     const config = readFileSync(join(paths.projectHome(project.id), "config.toml"), "utf8")
 

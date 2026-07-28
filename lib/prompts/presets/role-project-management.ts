@@ -1,5 +1,5 @@
 /**
- * Channel-agnostic project-management role preset.
+ * ConnectorConfig-agnostic project-management role preset.
  *
  * This is the prompt-level Conversation Kernel: it keeps the agent focused on
  * the next useful state transition while the runtime and project memory remain

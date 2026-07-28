@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-direct-message"
-import { LeucoMemorySlackWebClient } from "@/channels/slack/leuco-memory-slack-web-client"
-import type { SlackHistoryMessage } from "@/channels/slack/leuco-slack-web-client"
+import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
+import type { SlackHistoryMessage } from "@/connectors/slack/leuco-slack-web-client"
 
 const message = (ts: string, props: Partial<SlackHistoryMessage> = {}): SlackHistoryMessage => ({
   user: "U1",

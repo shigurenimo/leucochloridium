@@ -1,5 +1,5 @@
 /**
- * Channel-agnostic work-communication style preset.
+ * ConnectorConfig-agnostic work-communication style preset.
  *
  * Work-reporting discipline for concise results and useful progress updates.
  * Pair with `style-human` for relational conversation and with a

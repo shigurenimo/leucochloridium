@@ -1,4 +1,4 @@
-import type { SlackHistoryMessage } from "@/channels/slack/leuco-slack-web-client"
+import type { SlackHistoryMessage } from "@/connectors/slack/leuco-slack-web-client"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 export type SlackDirectMessageDiagnosis = {
@@ -188,8 +188,8 @@ const hasSocketEvent = (
   return events.some(
     (event) =>
       event.type === "slack.event" &&
-      event.channel === conversationId &&
       event.event.kind === "message" &&
+      event.event.channel === conversationId &&
       event.event.ts === messageTs,
   )
 }

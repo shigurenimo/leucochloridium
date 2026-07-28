@@ -70,9 +70,9 @@ describe("doctor route", () => {
       context.set("version", "test")
       await next()
     })
-    app.post("/doctor", ...doctorHandler)
+    app.command("/doctor", ...doctorHandler)
 
-    const response = await app.request("/doctor", { method: "POST" })
+    const response = await app.dispatch({ path: "/doctor" })
     const body = await response.text()
 
     expect(response.status).toBe(200)

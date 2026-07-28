@@ -1,12 +1,12 @@
-import type { Context } from "hono"
 import { HTTPException } from "hono/http-exception"
-import type { Env } from "@/cli/cli-factory"
+import type { CliContext } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool } from "@/cli/utils/read-cli-body"
 import type { CliBody } from "@/cli/utils/read-cli-body"
-import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
+import { DaemonControlClient } from "@/control/daemon-control-client"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 type Props = {
   help: string
@@ -14,7 +14,7 @@ type Props = {
 }
 
 export const resetProjectSession = async (
-  c: Context<Env>,
+  c: CliContext,
   body: CliBody,
   props: Props,
 ): Promise<Response> => {
@@ -30,41 +30,29 @@ export const resetProjectSession = async (
     })
   }
 
-  const previousThreadId = project.state.codexThreadId
-  const previousThreadCount = Object.keys(project.state.codexThreadIds).length
+  const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
+  const previous = stateStore.load(project.id)
+  const previousThreadId = previous.codexThreadId
+  const previousThreadCount = Object.keys(previous.codexThreadIds).length
 
-  // Every write goes through updateProject so a concurrent daemon-side state
-  // write (markScheduleEntryFired etc.) is never rolled back by a stale
-  // snapshot of the project.
-  store.updateProject(project.id, (fresh) => ({
-    ...fresh,
-    state: { ...fresh.state, codexThreadId: null, codexThreadIds: {} },
-  }))
-
-  if (!project.enabled) {
+  const daemonRunning = c.var.daemon.status().isRunning
+  if (!daemonRunning || !project.enabled) {
+    stateStore.clearCodexThreads(project.id)
     const wasEmpty = previousThreadId === null && previousThreadCount === 0
     const tail = wasEmpty
       ? " (was already empty)"
       : ` (cleared ${previousThreadCount + (previousThreadId === null ? 0 : 1)} thread ids)`
-    return c.text(
-      `reset session for "${projectName}"${tail} (project disabled; takes effect on enable)`,
-    )
+    const activation = project.enabled
+      ? " (daemon stopped; takes effect on next start)"
+      : " (project disabled; takes effect on enable)"
+    return c.text(`reset session for "${projectName}"${tail}${activation}`)
   }
 
-  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: false }))
-  const stopReload = c.var.daemon.reload()
+  const reset = await new DaemonControlClient().resetProjectSession(project.id)
+  if (!reset) throw new HTTPException(503, { message: "daemon control is unavailable" })
 
-  const confirmedDown = stopReload.signalled ? await waitForTenantDown(project.id) : true
-
-  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
-  const reload = c.var.daemon.reload()
-
-  const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
   const clearedCount = previousThreadCount + (previousThreadId === null ? 0 : 1)
   const previousMsg = clearedCount === 0 ? "" : ` cleared=${clearedCount}`
-  const warn = confirmedDown
-    ? ""
-    : "\nwarning: tenant did not stop within 10s; the reset may not have taken effect"
 
-  return c.text(`reset session for "${projectName}"${previousMsg} ${reloadMsg}${warn}`)
+  return c.text(`reset session for "${projectName}"${previousMsg}`)
 }

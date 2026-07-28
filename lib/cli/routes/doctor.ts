@@ -8,7 +8,7 @@ import { toDaemonDoctorChecks } from "@/cli/utils/to-daemon-doctor-checks"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore, type RunnableProjectList } from "@/projects/project-store"
 
-const help = `leuco doctor / diagnose daemon, projects, and channels
+const help = `leuco doctor / diagnose daemon, projects, and connectors
 
 usage / leuco doctor [--fix]
 
@@ -19,7 +19,7 @@ checks:
   - codex: binary on PATH, version
   - settings: file exists, parseable, permissions
   - projects: path exists, codex home, auth symlink, config.toml
-  - channels: token presence, socket mode readiness
+  - connectors: token presence, socket mode readiness
   - zombies: orphaned codex app-server processes
 
 options:
@@ -47,7 +47,7 @@ type ProjectReport = {
   path: string
   enabled: boolean
   checks: Record<string, Check>
-  channels: Array<{
+  connectors: Array<{
     name: string
     type: string
     enabled: boolean
@@ -144,7 +144,7 @@ const checkProject = (
     name: string
     path: string
     enabled: boolean
-    channels: Array<{
+    connectors: Array<{
       name: string
       type: string
       enabled: boolean
@@ -204,41 +204,41 @@ const checkProject = (
     checks.configToml = error(`${configToml} missing`)
   }
 
-  const channelReports = project.channels.map((ch) => {
-    const channelChecks: Record<string, Check> = {}
+  const channelReports = project.connectors.map((ch) => {
+    const connectorChecks: Record<string, Check> = {}
 
     if (ch.type === "slack") {
       const hasBotToken = typeof ch.botToken === "string" && ch.botToken.length > 0
       const hasAppToken = typeof ch.appToken === "string" && ch.appToken.length > 0
 
-      channelChecks.botToken = hasBotToken
+      connectorChecks.botToken = hasBotToken
         ? ok(`set (${ch.botToken!.slice(0, 8)}…)`)
-        : error("missing — set with `leuco projects <p> channels <c> set-tokens`")
+        : error("missing — set with `leuco projects <p> connectors <c> set-tokens`")
 
-      channelChecks.appToken = hasAppToken
+      connectorChecks.appToken = hasAppToken
         ? ok(`set (${ch.appToken!.slice(0, 8)}…)`)
         : error("missing — socket mode requires an app-level token")
 
-      // xoxp- (user token) is a supported configuration — `channels add` and
+      // xoxp- (user token) is a supported configuration — `connectors add` and
       // the slack token schema both accept it, so don't warn on it here.
       if (hasBotToken && !ch.botToken!.startsWith("xoxb-") && !ch.botToken!.startsWith("xoxp-")) {
-        channelChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
+        connectorChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
       }
 
       if (hasAppToken && !ch.appToken!.startsWith("xapp-")) {
-        channelChecks.appTokenFormat = warn("expected xapp- prefix")
+        connectorChecks.appTokenFormat = warn("expected xapp- prefix")
       }
     }
 
     if (ch.type === "schedule") {
-      channelChecks.type = ok("schedule channel — no tokens required")
+      connectorChecks.type = ok("schedule connector — no tokens required")
     }
 
     return {
       name: ch.name,
       type: ch.type,
       enabled: ch.enabled,
-      checks: channelChecks,
+      checks: connectorChecks,
     }
   })
 
@@ -247,7 +247,7 @@ const checkProject = (
     path: project.path,
     enabled: project.enabled,
     checks,
-    channels: channelReports,
+    connectors: channelReports,
   }
 }
 
@@ -378,8 +378,8 @@ const allChecks = (report: DoctorReport): Array<"ok" | "warn" | "error"> => {
 
   for (const project of report.projects) {
     for (const check of Object.values(project.checks)) statuses.push(check.status)
-    for (const channel of project.channels) {
-      for (const check of Object.values(channel.checks)) statuses.push(check.status)
+    for (const connector of project.connectors) {
+      for (const check of Object.values(connector.checks)) statuses.push(check.status)
     }
   }
 
@@ -438,12 +438,12 @@ export const doctorHandler = factory.createHandlers(async (c) => {
         name: project.name,
         path: project.path,
         enabled: project.enabled,
-        channels: project.channels.map((channel) => ({
-          name: channel.name,
-          type: channel.type,
-          enabled: channel.enabled,
-          ...("botToken" in channel ? { botToken: channel.botToken } : {}),
-          ...("appToken" in channel ? { appToken: channel.appToken } : {}),
+        connectors: project.connectors.map((connector) => ({
+          name: connector.name,
+          type: connector.type,
+          enabled: connector.enabled,
+          ...("botToken" in connector ? { botToken: connector.botToken } : {}),
+          ...("appToken" in connector ? { appToken: connector.appToken } : {}),
         })),
       }),
     ),
