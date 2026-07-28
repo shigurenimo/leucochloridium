@@ -3,23 +3,23 @@ import { LeucoScheduleConnector } from "@/connectors/schedule/schedule-connector
 import type { ScheduleStorePort } from "@/connectors/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
 import type { ConnectorContext } from "@/connectors/connector"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 
 type Captured = {
   turns: { threadKey: string; text: string }[]
   logs: string[]
-  journal: LeucoEventJournal
+  eventLog: LeucoEventLog
   events: { type: string }[]
 }
 
 const makeCtx = (): { ctx: ConnectorContext; captured: Captured } => {
-  const journal = new LeucoEventJournal()
+  const eventLog = new LeucoEventLog()
   const captured: Captured = {
     turns: [],
     logs: [],
-    journal,
+    eventLog,
     get events() {
-      return journal.query().map((entry) => entry.event)
+      return eventLog.query().map((entry) => entry.event)
     },
   }
 
@@ -30,7 +30,7 @@ const makeCtx = (): { ctx: ConnectorContext; captured: Captured } => {
       captured.turns.push({ threadKey, text })
       return ""
     },
-    journal: captured.journal,
+    eventLog: captured.eventLog,
     projectName: "demo",
   }
   return { ctx, captured }

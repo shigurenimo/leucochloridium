@@ -28,7 +28,7 @@ export type LeucoSlackEnvelope = {
 }
 
 /** Single source of truth for the four socket connection states. Re-used by
- * the `slack.connection` journal event so both stay in lockstep. */
+ * the `slack.connection` event-log entry so both stay in lockstep. */
 export const leucoSlackSourceStatusSchema = z.enum([
   "disconnected",
   "connecting",

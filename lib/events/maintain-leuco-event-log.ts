@@ -25,7 +25,7 @@ type CountRow = {
   count: number
 }
 
-export function maintainLeucoEventJournal(props: Props): void {
+export function maintainLeucoEventLog(props: Props): void {
   if (props.path === ":memory:") return
 
   const database = new Database(props.path)

@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, test } from "vitest"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 
-describe("LeucoEventJournal", () => {
+describe("LeucoEventLog", () => {
   let dir: string
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "leuco-event-journal-"))
+    dir = mkdtempSync(join(tmpdir(), "leuco-event-log-"))
   })
 
   afterEach(() => {
@@ -16,12 +16,12 @@ describe("LeucoEventJournal", () => {
   })
 
   test("records events in memory when no path is configured", () => {
-    const journal = new LeucoEventJournal()
+    const eventLog = new LeucoEventLog()
 
-    journal.log("info", "hello")
-    journal.log("warn", "world")
+    eventLog.log("info", "hello")
+    eventLog.log("warn", "world")
 
-    expect(journal.query().map((entry) => entry.event)).toEqual([
+    expect(eventLog.query().map((entry) => entry.event)).toEqual([
       expect.objectContaining({ type: "log", line: "hello" }),
       expect.objectContaining({ type: "log", line: "world" }),
     ])
@@ -29,64 +29,64 @@ describe("LeucoEventJournal", () => {
 
   test("persists events to SQLite", () => {
     const path = join(dir, "events.db")
-    const journal = new LeucoEventJournal({ eventLogPath: path })
+    const eventLog = new LeucoEventLog({ eventLogPath: path })
 
-    journal.log("info", "one")
-    journal.log("warn", "two")
+    eventLog.log("info", "one")
+    eventLog.log("warn", "two")
 
-    const entries = journal.query()
+    const entries = eventLog.query()
 
     expect(entries).toHaveLength(2)
     expect(entries[0]!.event).toMatchObject({ type: "log", line: "one" })
     expect(entries[1]!.event).toMatchObject({ type: "log", line: "two" })
 
-    journal.close()
+    eventLog.close()
   })
 
   test("indexes the project column", () => {
     const path = join(dir, "events.db")
-    const journal = new LeucoEventJournal({ eventLogPath: path })
+    const eventLog = new LeucoEventLog({ eventLogPath: path })
 
-    journal.append({ ts: Date.now(), type: "runtime.started", project: "alpha" })
-    journal.append({ ts: Date.now(), type: "runtime.started", project: "beta" })
-    journal.append({ ts: Date.now(), type: "log", level: "info", line: "no project" })
+    eventLog.append({ ts: Date.now(), type: "runtime.started", project: "alpha" })
+    eventLog.append({ ts: Date.now(), type: "runtime.started", project: "beta" })
+    eventLog.append({ ts: Date.now(), type: "log", level: "info", line: "no project" })
 
-    const alphaOnly = journal.query({ project: "alpha" })
+    const alphaOnly = eventLog.query({ project: "alpha" })
 
     expect(alphaOnly).toHaveLength(1)
     expect(alphaOnly[0]!.event).toMatchObject({ type: "runtime.started", project: "alpha" })
 
-    journal.close()
+    eventLog.close()
   })
 
   test("retains only the configured number of newest rows", () => {
     const path = join(dir, "events.db")
-    const journal = new LeucoEventJournal({ eventLogPath: path, maxRows: 2 })
+    const eventLog = new LeucoEventLog({ eventLogPath: path, maxRows: 2 })
 
-    journal.log("info", "one")
-    journal.log("info", "two")
-    journal.log("info", "three")
+    eventLog.log("info", "one")
+    eventLog.log("info", "two")
+    eventLog.log("info", "three")
 
-    expect(journal.query().map((entry) => entry.event)).toEqual([
+    expect(eventLog.query().map((entry) => entry.event)).toEqual([
       expect.objectContaining({ type: "log", line: "two" }),
       expect.objectContaining({ type: "log", line: "three" }),
     ])
-    journal.close()
+    eventLog.close()
   })
 
   test("bounds large turn and notification payloads on disk", () => {
     const path = join(dir, "events.db")
-    const journal = new LeucoEventJournal({ eventLogPath: path })
+    const eventLog = new LeucoEventLog({ eventLogPath: path })
     const large = "x".repeat(40_000)
 
-    journal.append({
+    eventLog.append({
       ts: Date.now(),
       type: "turn.complete",
       project: "demo",
       threadKey: "thread",
       reply: large,
     })
-    journal.append({
+    eventLog.append({
       ts: Date.now(),
       type: "codex.notification",
       project: "demo",
@@ -94,7 +94,7 @@ describe("LeucoEventJournal", () => {
       params: { delta: large },
     })
 
-    const [turn, notification] = journal.query().map((entry) => entry.event)
+    const [turn, notification] = eventLog.query().map((entry) => entry.event)
     expect(turn).toMatchObject({
       type: "turn.complete",
       replyChars: 40_000,
@@ -107,12 +107,12 @@ describe("LeucoEventJournal", () => {
         originalChars: expect.any(Number),
       })
     }
-    journal.close()
+    eventLog.close()
   })
 
   test("close is idempotent", () => {
-    const journal = new LeucoEventJournal({ eventLogPath: join(dir, "events.db") })
-    journal.close()
-    journal.close()
+    const eventLog = new LeucoEventLog({ eventLogPath: join(dir, "events.db") })
+    eventLog.close()
+    eventLog.close()
   })
 })

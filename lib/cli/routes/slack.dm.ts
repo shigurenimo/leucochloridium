@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { SqliteEventJournal } from "@/event-journal/sqlite-event-journal"
+import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { z } from "zod"
 import { diagnoseSlackDirectMessage } from "@/actions/slack/diagnose-slack-direct-message"
 import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-direct-message"
@@ -136,7 +136,7 @@ const parseLimit = (raw: string | null): number => {
 }
 
 const queryProjectEvents = (eventLogPath: string, project: string): LeucoEvent[] => {
-  const sink = new SqliteEventJournal<LeucoEvent, ["project"]>({
+  const sink = new SqliteEventLog<LeucoEvent, ["project"]>({
     path: eventLogPath,
     indexes: ["project"],
     extractIndexes: (event) => ({

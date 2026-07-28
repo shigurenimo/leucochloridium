@@ -408,7 +408,7 @@ const runtime = LeucoRuntime.build({ env: process.env })
 await runtime.start()
 ```
 
-The package root intentionally exposes only the stable composition root (`LeucoRuntime`), project and connector contracts, and the structured event-journal contract. Daemon, gateway, CLI, stores, concrete connectors, and test fakes remain internal. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
+The package root intentionally exposes only the stable composition root (`LeucoRuntime`), project and connector contracts, and the structured event-log contract. Daemon, gateway, CLI, stores, concrete connectors, and test fakes remain internal. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
 
 Run the complete local verification before publishing:
 

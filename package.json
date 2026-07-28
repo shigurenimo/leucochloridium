@@ -55,7 +55,7 @@
     "package:check": "bun run build:types && publint && bun pm pack --dry-run",
     "prepack": "bun run build:types",
     "test": "vp test run && bun run test:bun",
-    "test:bun": "bun test ./lib/events/leuco-event-journal.bun-test.ts",
+    "test:bun": "bun test ./lib/events/leuco-event-log.bun-test.ts",
     "test:coverage": "vp test run --coverage",
     "test:package": "bun run scripts/verify-packed-package.ts",
     "typecheck": "tsc -b --pretty false",

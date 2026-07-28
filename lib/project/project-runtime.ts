@@ -13,7 +13,7 @@ import {
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
   DEFAULT_TURN_TIMEOUT_MS,
 } from "@/engine/turn-timeouts"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import { ProjectThreadRegistry, type ProjectThreadSummary } from "@/project/project-thread-registry"
 import { ProjectTurnQueue, type QueuedProjectTurn } from "@/project/project-turn-queue"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
@@ -70,7 +70,7 @@ export type LeucoProjectRuntimeProps = {
    * against the freshly loaded project to decide whether to rebuild. */
   configSignature?: string
   onLog?: Logger
-  journal?: LeucoEventJournal
+  eventLog?: LeucoEventLog
   /** Hard wall-clock and no-notification limits. Overridable for tests. */
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
@@ -105,7 +105,7 @@ export class LeucoProjectRuntime {
   private readonly codex: CodexClientPort
   private readonly connectors: Connector[]
   private readonly log: Logger
-  private readonly journal: LeucoEventJournal
+  private readonly eventLog: LeucoEventLog
   private readonly threads: ProjectThreadRegistry
   private readonly useCommonInstructions: boolean
   private readonly presets: string[]
@@ -129,7 +129,7 @@ export class LeucoProjectRuntime {
     this.codex = props.codex
     this.connectors = props.connectors
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
-    this.journal = props.journal ?? new LeucoEventJournal()
+    this.eventLog = props.eventLog ?? new LeucoEventLog()
     this.threads = new ProjectThreadRegistry({
       projectId: props.projectId,
       projectName: props.projectName,
@@ -160,7 +160,7 @@ export class LeucoProjectRuntime {
       conversationKey: (threadKey) => this.threads.conversationKey(threadKey),
       execute: (turn) => this.executeTurn(turn),
       onLog: this.log,
-      journal: this.journal,
+      eventLog: this.eventLog,
     })
   }
 
@@ -206,7 +206,7 @@ export class LeucoProjectRuntime {
       throw error
     }
 
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "runtime.started",
       project: this.projectName,
@@ -263,7 +263,7 @@ export class LeucoProjectRuntime {
     })
     await Promise.all(connectorStops)
 
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "runtime.stopped",
       project: this.projectName,
@@ -300,7 +300,7 @@ export class LeucoProjectRuntime {
       const threadId = threadIdOrError
 
       this.log(`[leuco] turn → ${threadId} wait=${queueWaitMs}ms (${truncate(pending.text, 60)})`)
-      this.journal.append({
+      this.eventLog.append({
         ts: Date.now(),
         type: "turn.start",
         project: this.projectName,
@@ -325,7 +325,7 @@ export class LeucoProjectRuntime {
       this.log(
         `[leuco] ${this.projectName}: turn complete duration=${durationMs}ms wait=${queueWaitMs}ms replyChars=${reply.length}`,
       )
-      this.journal.append({
+      this.eventLog.append({
         ts: Date.now(),
         type: "turn.complete",
         project: this.projectName,
@@ -448,7 +448,7 @@ export class LeucoProjectRuntime {
     this.log(
       `[leuco] ${this.projectName}: codex recovery succeeded duration=${durationMs}ms${stopWarning}`,
     )
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "codex.recovery",
       project: this.projectName,
@@ -464,7 +464,7 @@ export class LeucoProjectRuntime {
     this.log(
       `[leuco] ${this.projectName}: codex recovery failed duration=${durationMs}ms: ${recoveryError}`,
     )
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "codex.recovery",
       project: this.projectName,
@@ -485,7 +485,7 @@ export class LeucoProjectRuntime {
     this.log(
       `[leuco] ${this.projectName}: turn error duration=${durationMs}ms wait=${queueWaitMs}ms: ${error.message}`,
     )
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "turn.error",
       project: this.projectName,
@@ -576,7 +576,7 @@ export class LeucoProjectRuntime {
     return {
       cwd: this.projectPath,
       onLog: this.log,
-      journal: this.journal,
+      eventLog: this.eventLog,
       projectName: this.projectName,
       runTextTurn: (threadKey, text, options) => this.runTextTurn(threadKey, text, options),
     }

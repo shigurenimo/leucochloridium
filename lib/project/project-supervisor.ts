@@ -6,7 +6,7 @@ import type {
   DaemonThreadSummary,
 } from "@/control/daemon-control"
 import { errorMessage } from "@/error-message"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoProjectRuntime } from "@/project/project-runtime"
 import { projectRuntimeSignature } from "@/project/project-runtime-signature"
 import type { LeucoProjectStore } from "@/projects/project-store"
@@ -39,7 +39,7 @@ export type LeucoProjectSupervisorProps = {
   buildProjectRuntime: (project: Project) => LeucoProjectRuntime
   buildProjectConnector: (project: Project, connectorName: string) => Connector
   onLog?: Logger
-  journal?: LeucoEventJournal
+  eventLog?: LeucoEventLog
 }
 
 const RETRY_INITIAL_MS = 30_000
@@ -59,7 +59,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
   private readonly buildProjectConnector: (project: Project, connectorName: string) => Connector
   private readonly projectStateStore: LeucoProjectStateStore
   private readonly log: Logger
-  private readonly journal: LeucoEventJournal
+  private readonly eventLog: LeucoEventLog
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private retryTimerAt: number | null = null
   private startPromise: Promise<void> | null = null
@@ -74,7 +74,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
     this.buildProjectConnector = props.buildProjectConnector
     this.projectStateStore = new LeucoProjectStateStore({ paths: props.projectStore.getPaths() })
     this.log = props.onLog ?? ((line) => process.stdout.write(`${line}\n`))
-    this.journal = props.journal ?? new LeucoEventJournal()
+    this.eventLog = props.eventLog ?? new LeucoEventLog()
 
     for (const runtime of props.runtimes) {
       this.slots.set(runtime.projectId, {
@@ -284,7 +284,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
     } catch (err) {
       const reason = errorMessage(err)
       this.log(`[leuco] reconcile: failed to load projects: ${reason}`)
-      this.journal.append({ ts: Date.now(), type: "supervisor.reconcile.failed", reason })
+      this.eventLog.append({ ts: Date.now(), type: "supervisor.reconcile.failed", reason })
       this.deferDueRetries()
       this.scheduleNextRetry()
       return
@@ -347,7 +347,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       if (started) added.push(target.project.name)
     }
 
-    this.journal.append({ ts: Date.now(), type: "supervisor.reconcile", added, removed })
+    this.eventLog.append({ ts: Date.now(), type: "supervisor.reconcile", added, removed })
     this.scheduleNextRetry()
   }
 
@@ -477,7 +477,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       retryAt,
     }
     this.log(`[leuco] ${reason}; retry ${attempt} in ${Math.ceil(retryDelay / 1000)}s`)
-    this.journal.append({
+    this.eventLog.append({
       ts: now,
       type: "supervisor.reconcile.failed",
       reason,
@@ -529,7 +529,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
         void this.reconcile().catch((err: unknown) => {
           const reason = `retry reconcile failed: ${errorMessage(err)}`
           this.log(`[leuco] ${reason}`)
-          this.journal.append({
+          this.eventLog.append({
             ts: Date.now(),
             type: "supervisor.reconcile.failed",
             reason,
@@ -574,7 +574,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       for (const issue of runnable.issues) {
         const reason = `project ${issue.project} is invalid and was skipped: ${issue.error}`
         this.log(`[leuco] ${reason}`)
-        this.journal.append({
+        this.eventLog.append({
           ts: Date.now(),
           type: "supervisor.reconcile.failed",
           reason,

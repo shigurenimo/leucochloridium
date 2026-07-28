@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer"
 import type { RunTextTurnOptions, TurnPriority } from "@/connectors/connector"
-import type { LeucoEventJournal } from "@/events/leuco-event-journal"
+import type { LeucoEventLog } from "@/events/leuco-event-log"
 
 export type QueuedProjectTurn = {
   threadKey: string
@@ -28,7 +28,7 @@ export type ProjectTurnQueueProps = {
   conversationKey: (threadKey: string) => string
   execute: (turn: QueuedProjectTurn) => Promise<string | Error>
   onLog: (line: string) => void
-  journal: LeucoEventJournal
+  eventLog: LeucoEventLog
 }
 
 /**
@@ -44,7 +44,7 @@ export class ProjectTurnQueue {
   private readonly conversationKey: (threadKey: string) => string
   private readonly execute: (turn: QueuedProjectTurn) => Promise<string | Error>
   private readonly log: (line: string) => void
-  private readonly journal: LeucoEventJournal
+  private readonly eventLog: LeucoEventLog
   private pending: PendingProjectTurn[] = []
   private pendingBytes = 0
   private readonly activeKeys = new Set<string>()
@@ -59,7 +59,7 @@ export class ProjectTurnQueue {
     this.conversationKey = props.conversationKey
     this.execute = props.execute
     this.log = props.onLog
-    this.journal = props.journal
+    this.eventLog = props.eventLog
   }
 
   start(): void {
@@ -101,7 +101,7 @@ export class ProjectTurnQueue {
 
       if (willQueue) {
         this.log(`[leuco] ${this.projectName}: turn queued (pending=${queueDepth})`)
-        this.journal.append({
+        this.eventLog.append({
           ts: Date.now(),
           type: "turn.queued",
           project: this.projectName,
@@ -204,7 +204,7 @@ export class ProjectTurnQueue {
   }
 
   private emitRejected(threadKey: string, reason: TurnRejectionReason, inputBytes: number): void {
-    this.journal.append({
+    this.eventLog.append({
       ts: Date.now(),
       type: "turn.rejected",
       project: this.projectName,

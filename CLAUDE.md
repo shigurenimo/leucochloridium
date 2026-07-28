@@ -45,7 +45,7 @@ stdio JSON-RPCでspawnする。Leuco内蔵MCPはなく、追加のSlack操作と
 file操作はproject scope付きのローカル `leuco` CLIへ一本化する。project設定の
 `mcpServers` は利用者がCodexへ追加する外部stdio MCPだけを表す。
 
-汎用event journalは `lib/event-journal/` に置く。Funnelにも同じsourceをコピーして
+汎用event logは `lib/event-log/` に置く。Funnelにも同じsourceをコピーして
 各libraryが所有し、LeucoからFunnelへの製品依存は持たない。Funnel側の旧logger名は
 compatibility wrapperとして残す。コピー元を変更するときは両directoryを同期し、
 `diff -ru` で一致を確認する。
@@ -68,7 +68,7 @@ lib/
 ├─ engine/                  Codex clientとturn timeout
 ├─ daemon/                  pid、log、background process lifecycle
 ├─ boot/                    macOS LaunchAgent
-├─ event-journal/           汎用journal、memory store、SQLite store
+├─ event-log/               汎用event log、memory store、SQLite store
 ├─ events/                  Leuco event schema、query、保守
 ├─ gateway/                 health、status、thread、control用loopback HTTP
 ├─ fs/                      atomic writeとfile lock
@@ -99,7 +99,7 @@ Flume Socket Mode source
 
 scheduleも `ConnectorContext.runTextTurn` へ合流する。project scopeでは共通thread、
 thread scopeではschedule entryの `threadKey` に対応するthreadを使う。
-`LeucoEventJournal` は並行して `events.db` へSlack、turn、schedule、
+`LeucoEventLog` は並行して `events.db` へSlack、turn、schedule、
 Codex notification、runtime、supervisor eventを書く。
 
 ## 合成rootとライフサイクル
@@ -114,7 +114,7 @@ Codex notification、runtime、supervisor eventを書く。
 - Codex子へprojectの `LEUCO_PROJECT_ID` を渡す
 - `LeucoProjectSupervisor` がproject slot、retry、pause、reconcileを所有する
 - Hono gatewayがhealth、status、thread、daemon controlをloopback portで受ける
-- `LeucoRuntime` がsupervisor、gateway、journalを兄弟として所有する
+- `LeucoRuntime` がsupervisor、gateway、`eventLog` を兄弟として所有する
 
 `ProjectSlot` はruntime、config signature、retry、pauseを一つのMap entryで所有する。
 reconcileはpath、prompt、model、外部MCP、enabled connector、Slack tokenの変化を
@@ -198,7 +198,7 @@ package rootは安定した最小面だけを公開する。
 
 - `LeucoRuntime`
 - Project、Connector、Schedule、外部MCPのcontract
-- EventJournal、store contract、memory実装、SQLite実装
+- EventLog、store contract、memory実装、SQLite実装
 
 daemon、gateway、CLI、store、具体connector、test fakeはinternal。新しいexportは
 既存consumerへ長期互換性を約束できる場合だけ追加する。
@@ -216,7 +216,7 @@ Memory実装のルールに従う。
 - `LeucoSlackEventSource` とFlume、Memory実装
 - `Connector` とSlack、Schedule実装
 - `LaunchctlPort` とprocess実装
-- `EventJournalPrimary`、`EventJournalRelay` とMemory、SQLite実装
+- `EventLogStore`、`EventLogRelay` とMemory、SQLite実装
 - `DaemonControl` と `DaemonControlClient`
 
 IOの重いclassはevent正規化をprocessor、wire framingをprotocol、
@@ -242,7 +242,7 @@ typecheckとtestは個別に実行する。
 ```bash
 bunx tsc -b
 vp test run
-bun test ./lib/events/leuco-event-journal.bun-test.ts
+bun test ./lib/events/leuco-event-log.bun-test.ts
 ```
 
 完全検査は次。

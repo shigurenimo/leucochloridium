@@ -20,7 +20,7 @@ import { projectRuntimeSignature } from "@/project/project-runtime-signature"
 import { LeucoProjectRuntime } from "@/project/project-runtime"
 import { DEFAULT_LEUCO_PORT } from "@/env/cli-env-schema"
 import { errorMessage } from "@/error-message"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import { atomicWriteText } from "@/fs/atomic-write-text"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoGatewayServer, type LeucoGatewayServerProps } from "@/gateway/gateway-server"
@@ -49,7 +49,7 @@ export type LeucoRuntimeProps = {
   /** Builds one fresh connector for targeted hot restart. */
   buildProjectConnector?: (project: Project, connectorName: string) => Connector
   /** Optional override owned and closed by the runtime. */
-  eventJournal?: LeucoEventJournal
+  eventLog?: LeucoEventLog
   buildGateway?: (props: LeucoGatewayServerProps) => GatewayLifecycle
 }
 
@@ -63,7 +63,7 @@ export class LeucoRuntime {
       projectStore: LeucoProjectStore
       supervisor: LeucoProjectSupervisor
       gateway: GatewayLifecycle
-      journal: LeucoEventJournal
+      eventLog: LeucoEventLog
       onLog: Logger
     },
   ) {
@@ -73,15 +73,15 @@ export class LeucoRuntime {
   static build(buildProps: LeucoRuntimeProps): LeucoRuntime {
     const baseLog = buildProps.onLog ?? ((line: string) => process.stdout.write(`${line}\n`))
     const paths = new LeucoPaths({ home: buildProps.home })
-    const journal =
-      buildProps.eventJournal ?? new LeucoEventJournal({ eventLogPath: paths.daemonEventLogPath() })
+    const eventLog =
+      buildProps.eventLog ?? new LeucoEventLog({ eventLogPath: paths.daemonEventLogPath() })
     // events.db stores full Slack message bodies; keep it as tight as
     // settings.json instead of inheriting the umask (typically 644).
     hardenEventLogPermissions(paths.daemonEventLogPath())
 
     const onLog: Logger = (line) => {
       baseLog(line)
-      journal.append({ ts: Date.now(), type: "log", level: "info", line })
+      eventLog.append({ ts: Date.now(), type: "log", level: "info", line })
     }
 
     const projectStore = new LeucoProjectStore({ paths })
@@ -93,7 +93,7 @@ export class LeucoRuntime {
     for (const issue of runnableProjects.issues) {
       const reason = `project ${issue.project} is invalid and was skipped: ${issue.error}`
       onLog(`[leuco] ${reason}`)
-      journal.append({
+      eventLog.append({
         ts: Date.now(),
         type: "supervisor.reconcile.failed",
         reason,
@@ -112,7 +112,7 @@ export class LeucoRuntime {
           env: buildProps.env,
           codexBin: buildProps.codexBin,
           onLog,
-          journal,
+          eventLog,
           projectStore,
           projectStateStore,
           turnTimeoutMs: globalSettings.turnTimeoutMs,
@@ -130,7 +130,7 @@ export class LeucoRuntime {
       } catch (err) {
         const reason = `runtime ${project.name} initial build failed: ${errorMessage(err)}`
         onLog(`[leuco] ${reason}; deferring to reconcile supervisor`)
-        journal.append({
+        eventLog.append({
           ts: Date.now(),
           type: "supervisor.reconcile.failed",
           reason,
@@ -153,7 +153,7 @@ export class LeucoRuntime {
             projectStore,
             projectStateStore,
           })),
-      journal,
+      eventLog,
     })
     const gatewayProps: LeucoGatewayServerProps = {
       control: supervisor,
@@ -168,7 +168,7 @@ export class LeucoRuntime {
       projectStore,
       supervisor,
       gateway,
-      journal,
+      eventLog,
       onLog,
     })
   }
@@ -198,7 +198,7 @@ export class LeucoRuntime {
   async stop(): Promise<void> {
     await this.props.supervisor.stop()
     await this.stopGateway("shutdown")
-    this.props.journal.close()
+    this.props.eventLog.close()
   }
 
   async reload(): Promise<void> {
@@ -241,7 +241,7 @@ type BuildProjectRuntimeProps = {
   env: NodeJS.ProcessEnv
   codexBin: string | undefined
   onLog: Logger
-  journal: LeucoEventJournal
+  eventLog: LeucoEventLog
   projectStore: LeucoProjectStore
   projectStateStore: LeucoProjectStateStore
   turnTimeoutMs: number
@@ -285,7 +285,7 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
       const notification = toBoundedCodexNotification(method, params)
       if (notification === null) return
 
-      props.journal.append({
+      props.eventLog.append({
         ts: Date.now(),
         type: "codex.notification",
         project: props.project.name,
@@ -311,7 +311,7 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
     codex,
     connectors,
     onLog: props.onLog,
-    journal: props.journal,
+    eventLog: props.eventLog,
     conversationScope: props.project.conversationScope,
     initialCodexThreadId: state.codexThreadId ?? undefined,
     initialCodexThreadIds: state.codexThreadIds,

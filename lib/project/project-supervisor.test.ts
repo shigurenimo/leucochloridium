@@ -4,7 +4,7 @@ import { LeucoProjectSupervisor } from "@/project/project-supervisor"
 import { PromptPreset } from "@/prompts/presets"
 import { LeucoProjectRuntime } from "@/project/project-runtime"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { Connector } from "@/connectors/connector"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
@@ -120,7 +120,7 @@ describe("LeucoProjectSupervisor.start / stop", () => {
 
   it("keeps healthy project runtimes running when another fails to start", async () => {
     const calls: string[] = []
-    const journal = new LeucoEventJournal()
+    const eventLog = new LeucoEventLog()
     const a = buildProjectRuntime(
       "alpha",
       fakeCodex({
@@ -151,7 +151,7 @@ describe("LeucoProjectSupervisor.start / stop", () => {
       projectStore: fakeStore(projects),
       buildProjectRuntime: noBuild,
       onLog: () => {},
-      journal,
+      eventLog,
     })
 
     await supervisor.start()
@@ -159,7 +159,7 @@ describe("LeucoProjectSupervisor.start / stop", () => {
     expect(calls).toEqual(["a.start", "b.start", "b.stop"])
     expect(supervisor.listProjects().map((project) => project.isRunning)).toEqual([true, false])
     expect(
-      journal
+      eventLog
         .query({ type: "supervisor.reconcile.failed" })
         .map((entry) => entry.event)
         .filter((event) => event.type === "supervisor.reconcile.failed")

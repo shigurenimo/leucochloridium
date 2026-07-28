@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { SqliteEventJournal } from "@/event-journal/sqlite-event-journal"
+import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { factory } from "@/cli/cli-factory"
 import { resolveProjectFilter } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
@@ -161,7 +161,7 @@ export const eventsHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(404, { message: `no event log yet: ${eventLogPath}` })
   }
 
-  const sink = new SqliteEventJournal<LeucoEvent, ["project"]>({
+  const sink = new SqliteEventLog<LeucoEvent, ["project"]>({
     path: eventLogPath,
     indexes: ["project"],
     extractIndexes: (event) => ({

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Project } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoProjectRuntime } from "@/project/project-runtime"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { PromptPreset } from "@/prompts/presets"
@@ -111,13 +111,13 @@ describe("LeucoRuntime", () => {
     let brokenStarts = 0
     let brokenBuildAttempts = 0
     const logs: string[] = []
-    const eventJournal = new LeucoEventJournal()
+    const eventLog = new LeucoEventLog()
     const runtime = LeucoRuntime.build({
       env: {},
       home,
       port: 7331,
       onLog: (line) => logs.push(line),
-      eventJournal,
+      eventLog,
       buildProjectRuntime: (project) => {
         if (project.name === "broken") {
           brokenBuildAttempts++
@@ -147,7 +147,7 @@ describe("LeucoRuntime", () => {
       expect(brokenStarts).toBe(0)
       expect(logs.some((line) => line.includes("broken initial build failed"))).toBe(true)
       expect(
-        eventJournal
+        eventLog
           .query({ type: "supervisor.reconcile.failed", project: "broken" })
           .map((entry) => entry.event)
           .filter((event) => event.type === "supervisor.reconcile.failed")
@@ -201,7 +201,7 @@ describe("LeucoRuntime", () => {
       home,
       port: 7331,
       onLog: (line) => logs.push(line),
-      eventJournal: new LeucoEventJournal(),
+      eventLog: new LeucoEventLog(),
       buildProjectRuntime: (project) => {
         built.push(project.name)
         return new LeucoProjectRuntime({
@@ -245,7 +245,7 @@ describe("LeucoRuntime", () => {
       env: {},
       home,
       port: 7331,
-      eventJournal: new LeucoEventJournal(),
+      eventLog: new LeucoEventLog(),
     })
 
     expect(lstatSync(projectAuthPath).isSymbolicLink()).toBe(false)
@@ -272,7 +272,7 @@ describe("LeucoRuntime", () => {
       env: {},
       home,
       port: 7331,
-      eventJournal: new LeucoEventJournal(),
+      eventLog: new LeucoEventLog(),
     })
     const config = readFileSync(join(paths.projectHome(project.id), "config.toml"), "utf8")
 

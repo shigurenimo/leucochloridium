@@ -1,4 +1,4 @@
-import type { LeucoEventJournal } from "@/events/leuco-event-journal"
+import type { LeucoEventLog } from "@/events/leuco-event-log"
 
 /** Runtime services exposed to a connector. */
 export type TurnPriority = "normal" | "high"
@@ -15,7 +15,7 @@ export type ConnectorContext = {
     text: string,
     options?: RunTextTurnOptions,
   ) => Promise<string | Error>
-  journal: LeucoEventJournal
+  eventLog: LeucoEventLog
   projectName: string
 }
 

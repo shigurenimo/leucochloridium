@@ -42,7 +42,7 @@ export type LeucoCodexClientProps = {
   /**
    * Called for every JSON-RPC notification from codex BEFORE per-turn handlers
    * (`collectTurn`'s temporary handler chains to whatever was set previously).
-   * Useful for broadcasting to the structured event journal.
+   * Useful for broadcasting to the structured event log.
    */
   onAnyNotification?: NotificationHandler
   clientName?: string

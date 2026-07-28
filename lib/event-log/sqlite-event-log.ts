@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite"
 import type { SQLQueryBindings, Statement } from "bun:sqlite"
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import type { EventJournalRecord } from "@/event-journal/event-journal-record"
-import type { EventJournalStore, EventJournalRelay } from "@/event-journal/event-journal-store"
+import type { EventLogEntry } from "@/event-log/event-log-entry"
+import type { EventLogStore, EventLogRelay } from "@/event-log/event-log-store"
 
 type IndexValues<I extends ReadonlyArray<string>> = Record<I[number], string | null>
 
@@ -13,7 +13,7 @@ type IndexValues<I extends ReadonlyArray<string>> = Record<I[number], string | n
  * are declared, both `indexes` and `extractIndexes` are required and
  * `extractIndexes` is type-checked against the index keys.
  */
-export type SqliteEventJournalProps<E, I extends ReadonlyArray<string>> = I extends readonly []
+export type SqliteEventLogProps<E, I extends ReadonlyArray<string>> = I extends readonly []
   ? {
       path: string
       maxRows?: number
@@ -35,7 +35,7 @@ export type SqliteEventJournalProps<E, I extends ReadonlyArray<string>> = I exte
       extractIndexes: (event: E) => IndexValues<I>
     }
 
-export type SqliteEventJournalQuery<I extends ReadonlyArray<string>> = {
+export type SqliteEventLogQuery<I extends ReadonlyArray<string>> = {
   /** Return only records with seq strictly greater than this. */
   sinceSeq?: number
   /** Filter by the top-level `event.type` discriminator. */
@@ -97,14 +97,14 @@ const MIGRATIONS: ReadonlyArray<ReadonlyArray<string>> = [
 
 /**
  * SQLite-backed sink built on `bun:sqlite`. Implements both primary and
- * relay roles so the same instance can own seq generation for one journal and
+ * relay roles so the same instance can own seq generation for one log and
  * mirror records from another (e.g. cross-process replication, restore
  * from a backup stream).
  *
  * Concurrency model: seq is `INTEGER PRIMARY KEY`, so SQLite assigns it
- * atomically via `lastInsertRowid`. Two `EventJournal` instances pointed
+ * atomically via `lastInsertRowid`. Two `EventLog` instances pointed
  * at the same database file therefore see one monotonically increasing
- * seq stream without any journal-level coordination — the database itself is
+ * seq stream without coordinating through `EventLog` — the database itself is
  * the synchronization point.
  *
  * Schema is version-managed via `PRAGMA user_version`. Migrations are
@@ -125,8 +125,8 @@ const MIGRATIONS: ReadonlyArray<ReadonlyArray<string>> = [
  * for ~10–100x throughput at the cost of one fsync per batch instead of
  * one per row.
  */
-export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = readonly []>
-  implements EventJournalStore<E>, EventJournalRelay<E>
+export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly []>
+  implements EventLogStore<E>, EventLogRelay<E>
 {
   private readonly db: Database
   private readonly maxRows: number | null
@@ -151,7 +151,7 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
   // has to refill the whole delta before the next overflow).
   private insertsSinceByteCheck = 0
 
-  constructor(props: SqliteEventJournalProps<E, I>) {
+  constructor(props: SqliteEventLogProps<E, I>) {
     // `bun:sqlite` does not create the parent directory on open, so a fresh
     // environment errors out with an opaque `unable to open database file`.
     // Create it here. `:memory:` is a sentinel handled by SQLite, not a path,
@@ -173,7 +173,7 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
       props.targetBytes ?? (props.maxBytes !== undefined ? Math.floor(props.maxBytes / 4) : null)
     this.now = props.now ?? (() => Date.now())
 
-    // The conditional `SqliteEventJournalProps<E, I>` type widens to a union when `I` is a
+    // The conditional `SqliteEventLogProps<E, I>` type widens to a union when `I` is a
     // generic, so TS can't narrow `props.indexes` back to `I` after the
     // runtime check. One cast at this boundary brings it back; everything
     // downstream stays I-typed.
@@ -210,7 +210,7 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
     )
   }
 
-  insert(input: { ts: number; event: E }): EventJournalRecord<E> | Error {
+  insert(input: { ts: number; event: E }): EventLogEntry<E> | Error {
     try {
       const params = this.buildInsertParams(input.ts, input.event)
       const result = this.insertStmt.run(...params)
@@ -222,11 +222,11 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
     }
   }
 
-  insertMany(inputs: ReadonlyArray<{ ts: number; event: E }>): EventJournalRecord<E>[] | Error {
+  insertMany(inputs: ReadonlyArray<{ ts: number; event: E }>): EventLogEntry<E>[] | Error {
     if (inputs.length === 0) return []
 
     try {
-      const records: EventJournalRecord<E>[] = []
+      const records: EventLogEntry<E>[] = []
       const apply = this.db.transaction((batch: ReadonlyArray<{ ts: number; event: E }>) => {
         for (const input of batch) {
           const params = this.buildInsertParams(input.ts, input.event)
@@ -246,7 +246,7 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
     }
   }
 
-  write(record: EventJournalRecord<E>): void | Error {
+  write(record: EventLogEntry<E>): void | Error {
     try {
       const params: SQLQueryBindings[] = [
         record.seq,
@@ -264,7 +264,7 @@ export class SqliteEventJournal<E, const I extends ReadonlyArray<string> = reado
     return row ? row.max : 0
   }
 
-  query(props: SqliteEventJournalQuery<I> = {}): EventJournalRecord<E>[] {
+  query(props: SqliteEventLogQuery<I> = {}): EventLogEntry<E>[] {
     const conditions: string[] = ["seq > ?"]
     const params: SQLQueryBindings[] = [props.sinceSeq ?? 0]
 
@@ -454,7 +454,7 @@ function extractType(event: unknown): string | null {
   return typeof t === "string" ? t : null
 }
 
-function toRecord<E>(row: EventRow): EventJournalRecord<E> {
+function toRecord<E>(row: EventRow): EventLogEntry<E> {
   return {
     seq: row.seq,
     ts: row.ts,

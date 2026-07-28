@@ -1,25 +1,21 @@
-import type { EventJournalRecord } from "@/event-journal/event-journal-record"
-import type { EventJournalStore, EventJournalRelay } from "@/event-journal/event-journal-store"
+import type { EventLogEntry } from "@/event-log/event-log-entry"
+import type { EventLogStore, EventLogRelay } from "@/event-log/event-log-store"
 
-type Listener<E> = (record: EventJournalRecord<E>) => void
+type Listener<E> = (record: EventLogEntry<E>) => void
 
-type SinkErrorHandler<E> = (
-  error: Error,
-  record: EventJournalRecord<E>,
-  sink: EventJournalRelay<E>,
-) => void
+type SinkErrorHandler<E> = (error: Error, record: EventLogEntry<E>, sink: EventLogRelay<E>) => void
 
-export type EventJournalValidator<E> = (
+export type EventLogValidator<E> = (
   event: unknown,
 ) => { success: true; data: E } | { success: false; error: Error }
 
-export type EventJournalProps<E> = {
+export type EventLogProps<E> = {
   /** Validates each event before emission. Use `schema.safeParse` from any validation library, or a plain function. */
-  validate: EventJournalValidator<E>
-  /** Owns seq assignment + durability. Use `SqliteEventJournal` for multi-process safety. */
-  primary: EventJournalStore<E>
+  validate: EventLogValidator<E>
+  /** Owns seq assignment + durability. Use `SqliteEventLog` for multi-process safety. */
+  primary: EventLogStore<E>
   /** Optional fanout for already-sequenced records (memory ring, stdout, network mirror). */
-  relays?: ReadonlyArray<EventJournalRelay<E>>
+  relays?: ReadonlyArray<EventLogRelay<E>>
   /** Override for tests. Defaults to `Date.now`. */
   now?: () => number
   /** Observer for relay failures. Default: silently swallow. */
@@ -27,14 +23,14 @@ export type EventJournalProps<E> = {
 }
 
 /**
- * Validated event journal. Three responsibilities and nothing else:
+ * Validated event log. Three responsibilities and nothing else:
  * validate the event, delegate seq + persistence to the primary sink, and
  * fan the resulting record out to relays and live subscribers.
  *
  * Splitting "primary" from "relays" makes the seq invariant honest: there
  * is exactly one source of truth (the primary's atomic insert). Two
- * `EventJournal` instances pointed at the same SQLite file therefore see
- * one monotonic stream without journal-level coordination. Relays mirror
+ * `EventLog` instances pointed at the same SQLite file therefore see
+ * one monotonic stream without coordinating with each other. Relays mirror
  * already-sequenced records, so they can be added or removed without
  * affecting correctness.
  *
@@ -46,15 +42,15 @@ export type EventJournalProps<E> = {
  *   - A subscriber that throws is contained; the rest of the fanout
  *     completes normally.
  */
-export class EventJournal<E> {
-  private readonly validate: EventJournalValidator<E>
-  private readonly primary: EventJournalStore<E>
-  private readonly relays: ReadonlyArray<EventJournalRelay<E>>
+export class EventLog<E> {
+  private readonly validate: EventLogValidator<E>
+  private readonly primary: EventLogStore<E>
+  private readonly relays: ReadonlyArray<EventLogRelay<E>>
   private readonly now: () => number
   private readonly onSinkError: SinkErrorHandler<E> | null
   private readonly listeners = new Set<Listener<E>>()
 
-  constructor(props: EventJournalProps<E>) {
+  constructor(props: EventLogProps<E>) {
     this.validate = props.validate
     this.primary = props.primary
     this.relays = props.relays ?? []
@@ -62,7 +58,7 @@ export class EventJournal<E> {
     this.onSinkError = props.onSinkError ?? null
   }
 
-  append(event: E): EventJournalRecord<E> | Error {
+  append(event: E): EventLogEntry<E> | Error {
     const parsed = this.validate(event)
     if (!parsed.success) return parsed.error
 
@@ -92,7 +88,7 @@ export class EventJournal<E> {
     for (const relay of this.relays) this.callClose(relay)
   }
 
-  private callPrimary(event: E): EventJournalRecord<E> | Error {
+  private callPrimary(event: E): EventLogEntry<E> | Error {
     try {
       return this.primary.insert({ ts: this.now(), event })
     } catch (e) {
@@ -100,7 +96,7 @@ export class EventJournal<E> {
     }
   }
 
-  private fanOutToRelays(record: EventJournalRecord<E>): void {
+  private fanOutToRelays(record: EventLogEntry<E>): void {
     for (const relay of this.relays) {
       const error = this.callRelay(relay, record)
       if (!error) continue
@@ -108,7 +104,7 @@ export class EventJournal<E> {
     }
   }
 
-  private callRelay(relay: EventJournalRelay<E>, record: EventJournalRecord<E>): Error | null {
+  private callRelay(relay: EventLogRelay<E>, record: EventLogEntry<E>): Error | null {
     try {
       const outcome = relay.write(record)
       return outcome instanceof Error ? outcome : null
@@ -117,7 +113,7 @@ export class EventJournal<E> {
     }
   }
 
-  private fanOutToListeners(record: EventJournalRecord<E>): void {
+  private fanOutToListeners(record: EventLogEntry<E>): void {
     for (const listener of this.listeners) {
       try {
         listener(record)

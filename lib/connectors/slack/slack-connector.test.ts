@@ -3,7 +3,7 @@ import { LeucoMemorySlackEventSource } from "@/connectors/slack/leuco-memory-sla
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
 import { LeucoSlackConnector } from "@/connectors/slack/slack-connector"
 import type { ConnectorContext, RunTextTurnOptions } from "@/connectors/connector"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const makeCtx = (
@@ -20,15 +20,15 @@ const makeCtx = (
     text: string
     priority: RunTextTurnOptions["priority"]
   }> = []
-  const journal = new LeucoEventJournal()
+  const eventLog = new LeucoEventLog()
   return {
     logs,
     turns,
-    events: () => journal.query().map((entry) => entry.event),
+    events: () => eventLog.query().map((entry) => entry.event),
     ctx: {
       cwd: "/tmp/project",
       projectName: "demo",
-      journal,
+      eventLog,
       onLog: (line) => logs.push(line),
       runTextTurn: async (threadKey, text, options) => {
         turns.push({ threadKey, text, priority: options?.priority })

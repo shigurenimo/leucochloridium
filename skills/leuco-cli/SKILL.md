@@ -23,7 +23,7 @@ leuco projects <p> connectors -h
 
 - `leuco` はdaemon停止中なら起動し、起動済みならstatusを表示する
 - `leuco status` はdaemonとprojectのhealthを表示する
-- `leuco events` はstructured event journalを検索する
+- `leuco events` はstructured event logを検索する
 - `leuco projects` は登録済みprojectを表示する
 - `leuco connectors` は現在のrepositoryに対応するconnectorを表示する
 

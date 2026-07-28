@@ -302,7 +302,7 @@ export class LeucoScheduleConnector implements Connector {
   ): Promise<boolean> {
     if (this.isTickCancelled(tick)) return false
 
-    tick.ctx.journal.append({
+    tick.ctx.eventLog.append({
       ts: Date.now(),
       type: "schedule.fired",
       project: tick.ctx.projectName,

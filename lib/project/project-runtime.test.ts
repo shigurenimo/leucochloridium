@@ -5,7 +5,7 @@ import type { ScheduleStorePort } from "@/connectors/schedule/schedule-store-por
 import type { ConversationScope, ScheduleEntry } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { LeucoProjectRuntime } from "@/project/project-runtime"
-import { LeucoEventJournal } from "@/events/leuco-event-journal"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 
@@ -45,7 +45,7 @@ type BuildOverrides = {
   useCommonInstructions?: boolean
   presets?: string[]
   onLog?: (line: string) => void
-  journal?: LeucoEventJournal
+  eventLog?: LeucoEventLog
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
   turnConcurrency?: number
@@ -70,7 +70,7 @@ const buildRuntime = (overrides: BuildOverrides = {}) =>
     useCommonInstructions: overrides.useCommonInstructions,
     presets: overrides.presets,
     onLog: overrides.onLog ?? (() => {}),
-    journal: overrides.journal,
+    eventLog: overrides.eventLog,
     conversationScope: overrides.conversationScope,
     turnTimeoutMs: overrides.turnTimeoutMs,
     turnIdleTimeoutMs: overrides.turnIdleTimeoutMs,
@@ -499,10 +499,10 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
   it("restarts codex when a turn stops producing notifications", async () => {
     let running = true
     const calls: string[] = []
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       turnTimeoutMs: 100,
       turnIdleTimeoutMs: 5,
       codex: fakeCodex({
@@ -603,11 +603,11 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
   })
 
   it("records recovery failure when the old codex child survives stop", async () => {
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     const start = vi.fn(async () => undefined)
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       codex: fakeCodex({
         isRunning: () => true,
         stop: async () => undefined,
@@ -685,11 +685,11 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
   })
 
   it("bounds persisted turn input and reply diagnostics", async () => {
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     const large = "x".repeat(20_000)
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       codex: fakeCodex({
         runTextTurn: async () => large,
       }),
@@ -744,11 +744,11 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
     const firstTurnGate = new Promise<void>((resolve) => {
       releaseFirstTurn = resolve
     })
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let calls = 0
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       turnQueueMaxItems: 1,
       turnQueueMaxBytes: 1_024,
       codex: fakeCodex({
@@ -797,11 +797,11 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
       releaseFirstTurn = resolve
     })
     const logs: string[] = []
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let attempts = 0
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       onLog: (line) => logs.push(line),
       codex: fakeCodex({
         runTextTurn: async (_id, text) => {
@@ -991,8 +991,8 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
   it("restarts after command output overflow without retrying or losing the thread", async () => {
     const reason = "codex command output exceeded 200000 chars from call_12345"
     const logs: string[] = []
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let isRunning = true
     const calls: string[] = []
     let reportStopStarted: () => void = () => {}
@@ -1022,7 +1022,7 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
       return turnCount === 1 ? new Error(reason) : "ok"
     })
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       onLog: (line) => logs.push(line),
       codex: fakeCodex({
         start,
@@ -1076,11 +1076,11 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
   it("reports a failed overflow recovery while returning the original turn error", async () => {
     const reason = "codex command output exceeded 200000 chars from call_failed"
     const logs: string[] = []
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let isRunning = true
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       onLog: (line) => logs.push(line),
       codex: fakeCodex({
         isRunning: () => isRunning,
@@ -1161,11 +1161,11 @@ describe("LeucoProjectRuntime queue admission", () => {
     const firstTurnEntered = new Promise<void>((resolve) => {
       reportFirstTurnEntered = resolve
     })
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let callCount = 0
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       codex: fakeCodex({
         runTextTurn: async (_threadId, text) => {
           callCount += 1
@@ -1252,11 +1252,11 @@ describe("LeucoProjectRuntime queue admission", () => {
     const firstTurnEntered = new Promise<void>((resolve) => {
       reportFirstTurnEntered = resolve
     })
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     let callCount = 0
     const runtime = buildRuntime({
-      journal,
+      eventLog,
       turnQueueMaxBytes: 5,
       codex: fakeCodex({
         runTextTurn: async (_threadId, text) => {
@@ -1293,10 +1293,10 @@ describe("LeucoProjectRuntime queue admission", () => {
   })
 
   it("rejects new work immediately after the runtime has stopped", async () => {
-    const journal = new LeucoEventJournal()
-    const events = () => journal.query().map((entry) => entry.event)
+    const eventLog = new LeucoEventLog()
+    const events = () => eventLog.query().map((entry) => entry.event)
     const runTextTurn = vi.fn<CodexClientPort["runTextTurn"]>(async () => "unexpected")
-    const runtime = buildRuntime({ journal, codex: fakeCodex({ runTextTurn }) })
+    const runtime = buildRuntime({ eventLog, codex: fakeCodex({ runTextTurn }) })
     await runtime.stop()
 
     const reply = await runtime.runTextTurn("thread", "late")

@@ -19,26 +19,23 @@ export type {
   SlackConnectorConfig,
 } from "@/config/config-schema"
 
-export { EventJournal } from "@/event-journal/event-journal"
-export type { EventJournalProps, EventJournalValidator } from "@/event-journal/event-journal"
-export type { EventJournalRecord } from "@/event-journal/event-journal-record"
-export type { EventJournalRelay, EventJournalStore } from "@/event-journal/event-journal-store"
-export { MemoryEventJournal } from "@/event-journal/memory-event-journal"
-export type { MemoryEventJournalProps } from "@/event-journal/memory-event-journal"
-export { SqliteEventJournal } from "@/event-journal/sqlite-event-journal"
-export type {
-  SqliteEventJournalProps,
-  SqliteEventJournalQuery,
-} from "@/event-journal/sqlite-event-journal"
+export { EventLog } from "@/event-log/event-log"
+export type { EventLogProps, EventLogValidator } from "@/event-log/event-log"
+export type { EventLogEntry } from "@/event-log/event-log-entry"
+export type { EventLogRelay, EventLogStore } from "@/event-log/event-log-store"
+export { MemoryEventLog } from "@/event-log/memory-event-log"
+export type { MemoryEventLogProps } from "@/event-log/memory-event-log"
+export { SqliteEventLog } from "@/event-log/sqlite-event-log"
+export type { SqliteEventLogProps, SqliteEventLogQuery } from "@/event-log/sqlite-event-log"
 
 export {
   DEFAULT_EVENT_LOG_MAX_AGE_MS,
   DEFAULT_EVENT_LOG_MAX_BYTES,
   DEFAULT_EVENT_LOG_MAX_ROWS,
   DEFAULT_EVENT_LOG_TARGET_BYTES,
-  LeucoEventJournal,
-} from "@/events/leuco-event-journal"
-export type { LeucoEventJournalProps } from "@/events/leuco-event-journal"
+  LeucoEventLog,
+} from "@/events/leuco-event-log"
+export type { LeucoEventLogProps } from "@/events/leuco-event-log"
 export { leucoEventSchema } from "@/events/leuco-event-schema"
 export type { LeucoEvent } from "@/events/leuco-event-types"
 

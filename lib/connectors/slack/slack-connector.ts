@@ -52,7 +52,7 @@ const ACTIVE_THREAD_CAPACITY = 500
  * A non-empty final answer is posted directly to the originating Slack
  * thread; explicit `leuco slack call` invocations are reserved for additional
  * side effects rather than normal answer delivery. Reactions are emitted to
- * the journal for telemetry only and never trigger an agent turn.
+ * the event log for telemetry only and never trigger an agent turn.
  */
 export class LeucoSlackConnector implements Connector {
   readonly name: string
@@ -127,7 +127,7 @@ export class LeucoSlackConnector implements Connector {
 
   /** Live socket-mode connection status. Read on demand (e.g. from CLI /
    * health-check routes). Status transitions are also emitted as
-   * `slack.connection` events on the journal — this getter is the synchronous
+   * `slack.connection` entries in the event log — this getter is the synchronous
    * point read on top of that. */
   getConnectionStatus(): LeucoSlackSourceStatus {
     return this.props.eventSource.status()
@@ -167,7 +167,7 @@ export class LeucoSlackConnector implements Connector {
     const ctx = this.ctx
     if (ctx === null) return
     const message = errorMessage(err)
-    ctx.journal.append({
+    ctx.eventLog.append({
       ts: Date.now(),
       type: "slack.error",
       project: ctx.projectName,
@@ -239,10 +239,10 @@ export class LeucoSlackConnector implements Connector {
     if (ctx === null) return
     // Suppress flapping during reconnect storms — flume cycles through the
     // same intermediate states many times per minute when Slack is unhappy
-    // and the journal would otherwise drown out the events worth alerting on.
+    // and the event log would otherwise drown out the events worth alerting on.
     if (this.lastConnectionStatus === status) return
     this.lastConnectionStatus = status
-    ctx.journal.append({
+    ctx.eventLog.append({
       ts: Date.now(),
       type: "slack.connection",
       project: ctx.projectName,
@@ -257,7 +257,7 @@ export class LeucoSlackConnector implements Connector {
     if (ctx === null) return
 
     if (log.level === "warn" || log.level === "error") {
-      ctx.journal.append({
+      ctx.eventLog.append({
         ts: Date.now(),
         type: "slack.error",
         project: ctx.projectName,
@@ -269,7 +269,7 @@ export class LeucoSlackConnector implements Connector {
       })
       // Also surface on the diagnostic log stream so `leuco logs -f` shows
       // socket-mode failures in real time — events.db alone is invisible to
-      // anyone tailing the log without knowing to also query the journal.
+      // anyone tailing the log without knowing to also query the event log.
       ctx.onLog(`[${this.name}] slack ${log.level} ${log.action}: ${log.message}`)
       return
     }
@@ -293,7 +293,7 @@ export class LeucoSlackConnector implements Connector {
     const ctx = this.ctx
 
     if (ctx) {
-      ctx.journal.append({
+      ctx.eventLog.append({
         ts: Date.now(),
         type: "slack.event",
         project: ctx.projectName,
@@ -303,7 +303,7 @@ export class LeucoSlackConnector implements Connector {
     }
 
     // Reactions (including the bot's own ack hourglass / checkmark) are
-    // surfaced to the journal for telemetry only — never to a codex turn. Letting
+    // surfaced to the event log for telemetry only — never to a codex turn. Letting
     // them through would loop the agent on every ack it just placed.
     if (event.kind !== "message") return
 
@@ -333,7 +333,7 @@ export class LeucoSlackConnector implements Connector {
 
       if (monologue instanceof Error) {
         ctx.onLog(`[${this.name}] turn failed: ${monologue.message}`)
-        ctx.journal.append({
+        ctx.eventLog.append({
           ts: Date.now(),
           type: "slack.error",
           project: ctx.projectName,
@@ -353,7 +353,7 @@ export class LeucoSlackConnector implements Connector {
           if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
         } else {
           ctx.onLog(`[${this.name}] final answer post failed: ${deliveryError.message}`)
-          ctx.journal.append({
+          ctx.eventLog.append({
             ts: Date.now(),
             type: "slack.error",
             project: ctx.projectName,
