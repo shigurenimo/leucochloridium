@@ -2,6 +2,19 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.0 - 2026-07-28
+
+### Added
+
+- ホストのsleep復帰後に停止したSlack Socket Mode接続を検知し、安全に再接続。
+- 汎用Event Logとmemory、SQLite実装をLeuco本体で提供。
+
+### Changed
+
+- package rootの公開APIを、runtime、project、connector、Event Logの安定した契約に整理。
+- channelをconnectorへ、Event JournalをEvent Logへ改称。
+- Funnelへの依存を削除し、runtimeとCLIの責務を簡素化。
+
 ## 0.16.1 - 2026-07-28
 
 ### Fixed
