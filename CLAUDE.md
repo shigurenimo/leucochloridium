@@ -88,14 +88,20 @@ Flume Socket Mode source
   → conversation scopeに対応するProjectTurnQueue
   → LeucoCodexClient
   → codex app-server
-  → non-empty final answer
-  → SlackAdapter
-  → 同じSlack thread
+  → final answer（内部transport出力。Slackへは送らない）
+
+Codex
+  → 明示的な `leuco slack call`
+  → Slack action
+  → Slack Web API
 ```
 
-通常のfinal answerはLeucoが一度だけ直接投稿する。`leuco slack call` は
-追加メッセージ、reaction、fileなど、Codexが明示的に要求した追加副作用だけに使う。
-失敗時の定型文は合成しない。
+Slackへの書き込みは、Codexが明示的に実行したproject scope付き
+`leuco slack call` だけが行う。`runTextTurn` のfinal answerは内部ログ・診断用であり、
+SlackConnectorが本文として自動投稿してはならない。これは情報境界の不変条件で、
+通常返信、追加メッセージ、reaction、fileのすべてに適用する。回帰テストでは、
+メンション有無にかかわらず非空final answerから `chat.postMessage` が呼ばれないことを
+固定する。失敗時の定型文も合成しない。
 
 scheduleも `ConnectorContext.runTextTurn` へ合流する。project scopeでは共通thread、
 thread scopeではschedule entryの `threadKey` に対応するthreadを使う。

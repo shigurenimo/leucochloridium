@@ -2,6 +2,12 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.1 - 2026-07-29
+
+### Fixed
+
+- Codexのfinal answerをSlackへ自動投稿せず、すべてのSlack書き込みを明示的なproject scope付き`leuco slack call`に限定。
+
 ## 0.17.0 - 2026-07-28
 
 ### Added

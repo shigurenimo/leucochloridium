@@ -283,11 +283,10 @@ describe("LeucoSlackConnector", () => {
     )
   })
 
-  it("posts a generated final answer verbatim to the originating thread", async () => {
+  it("never posts a generated final answer to Slack", async () => {
     const eventSource = new LeucoMemorySlackEventSource()
     const webClient = new LeucoMemorySlackWebClient({
       authTest: { userId: "UBOT" },
-      conversationsReplies: { messages: [] },
     })
     const connector = new LeucoSlackConnector({
       name: "main",
@@ -313,18 +312,13 @@ describe("LeucoSlackConnector", () => {
     })
     await connector.stop()
 
-    expect(webClient.calls.chatPostMessage).toEqual([
-      { channel: "C1", threadTs: "103.0", text: "generated answer" },
-    ])
+    expect(webClient.calls.chatPostMessage).toHaveLength(0)
   })
 
-  it("does not query reply history before posting the generated final", async () => {
+  it("does not post analysis-like final text from an unaddressed turn", async () => {
     const eventSource = new LeucoMemorySlackEventSource()
     const webClient = new LeucoMemorySlackWebClient({
       authTest: { userId: "UBOT" },
-      conversationsReplies: () => {
-        throw new Error("missing_scope")
-      },
     })
     const connector = new LeucoSlackConnector({
       name: "main",
@@ -332,7 +326,7 @@ describe("LeucoSlackConnector", () => {
       webClient,
       usesUserToken: false,
     })
-    const { ctx } = makeCtx("generated despite history failure")
+    const { ctx } = makeCtx("no. internal analysis that must never reach Slack")
 
     await connector.start(ctx)
     await eventSource.emit({
@@ -343,64 +337,14 @@ describe("LeucoSlackConnector", () => {
           type: "message",
           channel: "C1",
           user: "U_USER",
-          text: "<@UBOT> answer this",
+          text: "conversation not addressed to the bot",
           ts: "103.5",
         },
       },
     })
     await connector.stop()
 
-    expect(webClient.calls.chatPostMessage).toEqual([
-      { channel: "C1", threadTs: "103.5", text: "generated despite history failure" },
-    ])
-    expect(webClient.calls.conversationsReplies).toEqual([])
-  })
-
-  it("treats the final answer as authoritative even when an extra tool post exists", async () => {
-    const eventSource = new LeucoMemorySlackEventSource()
-    const webClient = new LeucoMemorySlackWebClient({
-      authTest: { userId: "UBOT" },
-      conversationsReplies: {
-        messages: [
-          {
-            user: "UBOT",
-            text: "already posted",
-            ts: "104.1",
-            threadTs: "104.0",
-            subtype: null,
-            botId: null,
-          },
-        ],
-      },
-    })
-    const connector = new LeucoSlackConnector({
-      name: "main",
-      eventSource,
-      webClient,
-      usesUserToken: false,
-    })
-    const { ctx } = makeCtx("generated final after tool call")
-
-    await connector.start(ctx)
-    await eventSource.emit({
-      type: "events_api",
-      receivedAt: 1_000,
-      payload: {
-        event: {
-          type: "message",
-          channel: "C1",
-          user: "U_USER",
-          text: "<@UBOT> answer this",
-          ts: "104.0",
-        },
-      },
-    })
-    await connector.stop()
-
-    expect(webClient.calls.chatPostMessage).toEqual([
-      { channel: "C1", threadTs: "104.0", text: "generated final after tool call" },
-    ])
-    expect(webClient.calls.conversationsReplies).toEqual([])
+    expect(webClient.calls.chatPostMessage).toHaveLength(0)
   })
 
   it("drains an accepted handler and suppresses its late side effects during stop", async () => {

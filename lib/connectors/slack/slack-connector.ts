@@ -49,10 +49,9 @@ const ACTIVE_THREAD_CAPACITY = 500
  * Socket Mode envelopes through `LeucoSlackEventSource`, routes
  * `payload.event.type` into the pure `LeucoSlackEventProcessor`, and forwards
  * each accepted `message` event to the agent through `ctx.runTextTurn`.
- * A non-empty final answer is posted directly to the originating Slack
- * thread; explicit `leuco slack call` invocations are reserved for additional
- * side effects rather than normal answer delivery. Reactions are emitted to
- * the event log for telemetry only and never trigger an agent turn.
+ * Final answers stay inside the Codex transport; Slack writes happen only
+ * through an explicit project-scoped `leuco slack call`. Reactions are emitted
+ * to the event log for telemetry only and never trigger an agent turn.
  */
 export class LeucoSlackConnector implements Connector {
   readonly name: string
@@ -346,25 +345,7 @@ export class LeucoSlackConnector implements Connector {
         if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
       } else {
         logMonologue(ctx.onLog, this.name, msg.ts, monologue)
-        const deliveryError = await this.postFinalAnswer(msg, monologue, adapter)
-        if (!this.isGenerationActive(generation)) return
-
-        if (deliveryError === null) {
-          if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
-        } else {
-          ctx.onLog(`[${this.name}] final answer post failed: ${deliveryError.message}`)
-          ctx.eventLog.append({
-            ts: Date.now(),
-            type: "slack.error",
-            project: ctx.projectName,
-            connector: this.name,
-            level: "error",
-            action: "final.post.failed",
-            message: `${msg.channel}/${msg.threadTs}: ${deliveryError.message}`,
-            error: deliveryError.message,
-          })
-          if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.error)
-        }
+        if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.success)
       }
     } finally {
       // The adapter is captured from the generation that added this icon.
@@ -372,26 +353,6 @@ export class LeucoSlackConnector implements Connector {
       // handlers to drain, and leaving a stale hourglass makes a cancelled
       // turn look permanently stuck after restart.
       if (wantsAck) await adapter.removeReaction(msg.channel, reactionTs, icons.progress)
-    }
-  }
-
-  private async postFinalAnswer(
-    msg: SlackMessageEvent,
-    finalText: string,
-    adapter: LeucoSlackAdapter,
-  ): Promise<Error | null> {
-    const text = finalText.trim()
-    if (text.length === 0) return null
-
-    try {
-      await adapter.postReply({
-        channel: msg.channel,
-        threadTs: msg.threadTs,
-        text,
-      })
-      return null
-    } catch (err) {
-      return err instanceof Error ? err : new Error(errorMessage(err))
     }
   }
 
