@@ -83,9 +83,10 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("Do not pass `--project`")
     expect(out).toContain("`leuco connectors <connector-config> download-file")
     expect(out).toContain("`thread_ts`")
-    expect(out).toContain("final answer is delivered automatically")
-    expect(out).toContain("only for additional messages")
-    expect(out).toContain("Leave the final answer empty when silence is intentional")
+    expect(out).toContain("final answer is internal Codex transport output")
+    expect(out).toContain("never posted to Slack by Leuco")
+    expect(out).toContain("Every Slack write requires an explicit `leuco slack call`")
+    expect(out).toContain("When silence is intentional, do not run a Slack write command")
     expect(out).toContain("The primary agent owns Slack writes")
   })
 
@@ -112,7 +113,7 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("Do not run machine-wide Leuco administration commands")
   })
 
-  it("separates automatic final-answer delivery from explicit Slack side effects", () => {
+  it("requires the scoped CLI for every Slack write", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
       identities: [{ name: "general", type: "slack", botUserId: "U01ABC" }],
@@ -122,7 +123,9 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("`leuco slack call <method>")
     expect(out).not.toContain("slack_call")
     expect(out).toContain("`thread_ts`")
-    expect(out).toContain("final answer is delivered automatically")
+    expect(out).toContain("final answer is internal Codex transport output")
+    expect(out).toContain("never posted to Slack by Leuco")
+    expect(out).toContain("Every Slack write requires an explicit `leuco slack call`")
     expect(out).toContain("--connector <connector-config>")
     expect(out).toContain("Slack CLI output is bounded")
     expect(out).toContain("small `limit`")

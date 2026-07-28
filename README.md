@@ -256,7 +256,10 @@ Slack Socket Mode
   → event validation, dedup, self-bot filtering
   → the project runtime
   → the Codex thread selected by conversation scope
-  → Codex final answer
+  → Codex final answer（内部transport出力）
+
+Codex
+  → leuco slack call
   → Slack Web API
 ```
 
@@ -266,8 +269,8 @@ Slack Socket Mode
 設定上限まで並行実行します。Slack messageは構造化入力としてCodexへ渡され、
 返信するかどうかはbuilt-in promptとCodexが決めます。
 
-非空のfinal answerは、常にそのturnを発生させたSlack threadへLeucoが直接投稿します。
-`leuco slack call`は追加メッセージ、reaction、fileなどの明示的な副作用だけに使います。
+final answerはSlackへ自動投稿されません。通常返信を含むすべてのSlack書き込みは、
+Codexがproject scope付きの`leuco slack call`を明示的に実行した場合だけ行われます。
 エラー時の定型文は合成しません。
 
 A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
