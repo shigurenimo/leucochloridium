@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { FunnelLogSqliteSink } from "@interactive-inc/claude-funnel/logger"
+import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { factory } from "@/cli/cli-factory"
 import { resolveProjectFilter } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
@@ -17,14 +17,14 @@ const PRESETS: Record<string, { types: string[]; description: string }> = {
       "turn.error",
       "turn.rejected",
       "codex.recovery",
-      "engine.reconcile.failed",
+      "supervisor.reconcile.failed",
       "slack.error",
     ],
     description: "turn errors, codex recovery, reconcile failures, slack errors",
   },
   lifecycle: {
-    types: ["tenant.started", "tenant.stopped", "engine.reconcile", "slack.connection"],
-    description: "tenant start/stop, engine reconcile, slack connection transitions",
+    types: ["runtime.started", "runtime.stopped", "supervisor.reconcile", "slack.connection"],
+    description: "project runtime start/stop, engine reconcile, slack connection transitions",
   },
   schedule: {
     types: ["schedule.fired"],
@@ -56,8 +56,8 @@ presets (--preset <name>):
 ${presetList}
 
 event types:
-  log  tenant.started  tenant.stopped  engine.reconcile
-  engine.reconcile.failed  slack.event  slack.connection  slack.error
+  log  runtime.started  runtime.stopped  supervisor.reconcile
+  supervisor.reconcile.failed  slack.event  slack.connection  slack.error
   turn.queued  turn.rejected  turn.start  turn.complete  turn.error
   codex.recovery
   codex.notification  schedule.fired
@@ -111,24 +111,24 @@ const formatEvent = (event: LeucoEvent): string => {
     return `${time}  RECOVER  ${event.project}  ${event.status}  duration=${event.durationMs}ms  reason=${event.reason}${error}`
   }
 
-  if (event.type === "tenant.started" || event.type === "tenant.stopped") {
+  if (event.type === "runtime.started" || event.type === "runtime.stopped") {
     return `${time}  ${event.type.padEnd(20)}  ${event.project}`
   }
 
-  if (event.type === "engine.reconcile") {
-    return `${time}  engine.reconcile     added=[${event.added.join(",")}] removed=[${event.removed.join(",")}]`
+  if (event.type === "supervisor.reconcile") {
+    return `${time}  supervisor.reconcile     added=[${event.added.join(",")}] removed=[${event.removed.join(",")}]`
   }
 
-  if (event.type === "engine.reconcile.failed") {
+  if (event.type === "supervisor.reconcile.failed") {
     const retry =
       event.attempt === undefined
         ? ""
         : `  project=${event.project ?? "unknown"} attempt=${event.attempt} retryAt=${event.retryAt ?? "unknown"}`
-    return `${time}  engine.reconcile.failed  ${event.reason}${retry}`
+    return `${time}  supervisor.reconcile.failed  ${event.reason}${retry}`
   }
 
   if (event.type === "schedule.fired") {
-    return `${time}  schedule.fired       ${event.project}  ${event.entryName}  ${event.kind}`
+    return `${time}  schedule.fired       ${event.project}  ${event.connector}  ${event.entryName}  ${event.kind}`
   }
 
   if (event.type === "codex.notification") {
@@ -136,16 +136,16 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "slack.event") {
-    return `${time}  slack.event          ${event.project}  ${event.channel}`
+    return `${time}  slack.event          ${event.project}  ${event.connector}  ${event.event.channel}`
   }
 
   if (event.type === "slack.connection") {
-    return `${time}  slack.connection     ${event.project}  ${event.channel}  ${event.status}`
+    return `${time}  slack.connection     ${event.project}  ${event.connector}  ${event.status}`
   }
 
   if (event.type === "slack.error") {
     const errSuffix = event.error !== null ? `  err=${event.error}` : ""
-    return `${time}  slack.error          ${event.project}  ${event.channel}  ${event.level}  ${event.action}: ${event.message}${errSuffix}`
+    return `${time}  slack.error          ${event.project}  ${event.connector}  ${event.level}  ${event.action}: ${event.message}${errSuffix}`
   }
 
   return `${time}  unknown`
@@ -161,7 +161,7 @@ export const eventsHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(404, { message: `no event log yet: ${eventLogPath}` })
   }
 
-  const sink = new FunnelLogSqliteSink<LeucoEvent, ["project"]>({
+  const sink = new SqliteEventLog<LeucoEvent, ["project"]>({
     path: eventLogPath,
     indexes: ["project"],
     extractIndexes: (event) => ({

@@ -69,7 +69,7 @@ export class LeucoCodexProtocol {
       // `writer` is `child.stdin.write` in production; if stdin is already
       // closed (race with codex exit) it throws synchronously. Without this
       // catch the pending entry would never settle and the awaiting caller
-      // would hang until tenant's wall-clock timeout fires.
+      // would hang until project runtime's wall-clock timeout fires.
       try {
         this.writer(`${payload}\n`)
       } catch (err) {
@@ -176,7 +176,7 @@ export class LeucoCodexProtocol {
    * codex may send server→client requests (approval prompts etc.). leuco has
    * no terminal to answer them, and silently dropping the frame would leave
    * codex waiting forever — reply with a JSON-RPC error so the turn can fail
-   * fast instead of stalling until the tenant wall-clock timeout.
+   * fast instead of stalling until the project runtime wall-clock timeout.
    */
   private rejectServerRequest(id: string | number, method: string): void {
     this.onLog(`[codex server request rejected] ${method} (id ${id})`)

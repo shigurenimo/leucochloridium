@@ -9,5 +9,5 @@ Leuco version, a minimal reproduction, expected impact, and whether the issue re
 local access, Slack access, or control of a configured project.
 
 Leuco stores Slack tokens and message-bearing event data locally. Keep
-`~/.leuco/settings.json`, `~/.leuco/daemon/events.db`, and tenant Codex homes restricted
+`~/.leuco/settings.json`, `~/.leuco/daemon/events.db`, and project Codex homes restricted
 to their owner, and rotate any credential that may have been exposed.

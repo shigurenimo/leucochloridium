@@ -1,44 +1,58 @@
 ---
 name: leuco-cli
-description: Use the leuco CLI to manage the leuco daemon, projects, and channels.
+description: leuco CLIでdaemon、project、connector、Slack操作を管理する。
 ---
 
-# Leuco
+# Leuco CLI
 
-Leuco is a multi-tenant gateway that bridges chat channels (Slack today) to the Codex `app-server`. One daemon per machine supervises every registered project as an isolated tenant.
+Leucoはprojectごとに一つのCodex `app-server`を動かすself-hosted gateway。
+一マシン一daemonが登録済みprojectを監督し、Slackとscheduleをconnectorとして
+project runtimeへ接続する。Slackのchannel、DM、threadはconnectorではなく会話。
 
 ## CLI
 
-The `leuco` command is on `PATH`. Every subcommand accepts `-h` for usage details.
+`leuco` commandは `PATH` 上にある。各groupの使い方は `-h` で確認する。
 
-```
+```text
 leuco -h
 leuco projects -h
-leuco projects <p> channels -h
+leuco projects <p> connectors -h
 ```
 
-Start here:
+最初に使うcommand。
 
-- `leuco` — starts the daemon, or opens the TUI if already running.
-- `leuco status` — quick health check.
-- `leuco events` — query the structured event log.
+- `leuco` はdaemon停止中なら起動し、起動済みならstatusを表示する
+- `leuco status` はdaemonとprojectのhealthを表示する
+- `leuco events` はstructured event logを検索する
+- `leuco projects` は登録済みprojectを表示する
+- `leuco connectors` は現在のrepositoryに対応するconnectorを表示する
 
-## ~/.leuco
+## 保存場所
 
-All state lives under `~/.leuco/`. Paths are computed by `LeucoPaths` — never assemble by hand.
+全pathは `LeucoPaths` が組み立てる。手で連結しない。
 
-```
+```text
 ~/.leuco/
-├── settings.json          config + projects array (chmod 600)
-├── daemon/
-│   ├── pid
-│   ├── log
-│   └── events.db          SQLite event log
-└── projects/
-    └── <uuid>/
-        └── .codex/         CODEX_HOME for this tenant
+├─ settings.json
+│  └─ global設定、project設定、connector設定、token
+├─ daemon/
+│  ├─ pid
+│  ├─ log
+│  └─ events.db
+└─ projects/
+   └─ <project-uuid>/
+      ├─ state.json
+      │  └─ Codex thread IDとschedule runtime state
+      └─ .codex/
+         └─ project専用CODEX_HOME
 ```
 
-## When you are the agent inside a tenant
+## Project runtime内での操作
 
-If your `CODEX_HOME` is under `~/.leuco/projects/`, you are a leuco-supervised tenant. The MCP server named `leuco` in your `config.toml` is the daemon that supervises you.
+Leucoが起動したCodex子には `LEUCO_PROJECT_ID` が設定される。このscopeでは
+`leuco connectors ...` とproject指定なしの `leuco slack ...` が常に現在の
+projectへ解決される。別projectを明示した操作は拒否される。
+
+Leuco内蔵MCP serverはない。通常のnon-empty final answerはLeucoが発生元の
+Slack threadへ直接一度だけ投稿する。`leuco slack call` は追加メッセージ、
+reaction、fileなどの明示的な追加副作用にだけ使う。

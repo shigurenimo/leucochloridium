@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { FunnelLogSqliteSink } from "@interactive-inc/claude-funnel/logger"
+import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { z } from "zod"
 import { diagnoseSlackDirectMessage } from "@/actions/slack/diagnose-slack-direct-message"
 import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-direct-message"
 import { resolveSlackTokens } from "@/actions/slack/slack-call"
-import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
+import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 import { factory } from "@/cli/cli-factory"
 import { resolveProjectArgument } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
@@ -23,7 +23,7 @@ arguments:
 
 options:
   --project <p> / project whose Slack bot should be inspected; optional inside
-                  a tenant Codex session and required otherwise
+                  a project runtime Codex session and required otherwise
   --limit <N> / Slack history messages to inspect (default 50, max 100)
   --json / print JSON instead of YAML
 
@@ -95,7 +95,7 @@ export const slackDmHandler = factory.createHandlers(async (c) => {
   const events = eventLogAvailable ? queryProjectEvents(eventLogPath, project.name) : []
   const runtime = buildSlackDmRuntimeSummary({
     daemonRunning: c.var.daemon.status().isRunning,
-    slackChannel: tokens.channelName,
+    slackChannel: tokens.connectorName,
     selection: parsedConversationId === null ? "latest" : "explicit",
     events,
   })
@@ -136,7 +136,7 @@ const parseLimit = (raw: string | null): number => {
 }
 
 const queryProjectEvents = (eventLogPath: string, project: string): LeucoEvent[] => {
-  const sink = new FunnelLogSqliteSink<LeucoEvent, ["project"]>({
+  const sink = new SqliteEventLog<LeucoEvent, ["project"]>({
     path: eventLogPath,
     indexes: ["project"],
     extractIndexes: (event) => ({
@@ -170,7 +170,7 @@ export const buildSlackDmRuntimeSummary = (props: {
     props.events
       .filter(
         (event): event is Extract<LeucoEvent, { type: "slack.connection" }> =>
-          event.type === "slack.connection" && event.channel === props.slackChannel,
+          event.type === "slack.connection" && event.connector === props.slackChannel,
       )
       .sort((a, b) => b.ts - a.ts)[0] ?? null
 

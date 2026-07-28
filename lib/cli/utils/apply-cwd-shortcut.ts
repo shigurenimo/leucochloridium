@@ -1,7 +1,7 @@
 import type { Project } from "@/config/config-schema"
 import type { LeucoProjectStore } from "@/projects/project-store"
 
-const SHORTCUT_PREFIXES = new Set(["channels"])
+const SHORTCUT_PREFIXES = new Set(["connectors"])
 
 type Props = {
   args: string[]
@@ -11,8 +11,8 @@ type Props = {
 }
 
 /**
- * If the first argv token is `channels`, inject `projects <projectName>`
- * before the rest of the args. A tenant Codex scope always wins; an operator
+ * If the first argv token is `connectors`, inject `projects <projectName>`
+ * before the rest of the args. A project runtime Codex scope always wins; an operator
  * shell falls back to matching the current working directory.
  */
 export const applyCwdShortcut = (props: Props): string[] => {

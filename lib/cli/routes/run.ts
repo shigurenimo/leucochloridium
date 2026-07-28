@@ -73,7 +73,7 @@ export const runHandler = factory.createHandlers(async (c) => {
   })
 
   process.on("SIGHUP", () => {
-    process.stdout.write("[leuco] received SIGHUP — reconciling tenants\n")
+    process.stdout.write("[leuco] received SIGHUP — reconciling project runtimes\n")
     void runtime.reload().catch((err: unknown) => {
       process.stderr.write(`[leuco] reload failed: ${errorMessage(err)}\n`)
     })
@@ -107,7 +107,7 @@ export const runHandler = factory.createHandlers(async (c) => {
     process.exit(1)
   }
 
-  // LeucoEngine keeps node alive via plugins + codex stdio. Never resolve so
+  // Project connectors and Codex stdio keep the process alive. Never resolve so
   // index.ts doesn't append a trailing body line.
   return new Promise<Response>(() => {})
 })

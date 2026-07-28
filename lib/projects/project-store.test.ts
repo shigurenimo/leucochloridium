@@ -6,11 +6,12 @@ import type { Project, ScheduleEntry } from "@/config/config-schema"
 import { PromptPreset } from "@/prompts/presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 const DEMO_ID = "00000000-0000-4000-8000-000000000000"
 
 const sampleProject = (overrides: Partial<Project> = {}): Project => ({
-  version: 2,
+  version: 3,
   id: DEMO_ID,
   name: "demo",
   path: "/tmp/demo",
@@ -19,7 +20,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
   model: null,
   developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
-  channels: [
+  connectors: [
     {
       id: "11111111-1111-4111-8111-111111111111",
       name: "slack",
@@ -36,7 +37,6 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
     },
   ],
   mcpServers: {},
-  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
   ...overrides,
   conversationScope: overrides.conversationScope ?? "project",
 })
@@ -80,7 +80,7 @@ describe("LeucoProjectStore", () => {
 
   it("round-trips data through save -> load by id", () => {
     const project = sampleProject({
-      channels: [
+      connectors: [
         {
           id: "22222222-2222-4222-8222-222222222222",
           name: "slack",
@@ -125,7 +125,7 @@ describe("LeucoProjectStore", () => {
             id: "11111111-1111-4111-8111-111111111111",
             name: "broken",
           }),
-          channels: [{ type: "unknown-channel" }],
+          connectors: [{ type: "unknown-connector" }],
         },
       ],
     }
@@ -172,39 +172,32 @@ describe("LeucoProjectStore", () => {
     expect(list[0]!.name).toBe("after")
   })
 
-  it("save() preserves newer daemon-owned runtime state from a stale config snapshot", () => {
+  it("save() cannot overwrite daemon-owned runtime state", () => {
     const stale = sampleProject({ name: "before" })
     store.save(stale)
-    store.updateProject(DEMO_ID, (project) => ({
-      ...project,
-      state: {
-        codexThreadId: "thread-new",
-        codexThreadIds: {},
-        scheduleLastFiredAt: { schedule: 123 },
-      },
-    }))
+    const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
+    stateStore.setCodexThreadId(DEMO_ID, "thread-new")
+    stateStore.markScheduleEntryFired(DEMO_ID, "schedule", 123)
 
     store.save({ ...stale, name: "after" })
 
-    expect(store.load(DEMO_ID)).toMatchObject({
-      name: "after",
-      state: {
-        codexThreadId: "thread-new",
-        scheduleLastFiredAt: { schedule: 123 },
-      },
+    expect(store.load(DEMO_ID).name).toBe("after")
+    expect(stateStore.load(DEMO_ID)).toMatchObject({
+      codexThreadId: "thread-new",
+      scheduleLastFiredAt: { schedule: 123 },
     })
   })
 
-  it("updateProject mutates intentional state against the latest on-disk project", () => {
+  it("updateProject mutates configuration against the latest on-disk project", () => {
     store.save(sampleProject({ name: "latest" }))
 
     const updated = store.updateProject(DEMO_ID, (project) => ({
       ...project,
-      state: { ...project.state, codexThreadId: "thread-1" },
+      enabled: false,
     }))
 
     expect(updated.name).toBe("latest")
-    expect(store.load(DEMO_ID).state.codexThreadId).toBe("thread-1")
+    expect(store.load(DEMO_ID).enabled).toBe(false)
   })
 
   it("resolveByName() returns a single match", () => {
@@ -261,7 +254,7 @@ describe("LeucoProjectStore", () => {
   it.each([
     ["a missing version", undefined],
     ["v1", 1],
-    ["a future version", 3],
+    ["a future version", 4],
   ])("list() rejects %s without rewriting unified settings", (_label, version) => {
     store.save(sampleProject())
     const settingsPath = store.getPaths().settingsPath()
@@ -281,7 +274,7 @@ describe("LeucoProjectStore", () => {
   describe("schedule entries", () => {
     const projectWithScheduleChannel = (): Project =>
       sampleProject({
-        channels: [
+        connectors: [
           {
             id: "33333333-3333-4333-8333-333333333333",
             name: "cron",
@@ -308,37 +301,37 @@ describe("LeucoProjectStore", () => {
     it("addScheduleEntry appends a new entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries.map((e) => e.name)).toEqual(["morning-standup"])
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries.map((e) => e.name)).toEqual(["morning-standup"])
     })
 
     it("addScheduleEntry rejects duplicate name", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "cron",
+          connectorName: "cron",
           entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
         }),
       ).toThrow()
     })
 
-    it("addScheduleEntry rejects when channel is not schedule", () => {
+    it("addScheduleEntry rejects when connector is not schedule", () => {
       store.save(sampleProject())
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "slack",
+          connectorName: "slack",
           entry: sampleEntry(),
         }),
       ).toThrow()
@@ -347,41 +340,33 @@ describe("LeucoProjectStore", () => {
     it("removeScheduleEntry by id removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
-      store.updateProject(DEMO_ID, (project) => ({
-        ...project,
-        state: {
-          ...project.state,
-          scheduleLastFiredAt: {
-            ...project.state.scheduleLastFiredAt,
-            "44444444-4444-4444-8444-444444444444": 123,
-          },
-        },
-      }))
+      const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
+      stateStore.markScheduleEntryFired(DEMO_ID, "44444444-4444-4444-8444-444444444444", 123)
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryIdOrName: "44444444-4444-4444-8444-444444444444",
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries).toEqual([])
-      expect(project.state.scheduleLastFiredAt).toEqual({})
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries).toEqual([])
+      expect(stateStore.load(DEMO_ID).scheduleLastFiredAt).toEqual({})
     })
 
     it("removeScheduleEntry by name removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryIdOrName: "morning-standup",
       })
     })
@@ -390,7 +375,7 @@ describe("LeucoProjectStore", () => {
       expect(() =>
         store.removeScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "cron",
+          connectorName: "cron",
           entryIdOrName: "nope",
         }),
       ).toThrow()
@@ -399,38 +384,38 @@ describe("LeucoProjectStore", () => {
     it("updateScheduleEntry patches one entry by id", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { enabled: false },
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries[0]!.enabled).toBe(false)
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries[0]!.enabled).toBe(false)
     })
 
     it("updateScheduleEntry preserves id even if patch tries to override", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { id: "evil" } as Partial<ScheduleEntry>,
       })
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
     })
   })
 })

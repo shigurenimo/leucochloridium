@@ -7,10 +7,10 @@ export const statusHandler = factory.createHandlers((c) => {
   return c.json({
     ok: true,
     pid: deps.selfPid,
-    cwd: deps.engine.getCwd(),
-    plugins: deps.engine.listPlugins(),
-    codexRunning: deps.engine.isCodexRunning(),
-    threads: deps.engine.listThreads(),
-    projects: deps.engine.listProjects(),
+    cwd: deps.control.getCwd(),
+    connectors: deps.control.listConnectors(),
+    codexRunning: deps.control.isCodexRunning(),
+    threads: deps.control.listThreads(),
+    projects: deps.control.listProjects(),
   })
 })

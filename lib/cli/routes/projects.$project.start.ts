@@ -7,8 +7,8 @@ const help = `leuco projects <p> start / enable a project and reload daemon
 
 usage / leuco projects <p> start
 
-Sets enabled=true in settings.json. If the daemon is running, sends SIGHUP so
-it reconciles tenants immediately. If stopped, takes effect on next \`leuco start\`.`
+Sets enabled=true in settings.json. If the daemon is running, reloads it so
+the project starts immediately. If stopped, takes effect on next \`leuco start\`.`
 
 export const projectsStartHandler = factory.createHandlers(async (c) => {
   const body = await readCliBody(c)

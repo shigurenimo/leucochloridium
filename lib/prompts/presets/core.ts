@@ -1,7 +1,7 @@
 /**
  * Core agent behaviour prompt preset.
  *
- * Channel-agnostic, surface-agnostic ground rules every tenant should
+ * Connector-agnostic, surface-agnostic ground rules every project runtime should
  * inherit: how to act, ground answers, and recover from mistakes. Layer
  * security, communication, and channel-specific presets on top.
  */

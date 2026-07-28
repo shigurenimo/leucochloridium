@@ -2,17 +2,17 @@ import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { resolveProject } from "@/cli/utils/lookup-config"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
-import { waitForTenantDown } from "@/cli/utils/wait-for-tenant-down"
 import { isCurrentCodexProject, selfProjectGuardMessage } from "@/cli/utils/self-project-guard"
+import { DaemonControlClient } from "@/control/daemon-control-client"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-const help = `leuco projects <p> restart / rebuild this project's tenant
+const help = `leuco projects <p> restart / rebuild this project's project runtime
 
 usage / leuco projects <p> restart [--force]
 
-Toggles enabled false->true around two SIGHUPs so the daemon stops + rebuilds
-the tenant. Use this to pick up prompt edits, token changes, or to clear a
-stuck codex process. The codex thread id is preserved.
+Asks the daemon to replace this project's runtime in one atomic operation.
+Use this to pick up prompt edits, token changes, or to clear a stuck Codex
+process. The Codex thread id and enabled state are preserved.
 
 options:
   --force / allow restarting the project from inside its own Codex session`
@@ -29,24 +29,14 @@ export const projectsRestartHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: selfProjectGuardMessage(projectName, "restart") })
   }
 
-  const wasEnabled = project.enabled
+  if (!project.enabled) {
+    throw new HTTPException(400, { message: `project is disabled: ${projectName}` })
+  }
 
-  // Patch `enabled` through updateProject rather than writing the snapshot
-  // read above: the daemon persists codexThreadId / scheduleLastFiredAt at
-  // its own cadence, and saving a stale whole-project object would roll that
-  // state back (losing the conversation thread the help text promises to keep).
-  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: false }))
-  const stopReload = c.var.daemon.reload()
+  const restarted = await new DaemonControlClient().restartProject(project.id)
+  if (!restarted) {
+    throw new HTTPException(503, { message: "daemon is not running" })
+  }
 
-  const confirmedDown = stopReload.signalled ? await waitForTenantDown(project.id) : true
-
-  store.updateProject(project.id, (fresh) => ({ ...fresh, enabled: true }))
-  const reload = c.var.daemon.reload()
-
-  const tail = wasEnabled ? "" : " (was disabled; ended up enabled)"
-  const reloadMsg = reload.signalled ? "(daemon reloaded)" : "(daemon not running)"
-  const warn = confirmedDown
-    ? ""
-    : "\nwarning: tenant did not stop within 10s; the restart may not have taken effect"
-  return c.text(`restarted project "${projectName}"${tail} ${reloadMsg}${warn}`)
+  return c.text(`restarted project "${projectName}"`)
 })

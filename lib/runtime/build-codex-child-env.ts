@@ -5,7 +5,7 @@ type Props = {
 }
 
 /**
- * Give every tenant Codex child an immutable-by-convention project identity.
+ * Give every project runtime Codex child an immutable-by-convention project identity.
  * The local Leuco CLI uses it to infer the current project and reject an
  * explicitly different project before any operation runs.
  */

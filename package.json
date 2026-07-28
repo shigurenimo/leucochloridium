@@ -1,7 +1,7 @@
 {
   "name": "leuco",
   "version": "0.16.1",
-  "description": "Self-hosted multi-tenant gateway that runs the Codex app-server as a Slack bot. Bun-only.",
+  "description": "Self-hosted multi-project gateway that runs the Codex app-server as a Slack bot. Bun-only.",
   "keywords": [
     "bot",
     "bun",
@@ -33,6 +33,7 @@
     "README.md"
   ],
   "type": "module",
+  "sideEffects": false,
   "main": "./lib/api.ts",
   "module": "./lib/api.ts",
   "types": "./dist/types/api.d.ts",
@@ -54,14 +55,13 @@
     "package:check": "bun run build:types && publint && bun pm pack --dry-run",
     "prepack": "bun run build:types",
     "test": "vp test run && bun run test:bun",
-    "test:bun": "bun test ./lib/events/leuco-event-bus.bun-test.ts",
+    "test:bun": "bun test ./lib/events/leuco-event-log.bun-test.ts",
     "test:coverage": "vp test run --coverage",
     "test:package": "bun run scripts/verify-packed-package.ts",
     "typecheck": "tsc -b --pretty false",
     "verify": "bun run check && bun run typecheck && bun run test && bun run package:check && bun run test:package"
   },
   "dependencies": {
-    "@interactive-inc/claude-funnel": "0.67.0",
     "@interactive-inc/flume": "0.10.1",
     "hono": "^4.12.32",
     "yaml": "^2.9.0",

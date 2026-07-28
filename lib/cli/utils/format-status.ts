@@ -30,7 +30,7 @@ export const formatStatus = (
     projects: runnableProjects.projects.map((project) => ({
       name: project.name,
       enabled: project.enabled,
-      channels: project.channels.filter((channel) => channel.enabled).length,
+      connectors: project.connectors.filter((connector) => connector.enabled).length,
       path: project.path,
     })),
     ...(runnableProjects.issues.length > 0 ? { projectIssues: runnableProjects.issues } : {}),

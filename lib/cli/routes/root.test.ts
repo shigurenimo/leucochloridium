@@ -55,9 +55,9 @@ describe("root route", () => {
       context.set("version", "test")
       await next()
     })
-    app.post("/", ...rootHandler)
+    app.command("/", ...rootHandler)
 
-    const response = await app.request("/", { method: "POST" })
+    const response = await app.dispatch({ path: "/" })
 
     expect(response.status).toBe(200)
     expect(await response.text()).toBe(

@@ -131,7 +131,7 @@ describe("LeucoEnv.parseCli", () => {
     expect(result).toBeInstanceOf(Error)
   })
 
-  it("accepts a UUID project scope for tenant Codex children", () => {
+  it("accepts a UUID project scope for runtime Codex children", () => {
     const env: NodeJS.ProcessEnv = {
       LEUCO_PROJECT_ID: "45ec9e03-5da4-4566-aa82-143cc38b8df5",
     }

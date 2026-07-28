@@ -3,7 +3,7 @@ import type { Project } from "@/config/config-schema"
 import { formatStatus } from "@/cli/utils/format-status"
 
 const healthyProject: Project = {
-  version: 2,
+  version: 3,
   id: "00000000-0000-4000-8000-000000000001",
   name: "healthy",
   path: "/tmp/healthy",
@@ -13,9 +13,8 @@ const healthyProject: Project = {
   model: null,
   developerInstructions: null,
   prompts: [],
-  channels: [],
+  connectors: [],
   mcpServers: {},
-  state: { codexThreadId: null, codexThreadIds: {}, scheduleLastFiredAt: {} },
 }
 
 describe("formatStatus", () => {

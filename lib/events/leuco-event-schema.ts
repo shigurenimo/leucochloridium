@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { leucoSlackSourceStatusSchema } from "@/channels/slack/leuco-slack-event-source"
-import { slackEventSchema } from "@/channels/slack/slack-event-schema"
+import { leucoSlackSourceStatusSchema } from "@/connectors/slack/leuco-slack-event-source"
+import { slackEventSchema } from "@/connectors/slack/slack-event-schema"
 
 const baseTs = { ts: z.number() }
 
@@ -11,30 +11,30 @@ const logEventSchema = z.object({
   line: z.string(),
 })
 
-const tenantStartedSchema = z.object({
+const runtimeStartedSchema = z.object({
   ...baseTs,
-  type: z.literal("tenant.started"),
+  type: z.literal("runtime.started"),
   project: z.string(),
 })
 
-const tenantStoppedSchema = z.object({
+const runtimeStoppedSchema = z.object({
   ...baseTs,
-  type: z.literal("tenant.stopped"),
+  type: z.literal("runtime.stopped"),
   project: z.string(),
 })
 
-const engineReconcileSchema = z.object({
+const supervisorReconcileSchema = z.object({
   ...baseTs,
-  type: z.literal("engine.reconcile"),
+  type: z.literal("supervisor.reconcile"),
   added: z.array(z.string()),
   removed: z.array(z.string()),
 })
 
-const engineReconcileFailedSchema = z.object({
+const supervisorReconcileFailedSchema = z.object({
   ...baseTs,
-  type: z.literal("engine.reconcile.failed"),
+  type: z.literal("supervisor.reconcile.failed"),
   reason: z.string(),
-  // Tenant-scoped failures carry retry metadata; store-wide reconcile
+  // Project-scoped failures carry retry metadata; store-wide reconcile
   // failures retain the compact `{ reason }` shape.
   project: z.string().optional(),
   attempt: z.number().int().positive().optional(),
@@ -45,7 +45,7 @@ const slackEventEnvelopeSchema = z.object({
   ...baseTs,
   type: z.literal("slack.event"),
   project: z.string(),
-  channel: z.string(),
+  connector: z.string(),
   event: slackEventSchema,
 })
 
@@ -53,7 +53,7 @@ const slackConnectionSchema = z.object({
   ...baseTs,
   type: z.literal("slack.connection"),
   project: z.string(),
-  channel: z.string(),
+  connector: z.string(),
   status: leucoSlackSourceStatusSchema,
 })
 
@@ -61,7 +61,7 @@ const slackErrorSchema = z.object({
   ...baseTs,
   type: z.literal("slack.error"),
   project: z.string(),
-  channel: z.string(),
+  connector: z.string(),
   level: z.enum(["warn", "error"]),
   action: z.string(),
   message: z.string(),
@@ -94,7 +94,7 @@ const turnRejectedSchema = z.object({
   type: z.literal("turn.rejected"),
   project: z.string(),
   threadKey: z.string(),
-  reason: z.enum(["tenant_stopped", "queue_count_limit", "queue_bytes_limit"]),
+  reason: z.enum(["runtime_stopped", "queue_count_limit", "queue_bytes_limit"]),
   queueDepth: z.number().int().nonnegative(),
   queueBytes: z.number().int().nonnegative(),
   inputBytes: z.number().int().nonnegative(),
@@ -146,7 +146,7 @@ const scheduleFiredSchema = z.object({
   ...baseTs,
   type: z.literal("schedule.fired"),
   project: z.string(),
-  channel: z.string(),
+  connector: z.string(),
   entryId: z.string(),
   entryName: z.string(),
   runAt: z.string(),
@@ -155,10 +155,10 @@ const scheduleFiredSchema = z.object({
 
 export const leucoEventSchema = z.discriminatedUnion("type", [
   logEventSchema,
-  tenantStartedSchema,
-  tenantStoppedSchema,
-  engineReconcileSchema,
-  engineReconcileFailedSchema,
+  runtimeStartedSchema,
+  runtimeStoppedSchema,
+  supervisorReconcileSchema,
+  supervisorReconcileFailedSchema,
   slackEventEnvelopeSchema,
   slackConnectionSchema,
   slackErrorSchema,

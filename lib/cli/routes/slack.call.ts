@@ -10,14 +10,14 @@ import { LeucoProjectStore } from "@/projects/project-store"
 
 const help = `leuco slack call / forward a Slack Web API call
 
-usage / leuco slack call <method> [--project <p>] [--body '<json>'] [--channel <c>]
+usage / leuco slack call <method> [--project <p>] [--body '<json>'] [--connector <c>]
 
 options:
   <method> / Slack Web API method (e.g. chat.postMessage)
   --body '<json>' / JSON body for the method (default: {})
   --project <p> / project whose stored bot token is used; optional inside a
-                  tenant Codex session and required otherwise
-  --channel <c> / pick a specific channel when the project has multiple
+                  project runtime Codex session and required otherwise
+  --connector <c> / pick a specific Slack connector when the project has multiple
 
 output / bounded Slack JSON response`
 
@@ -28,7 +28,8 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
   const method = body.args[0]
   if (!method) {
     throw new HTTPException(400, {
-      message: "usage: leuco slack call <method> [--body '<json>'] [--project <p>] [--channel <c>]",
+      message:
+        "usage: leuco slack call <method> [--body '<json>'] [--project <p>] [--connector <c>]",
     })
   }
   const parsedMethod = slackMethodSchema.safeParse(method)
@@ -39,13 +40,13 @@ export const slackCallHandler = factory.createHandlers(async (c) => {
   }
 
   const projectName = flagString(body.flags.project)
-  const channelName = flagString(body.flags.channel) ?? undefined
+  const connectorName = flagString(body.flags.connector) ?? undefined
   const rawBody = flagString(body.flags.body)
   const parsedBody = parseJsonBody(rawBody)
 
   const store = new LeucoProjectStore()
   const project = resolveProjectArgument(c, store, projectName)
-  const tokens = resolveSlackTokens({ project, channelName })
+  const tokens = resolveSlackTokens({ project, connectorName })
   const result = await slackCall({
     botToken: tokens.botToken,
     method: parsedMethod.data,

@@ -1,7 +1,7 @@
 import { readStdin } from "@/cli/utils/read-stdin"
 
 /**
- * Token-flag semantics shared by `channels add` and `channels set-tokens`.
+ * Token-flag semantics shared by `connectors add` and `connectors set-tokens`.
  *
  * Returns `null` when the flag is absent (caller decides default vs preserve),
  * the flag's literal value when given, or stdin contents when the value is `-`.

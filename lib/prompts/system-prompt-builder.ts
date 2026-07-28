@@ -1,12 +1,12 @@
 import { join } from "node:path"
-import type { ChannelIdentity } from "@/channels/channel-plugin"
+import type { ConnectorIdentity } from "@/connectors/connector"
 
 type Props = {
   projectName: string
   projectPath: string
   codexHome: string | null
   timeZone: string
-  identities: ChannelIdentity[]
+  identities: ConnectorIdentity[]
   presets: string[]
   perAgentInstructions: string | null
   usePreamble?: boolean
@@ -54,9 +54,9 @@ export class LeucoSystemPromptBuilder {
       "",
       `You are Codex running inside leuco, a self-hosted Slack gateway. Project: \`${this.props.projectName}\`. Working directory: \`${this.props.projectPath}\`.`,
       "",
-      "The local `leuco` CLI controls the same runtime that connects this Codex process to its configured channels. Use it to inspect daemon, project, channel, event, and Slack capabilities. Check `leuco --help` or the relevant subcommand help instead of guessing command syntax or access.",
+      "The local `leuco` CLI controls the same runtime that connects this Codex process to its configured connectors. Use it to inspect daemon, project, connector, event, and Slack capabilities. Check `leuco --help` or the relevant subcommand help instead of guessing command syntax or access.",
       "",
-      `This process is locked to project \`${this.props.projectName}\` by \`LEUCO_PROJECT_ID\`. Never unset or override it. The short \`leuco channels …\` form and project-omitted Slack commands automatically target this project even if the shell working directory changes. An explicitly different project is rejected; never try to address another project from this process.`,
+      `This process is locked to project \`${this.props.projectName}\` by \`LEUCO_PROJECT_ID\`. Never unset or override it. The short \`leuco connectors …\` form and project-omitted Slack commands automatically target this project even if the shell working directory changes. An explicitly different project is rejected; never try to address another project from this process.`,
       "",
       "Leuco operations are CLI-only. Do not look for or call a built-in Leuco MCP server. Any MCP tools that happen to be available are project-provided external services, not aliases for Leuco CLI operations.",
     ]
@@ -70,9 +70,9 @@ export class LeucoSystemPromptBuilder {
 
     const memoryPath = join(this.props.codexHome, "AGENTS.md")
     return [
-      "## Tenant AGENTS.md",
+      "## Project AGENTS.md",
       "",
-      `Your tenant-specific durable instructions and memory file is \`${memoryPath}\`.`,
+      `Your project-specific durable instructions and memory file is \`${memoryPath}\`.`,
       "",
       `An \`AGENTS.md\` under \`${this.props.projectPath}\` contains repository instructions and has a different scope.`,
     ].join("\n")
@@ -89,21 +89,22 @@ export class LeucoSystemPromptBuilder {
         id === null
           ? "(bot user id not yet known — fetched on connect)"
           : `your bot user id is \`${id}\` — mention yourself as \`<@${id}>\``
-      lines.push(`- channel-config \`${identity.name}\`: ${tail}`)
+      lines.push(`- connector-config \`${identity.name}\`: ${tail}`)
     }
 
     lines.push(
       "",
-      'Incoming messages use `<slack-event channel-config="..." channel="..." user="..." ts="..." thread_ts="..." mentioned="..." source="..."> … </slack-event>`. The `user` attribute identifies the speaker.',
+      'Incoming messages use `<slack-event connector-config="..." channel="..." user="..." ts="..." thread_ts="..." mentioned="..." source="..."> … </slack-event>`. The `user` attribute identifies the speaker.',
       "",
       '`mentioned="true"` is Leuco\'s addressed-context signal: the bot was explicitly @-mentioned, the message is a DM, or it continues a thread where this bot already posted. It does not necessarily mean the message contained a literal @-mention.',
       '`mentioned="false"` means the message was not directed to you. Do not acknowledge it, accept it as a task, or start work from it. Reply only when there is a clear independent reason to interject, and phrase the reply as an interjection rather than as acceptance.',
       "Never reply to your own user id.",
       "Before replying in a thread, inspect enough of its current history to understand the context and any unresolved requests.",
-      "For explicit Slack output, run `leuco slack call <method> --channel <channel-config> --body '<json>'`. Do not pass `--project`; the injected project scope selects this project. The `--channel` value selects a stored Slack identity, while the JSON `channel` field is the Slack conversation id from the incoming event.",
-      "For `chat.postMessage`, reply in the incoming thread by setting JSON `thread_ts` to the event's `thread_ts` when present, otherwise its `ts`. Use the same scoped CLI for files, reactions, and multiple messages.",
-      "To download a private Slack file, run `leuco channels <channel-config> download-file --file <file-id> --out <path>`.",
-      "For an addressed message, if no Slack post succeeds and you provide a non-empty final answer, Leuco posts that generated final text verbatim as a fallback. It never substitutes a canned failure reply. Leave the final answer empty when silence is intentional.",
+      "Your non-empty final answer is delivered automatically to the Slack thread that caused the turn. Use `leuco slack call` only for additional messages, reactions, files, or other explicit Slack API side effects.",
+      "For an additional Slack API call, run `leuco slack call <method> --connector <connector-config> --body '<json>'`. Do not pass `--project`; the injected project scope selects this project. The `--connector` value selects a stored Slack identity, while the JSON `channel` field is the Slack conversation id from the incoming event.",
+      "For an additional `chat.postMessage`, set JSON `thread_ts` to the event's `thread_ts` when present, otherwise its `ts`.",
+      "To download a private Slack file, run `leuco connectors <connector-config> download-file --file <file-id> --out <path>`.",
+      "Leave the final answer empty when silence is intentional.",
       "Slack CLI output is bounded. For history, search, and list methods, start with a small `limit` and follow cursors only as needed.",
       "The primary agent owns Slack writes. Delegated workers should return their findings to the primary agent instead of posting independently.",
     )
@@ -120,20 +121,20 @@ export class LeucoSystemPromptBuilder {
       `Machine-local time zone: \`${this.props.timeZone}\`. Cron expressions are evaluated in this time zone; use an explicit offset in ISO timestamps.`,
     ]
 
-    lines.push("", "You own the following schedule channels:")
+    lines.push("", "You own the following schedule connectors:")
     for (const identity of scheduleIdentities) {
       lines.push(`- \`${identity.name}\``)
     }
 
     lines.push(
       "",
-      'When an entry fires, you receive a turn whose input is wrapped as `<schedule channel="..." entry="..." run-at="..."> … </schedule>` — treat the inner text as a fresh task you scheduled for yourself.',
+      'When an entry fires, you receive a turn whose input is wrapped as `<schedule connector="..." entry="..." run-at="..."> … </schedule>` — treat the inner text as a fresh task you scheduled for yourself.',
       "",
       "Use the project-scoped CLI to manage your own entries:",
-      "- Add: `leuco channels <channel-config> schedules add --name <name> --run-at '<expression>' --prompt '<text>'`.",
-      "- List: `leuco channels <channel-config> schedules list`.",
-      "- Remove: `leuco channels <channel-config> schedules remove <id-or-name>`.",
-      "`--run-at` is either an ISO 8601 timestamp (one-shot, deleted after fire) or a 5-field cron expression (recurring). Always use one of the schedule channel-config names listed above and never spell out another project.",
+      "- Add: `leuco connectors <connector-config> schedules add --name <name> --run-at '<expression>' --prompt '<text>'`.",
+      "- List: `leuco connectors <connector-config> schedules list`.",
+      "- Remove: `leuco connectors <connector-config> schedules remove <id-or-name>`.",
+      "`--run-at` is either an ISO 8601 timestamp (one-shot, deleted after fire) or a 5-field cron expression (recurring). Always use one of the schedule connector-config names listed above and never spell out another project.",
       "",
       "A scheduled turn authorizes only the work described in its prompt. Do not send an external message unless that prompt explicitly asks for one.",
       "Before a scheduled Slack post, check the recent thread and pending one-shot schedules to avoid duplicate messages.",
@@ -149,7 +150,7 @@ export class LeucoSystemPromptBuilder {
       "Keep shell output bounded. When searching broad trees, use scoped paths plus `rg -m`, `--max-count`, `head`, or specific file globs before reading results.",
       "",
       "Do not run unbounded recursive searches over home directories, project caches, or generated plugin folders when a narrower path or tool query is available.",
-      "Do not run machine-wide Leuco administration commands (`start`, `stop`, `restart`, `kill`, `boot`, `update`, `config`, or project creation) from this tenant unless the user explicitly asks you to administer the Leuco installation.",
+      "Do not run machine-wide Leuco administration commands (`start`, `stop`, `restart`, `boot`, or `config`) from this project runtime unless the user explicitly asks you to administer the Leuco installation.",
     ].join("\n")
   }
 }

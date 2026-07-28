@@ -8,16 +8,17 @@ export type LeucoPathsProps = {
 /**
  * Single source of truth for every path under `~/.leuco/`.
  *
- * All project registrations (including per-channel Slack tokens) live in the
- * unified `~/.leuco/settings.json` (chmod 600). Per-project codex homes stay
- * in UUID-keyed directories so renames are free and same-name projects can
- * coexist.
+ * Project registrations and connector settings live in the unified
+ * `~/.leuco/settings.json` (chmod 600). Runtime state and Codex homes stay in
+ * UUID-keyed project directories so renames are free and same-name projects
+ * can coexist.
  *
  *   ~/.leuco/
  *   ├── settings.json           ← global config + projects array (chmod 600)
  *   ├── daemon/{pid,log}
  *   └── projects/
  *       └── <projectId>/
+ *           ├── state.json      ← Codex threads + schedule runtime state
  *           └── .codex/         ← CODEX_HOME
  */
 export class LeucoPaths {
@@ -75,7 +76,11 @@ export class LeucoPaths {
     return join(this.projectsRoot(), projectId)
   }
 
-  /** CODEX_HOME for the project's single tenant. */
+  projectStatePath(projectId: string): string {
+    return join(this.projectDir(projectId), "state.json")
+  }
+
+  /** CODEX_HOME for the project's single project runtime. */
   projectHome(projectId: string): string {
     return join(this.projectDir(projectId), ".codex")
   }

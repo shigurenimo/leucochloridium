@@ -1,5 +1,5 @@
-import { LeucoFetchSlackWebClient } from "@/channels/slack/leuco-fetch-slack-web-client"
-import type { Project, SlackChannel } from "@/config/config-schema"
+import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
+import type { Project, SlackConnectorConfig } from "@/config/config-schema"
 
 type Props = {
   botToken: string
@@ -26,29 +26,29 @@ const sanitiseBody = (body: Record<string, unknown> | undefined): Record<string,
 
 type ResolveProps = {
   project: Project
-  channelName?: string
+  connectorName?: string
 }
 
 export const resolveSlackTokens = (
   props: ResolveProps,
-): { botToken: string; appToken: string; channelName: string } => {
-  const candidates = props.project.channels.filter(
-    (ch): ch is SlackChannel => ch.type === "slack" && ch.enabled,
+): { botToken: string; appToken: string; connectorName: string } => {
+  const candidates = props.project.connectors.filter(
+    (ch): ch is SlackConnectorConfig => ch.type === "slack" && ch.enabled,
   )
 
-  if (props.channelName !== undefined) {
-    const match = candidates.find((ch) => ch.name === props.channelName)
+  if (props.connectorName !== undefined) {
+    const match = candidates.find((connector) => connector.name === props.connectorName)
     if (!match) {
       throw new Error(
-        `slack channel '${props.channelName}' not found (or disabled) in ${props.project.name}`,
+        `slack connector '${props.connectorName}' not found (or disabled) in ${props.project.name}`,
       )
     }
-    return { botToken: match.botToken, appToken: match.appToken, channelName: match.name }
+    return { botToken: match.botToken, appToken: match.appToken, connectorName: match.name }
   }
 
   const first = candidates[0]
   if (!first) {
-    throw new Error(`${props.project.name} has no enabled slack channel to use`)
+    throw new Error(`${props.project.name} has no enabled Slack connector to use`)
   }
-  return { botToken: first.botToken, appToken: first.appToken, channelName: first.name }
+  return { botToken: first.botToken, appToken: first.appToken, connectorName: first.name }
 }

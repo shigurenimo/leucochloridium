@@ -1,35 +1,30 @@
 import { describe, expect, expectTypeOf, it } from "vitest"
 import {
-  LeucoEventBus,
-  LeucoMemorySlackWebClient,
-  LeucoPaths,
+  EventLog,
+  LeucoEventLog,
   LeucoRuntime,
-  globalSettingsSchema,
+  MemoryEventLog,
+  SqliteEventLog,
   leucoEventSchema,
+  projectSchema,
 } from "@/api"
-import type {
-  LeucoEventBusProps,
-  LeucoMemorySlackWebClientProps,
-  LeucoPathsProps,
-  LeucoRuntimeProps,
-  LeucoTenantProps,
-} from "@/api"
+import type { Connector, LeucoEventLogProps, LeucoRuntimeProps, Project } from "@/api"
 
 describe("public API", () => {
-  it("exports runtime values from the package root", () => {
+  it("exports only the stable composition, configuration, connector, and event-log values", () => {
     expect(LeucoRuntime).toBeTypeOf("function")
-    expect(LeucoPaths).toBeTypeOf("function")
-    expect(LeucoEventBus).toBeTypeOf("function")
-    expect(LeucoMemorySlackWebClient).toBeTypeOf("function")
-    expect(globalSettingsSchema).toBeDefined()
+    expect(EventLog).toBeTypeOf("function")
+    expect(MemoryEventLog).toBeTypeOf("function")
+    expect(SqliteEventLog).toBeTypeOf("function")
+    expect(LeucoEventLog).toBeTypeOf("function")
+    expect(projectSchema).toBeDefined()
     expect(leucoEventSchema).toBeDefined()
   })
 
-  it("exports constructor and builder contracts", () => {
+  it("exports the contracts required by embedders", () => {
     expectTypeOf<LeucoRuntimeProps>().toHaveProperty("env")
-    expectTypeOf<LeucoPathsProps>().toHaveProperty("home")
-    expectTypeOf<LeucoEventBusProps>().toHaveProperty("eventLogPath")
-    expectTypeOf<LeucoMemorySlackWebClientProps>().toHaveProperty("authTest")
-    expectTypeOf<LeucoTenantProps>().toHaveProperty("turnIdleTimeoutMs")
+    expectTypeOf<LeucoEventLogProps>().toHaveProperty("eventLogPath")
+    expectTypeOf<Project>().toHaveProperty("path")
+    expectTypeOf<Connector>().toHaveProperty("start")
   })
 })

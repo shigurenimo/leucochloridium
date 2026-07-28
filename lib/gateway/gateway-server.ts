@@ -1,9 +1,9 @@
 import type { Server } from "bun"
+import type { DaemonControl } from "@/control/daemon-control"
 import { buildGatewayApp } from "@/gateway/build-gateway-app"
-import type { LeucoEngine } from "@/engine/engine"
 
 export type LeucoGatewayServerProps = {
-  engine: LeucoEngine
+  control: DaemonControl
   port: number
   selfPid?: number
   onLog?: (line: string) => void
@@ -15,14 +15,14 @@ export type LeucoGatewayServerProps = {
  * health, status, and thread control.
  */
 export class LeucoGatewayServer {
-  private readonly engine: LeucoEngine
+  private readonly control: DaemonControl
   private readonly port: number
   private readonly selfPid: number
   private readonly onLog: ((line: string) => void) | undefined
   private server: Server<undefined> | null = null
 
   constructor(props: LeucoGatewayServerProps) {
-    this.engine = props.engine
+    this.control = props.control
     this.port = props.port
     this.selfPid = props.selfPid ?? process.pid
     this.onLog = props.onLog
@@ -33,7 +33,7 @@ export class LeucoGatewayServer {
 
     const app = buildGatewayApp({
       selfPid: this.selfPid,
-      engine: this.engine,
+      control: this.control,
     })
 
     // Bind to loopback only. Exposing these routes on every interface would
