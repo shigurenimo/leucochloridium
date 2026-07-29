@@ -10,14 +10,19 @@ import { LeucoPaths } from "@/paths/leuco-paths"
 describe("update route", () => {
   let home: string
   const spawn = vi.fn(() => ({ exited: Promise.resolve(0) }))
+  const order = vi.fn((left: string, right: string) =>
+    left.localeCompare(right, undefined, { numeric: true }),
+  )
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "leuco-update-"))
+    spawn.mockClear()
+    order.mockClear()
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json({ version: "0.17.2" })),
     )
-    vi.stubGlobal("Bun", { spawn })
+    vi.stubGlobal("Bun", { semver: { order }, spawn })
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
   })
 
@@ -63,5 +68,29 @@ describe("update route", () => {
     expect(spawn).toHaveBeenCalledWith([process.execPath, "add", "--global", "leuco@0.17.2"], {
       stdio: ["inherit", "inherit", "inherit"],
     })
+  })
+
+  it("does not downgrade when the local version is newer than the registry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ version: "0.17.1" })),
+    )
+    const app = factory.createApp()
+    app.command("/update", ...updateHandler)
+
+    const response = await app.dispatch({
+      path: "/update",
+      body: JSON.stringify({ args: [], flags: {} }),
+      variables: {
+        version: "0.17.2",
+        daemon: new LeucoDaemon({ paths: new LeucoPaths({ home }) }),
+      },
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toBe(
+      "leuco 0.17.2 is newer than published 0.17.1; not downgrading",
+    )
+    expect(spawn).not.toHaveBeenCalled()
   })
 })

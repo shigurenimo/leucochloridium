@@ -20,12 +20,21 @@ export const updateHandler = factory.createHandlers(async (context) => {
     throw new HTTPException(500, { message: latest.message })
   }
 
-  if (latest === current) {
+  const versionOrder = Bun.semver.order(latest, current)
+  if (versionOrder === 0) {
     if (flagBool(body.flags.check)) {
       return context.text(`leuco ${current} (up to date)`)
     }
 
     return context.text(`leuco ${current} is already the latest`)
+  }
+
+  if (versionOrder < 0) {
+    if (flagBool(body.flags.check)) {
+      return context.text(`leuco ${current} (newer than published ${latest})`)
+    }
+
+    return context.text(`leuco ${current} is newer than published ${latest}; not downgrading`)
   }
 
   if (flagBool(body.flags.check)) {
