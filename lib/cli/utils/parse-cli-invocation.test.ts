@@ -11,6 +11,7 @@ describe("parseCliInvocation", () => {
   it("maps single top-level command to /<cmd>", () => {
     expect(parseCliInvocation(["start"]).path).toBe("/start")
     expect(parseCliInvocation(["status"]).path).toBe("/status")
+    expect(parseCliInvocation(["update"]).path).toBe("/update")
   })
 
   it("expands /projects/<leaf>", () => {

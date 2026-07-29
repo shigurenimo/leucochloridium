@@ -3,11 +3,13 @@ import { EventLog } from "@/event-log/event-log"
 import { MemoryEventLog } from "@/event-log/memory-event-log"
 import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { compactLeucoEvent } from "@/events/compact-leuco-event"
+import { leucoEventReadSchema } from "@/events/leuco-event-read-schema"
 import { leucoEventSchema } from "@/events/leuco-event-schema"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 import { maintainLeucoEventLog } from "@/events/maintain-leuco-event-log"
 import { queryLeucoEventEntries } from "@/events/query-leuco-event-entries"
+import { storedLeucoEventTypes } from "@/events/stored-leuco-event-types"
 
 export const DEFAULT_EVENT_LOG_MAX_ROWS = 50_000
 export const DEFAULT_EVENT_LOG_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
@@ -71,13 +73,25 @@ export class LeucoEventLog {
       return queryLeucoEventEntries(this.store.query(), query)
     }
 
-    return this.store.query({
-      ...(query.sinceSeq !== undefined ? { sinceSeq: query.sinceSeq } : {}),
-      ...(query.type !== undefined ? { type: query.type } : {}),
-      ...(query.project !== undefined ? { where: { project: query.project } } : {}),
-      ...(query.limit !== undefined ? { limit: query.limit } : {}),
-      ...(query.order !== undefined ? { order: query.order } : {}),
-    })
+    const storedTypes = query.type === undefined ? [null] : storedLeucoEventTypes(query.type)
+    const entries = storedTypes.flatMap((type) =>
+      this.store.query({
+        ...(query.sinceSeq !== undefined ? { sinceSeq: query.sinceSeq } : {}),
+        ...(type === null ? {} : { type }),
+        ...(query.project !== undefined ? { where: { project: query.project } } : {}),
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.order !== undefined ? { order: query.order } : {}),
+      }),
+    )
+    const normalized = entries
+      .sort((left, right) => left.seq - right.seq)
+      .map((entry) => ({
+        seq: entry.seq,
+        ts: entry.ts,
+        event: leucoEventReadSchema.parse(entry.event),
+      }))
+
+    return queryLeucoEventEntries(normalized, query)
   }
 
   close(): void {

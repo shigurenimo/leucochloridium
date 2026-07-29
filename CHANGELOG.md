@@ -2,6 +2,15 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.2 - 2026-07-29
+
+### Fixed
+
+- `exec-UUID`形式のcommand output overflowでも、繰り返し失敗するCodex threadを破棄して復旧。
+- 誤って削除されていた`leuco update`と`--check`を復旧。
+- 0.17より前のEvent Logをread boundaryで現行のruntime、supervisor、connector形式へ正規化。
+- `leuco doctor`の出力からSlack tokenの断片を除去。
+
 ## 0.17.1 - 2026-07-29
 
 ### Fixed

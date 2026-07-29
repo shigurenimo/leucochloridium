@@ -14,6 +14,7 @@ import {
   DEFAULT_TURN_TIMEOUT_MS,
 } from "@/engine/turn-timeouts"
 import { LeucoEventLog } from "@/events/leuco-event-log"
+import { commandOutputOverflowCallId } from "@/project/command-output-overflow-call-id"
 import { ProjectThreadRegistry, type ProjectThreadSummary } from "@/project/project-thread-registry"
 import { ProjectTurnQueue, type QueuedProjectTurn } from "@/project/project-turn-queue"
 import type { LeucoProjectStateStore } from "@/projects/project-state-store"
@@ -640,11 +641,4 @@ const toEventText = (text: string): string => {
   if (text.length <= MAX_EVENT_TEXT_CHARS) return text
   const suffix = `… [${text.length} chars]`
   return `${text.slice(0, MAX_EVENT_TEXT_CHARS - suffix.length)}${suffix}`
-}
-
-const commandOutputOverflowCallId = (error: Error): string | null => {
-  const match = error.message.match(
-    /(?:^|:\s*)codex command output exceeded \d+ chars from (call_[a-z0-9_-]+)/i,
-  )
-  return match?.[1] ?? null
 }

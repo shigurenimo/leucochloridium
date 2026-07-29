@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, test } from "vitest"
+import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 
 describe("LeucoEventLog", () => {
@@ -40,6 +41,73 @@ describe("LeucoEventLog", () => {
     expect(entries[0]!.event).toMatchObject({ type: "log", line: "one" })
     expect(entries[1]!.event).toMatchObject({ type: "log", line: "two" })
 
+    eventLog.close()
+  })
+
+  test("reads pre-0.17 event names and connector fields", () => {
+    const path = join(dir, "events.db")
+    const legacyLog = new SqliteEventLog<
+      | { ts: number; type: "tenant.started"; project: string }
+      | {
+          ts: number
+          type: "slack.error"
+          project: string
+          channel: string
+          level: "error"
+          action: string
+          message: string
+          error: null
+        },
+      ["project"]
+    >({
+      path,
+      indexes: ["project"],
+      extractIndexes: (event) => ({ project: event.project }),
+    })
+    legacyLog.insert({
+      ts: 1700000000000,
+      event: {
+        ts: 1700000000000,
+        type: "tenant.started",
+        project: "demo",
+      },
+    })
+    legacyLog.insert({
+      ts: 1700000000001,
+      event: {
+        ts: 1700000000001,
+        type: "slack.error",
+        project: "demo",
+        channel: "slack",
+        level: "error",
+        action: "turn.failed",
+        message: "failed",
+        error: null,
+      },
+    })
+    legacyLog.close()
+
+    const eventLog = new LeucoEventLog({
+      eventLogPath: path,
+      now: () => 1700000001000,
+    })
+
+    expect(eventLog.query({ type: "runtime.started" })).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "runtime.started",
+          project: "demo",
+        }),
+      }),
+    ])
+    expect(eventLog.query({ type: "slack.error" })).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "slack.error",
+          connector: "slack",
+        }),
+      }),
+    ])
     eventLog.close()
   })
 

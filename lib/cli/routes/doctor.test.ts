@@ -80,4 +80,48 @@ describe("doctor route", () => {
     expect(body).toContain("invalid project entries found")
     expect(body).toContain("projects[2] (broken): id: invalid UUID")
   })
+
+  it("does not print Slack token fragments", async () => {
+    doubles.listRunnable.mockReturnValue({
+      projects: [
+        {
+          id: "32cdf249-ed0e-4c2e-b7ab-7ca616c12da1",
+          name: "demo",
+          path: "/missing/demo",
+          enabled: true,
+          connectors: [
+            {
+              name: "slack",
+              type: "slack",
+              enabled: true,
+              botToken: "xoxb-sensitive-bot-token",
+              appToken: "xapp-sensitive-app-token",
+            },
+          ],
+        },
+      ],
+      issues: [],
+    })
+    const app = factory.createApp()
+    app.use(async (context, next) => {
+      context.set("daemon", new LeucoDaemon())
+      context.set("cwd", "/tmp")
+      context.set("binPath", "/tmp/leuco")
+      context.set("envFiles", {
+        local: { path: "/tmp/.env.local", loaded: false, keys: [] },
+        base: { path: "/tmp/.env", loaded: false, keys: [] },
+      })
+      context.set("version", "test")
+      await next()
+    })
+    app.command("/doctor", ...doctorHandler)
+
+    const response = await app.dispatch({ path: "/doctor" })
+    const body = await response.text()
+
+    expect(body).not.toContain("xoxb-")
+    expect(body).not.toContain("xapp-")
+    expect(body).not.toContain("sensitive")
+    expect(body).toContain("message: set")
+  })
 })

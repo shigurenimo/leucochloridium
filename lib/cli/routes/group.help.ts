@@ -11,6 +11,7 @@ commands:
   logs / print log (-f to follow)
   events / query event log (--preset, --type, --project)
   doctor / diagnose daemon, projects, and connectors
+  update / update to the latest published version
   projects / manage projects and connectors
   config / machine-wide settings
   boot / macOS LaunchAgent

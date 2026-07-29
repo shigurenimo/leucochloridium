@@ -45,6 +45,7 @@ import { help as slackHelp } from "@/cli/routes/slack.help"
 import { startHandler } from "@/cli/routes/start"
 import { statusHandler } from "@/cli/routes/status"
 import { stopHandler } from "@/cli/routes/stop"
+import { updateHandler } from "@/cli/routes/update"
 import { groupHelpHandler } from "@/cli/utils/group-help-handler"
 
 const base = factory.createApp()
@@ -79,6 +80,7 @@ export const app = base
   .command("/logs", ...logsHandler)
   .command("/events", ...eventsHandler)
   .command("/doctor", ...doctorHandler)
+  .command("/update", ...updateHandler)
 
   // Collection URLs (`/projects`, `/projects/:p/connectors`, etc) return the list
   // directly so `leuco projects` is enough to see what's registered. The

@@ -19,7 +19,17 @@ const BOOLEAN_FLAGS = new Set([
   "cascade",
   "check",
 ])
-const TOP_LEAFS = new Set(["run", "start", "stop", "restart", "status", "logs", "events", "doctor"])
+const TOP_LEAFS = new Set([
+  "run",
+  "start",
+  "stop",
+  "restart",
+  "status",
+  "logs",
+  "events",
+  "doctor",
+  "update",
+])
 const PROJECT_LEAFS = new Set(["list", "add"])
 const CONNECTOR_LEAFS = new Set(["list", "add"])
 const PROJECT_NAMED_LEAFS = new Set(["remove", "rename", "start", "stop", "restart", "path", "cwd"])
@@ -73,7 +83,7 @@ export type CliInvocation = {
  *   leuco projects <name> connectors <name> <named-leaf>        → /projects/<name>/connectors/<name>/<leaf>
  *   leuco projects <name> connectors <name> schedules <leaf>    → /projects/<name>/connectors/<name>/schedules/<leaf>
  *
- * `top-leafs`: run | start | stop | restart | status | logs | events | doctor
+ * `top-leafs`: run | start | stop | restart | status | logs | events | doctor | update
  * `project-leafs`: list | add
  * `connector-leafs`: list | add
  * `config-leafs`: list | get | set

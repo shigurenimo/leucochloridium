@@ -1109,7 +1109,8 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
   })
 
   it("discards a thread only when the same overflow call repeats after recovery", async () => {
-    const reason = "turn failed: codex command output exceeded 200000 chars from call_stuck"
+    const reason =
+      "turn failed: codex command output exceeded 200000 chars from exec-b7c29f6c-a749-4ea8-974f-e7a60c60ec89"
     let isRunning = true
     let turnCount = 0
     const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({

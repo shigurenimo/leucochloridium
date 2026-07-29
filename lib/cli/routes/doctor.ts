@@ -208,24 +208,26 @@ const checkProject = (
     const connectorChecks: Record<string, Check> = {}
 
     if (ch.type === "slack") {
-      const hasBotToken = typeof ch.botToken === "string" && ch.botToken.length > 0
-      const hasAppToken = typeof ch.appToken === "string" && ch.appToken.length > 0
+      const botToken =
+        typeof ch.botToken === "string" && ch.botToken.length > 0 ? ch.botToken : null
+      const appToken =
+        typeof ch.appToken === "string" && ch.appToken.length > 0 ? ch.appToken : null
 
-      connectorChecks.botToken = hasBotToken
-        ? ok(`set (${ch.botToken!.slice(0, 8)}…)`)
-        : error("missing — set with `leuco projects <p> connectors <c> set-tokens`")
+      connectorChecks.botToken =
+        botToken !== null
+          ? ok("set")
+          : error("missing — set with `leuco projects <p> connectors <c> set-tokens`")
 
-      connectorChecks.appToken = hasAppToken
-        ? ok(`set (${ch.appToken!.slice(0, 8)}…)`)
-        : error("missing — socket mode requires an app-level token")
+      connectorChecks.appToken =
+        appToken !== null ? ok("set") : error("missing — socket mode requires an app-level token")
 
       // xoxp- (user token) is a supported configuration — `connectors add` and
       // the slack token schema both accept it, so don't warn on it here.
-      if (hasBotToken && !ch.botToken!.startsWith("xoxb-") && !ch.botToken!.startsWith("xoxp-")) {
+      if (botToken !== null && !botToken.startsWith("xoxb-") && !botToken.startsWith("xoxp-")) {
         connectorChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
       }
 
-      if (hasAppToken && !ch.appToken!.startsWith("xapp-")) {
+      if (appToken !== null && !appToken.startsWith("xapp-")) {
         connectorChecks.appTokenFormat = warn("expected xapp- prefix")
       }
     }

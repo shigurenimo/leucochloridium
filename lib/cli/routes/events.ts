@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { factory } from "@/cli/cli-factory"
 import { resolveProjectFilter } from "@/cli/utils/lookup-config"
 import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 import { LeucoProjectStore } from "@/projects/project-store"
 
@@ -161,17 +161,14 @@ export const eventsHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(404, { message: `no event log yet: ${eventLogPath}` })
   }
 
-  const sink = new SqliteEventLog<LeucoEvent, ["project"]>({
-    path: eventLogPath,
-    indexes: ["project"],
-    extractIndexes: (event) => ({
-      project: "project" in event && typeof event.project === "string" ? event.project : null,
-    }),
-  })
+  const eventLog = new LeucoEventLog({ eventLogPath })
 
   const limit = parseLimitFlag(body.flags.limit)
-  const projectFilter =
-    resolveProjectFilter(c, new LeucoProjectStore(), flagString(body.flags.project)) ?? undefined
+  const projectFilter = resolveProjectFilter(
+    c,
+    new LeucoProjectStore(),
+    flagString(body.flags.project),
+  )
   const asJson = flagBool(body.flags.json)
 
   const presetName = typeof body.flags.preset === "string" ? body.flags.preset : null
@@ -186,28 +183,28 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   const presetTypes = presetName !== null ? PRESETS[presetName]!.types : null
   const filterTypes = typeFlag !== null ? [typeFlag] : presetTypes
 
-  let allEntries: Awaited<ReturnType<typeof sink.query>>
+  let allEntries: ReadonlyArray<{ seq: number; ts: number; event: LeucoEvent }>
   try {
     allEntries =
       filterTypes !== null
         ? filterTypes.flatMap((type) =>
-            sink.query({
+            eventLog.query({
               type,
-              where: projectFilter ? { project: projectFilter } : undefined,
+              ...(projectFilter === null ? {} : { project: projectFilter }),
               limit,
               order: "desc",
             }),
           )
-        : sink.query({
-            where: projectFilter ? { project: projectFilter } : undefined,
+        : eventLog.query({
+            ...(projectFilter === null ? {} : { project: projectFilter }),
             limit,
             order: "desc",
           })
   } finally {
-    sink.close()
+    eventLog.close()
   }
 
-  const sorted = allEntries.sort((a, b) => b.seq - a.seq).slice(0, limit)
+  const sorted = [...allEntries].sort((a, b) => b.seq - a.seq).slice(0, limit)
 
   if (sorted.length === 0) {
     return c.text("no events")
