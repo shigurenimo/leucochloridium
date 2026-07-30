@@ -15,6 +15,7 @@ const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort =>
   startThread: async () => ({ thread: { id: "tx" } }),
   resumeThread: async (params) => ({ thread: { id: params.threadId } }),
   runTextTurn: async (_id, text) => text,
+  interruptTurn: async () => ({ status: "not-active" }),
   ...overrides,
 })
 

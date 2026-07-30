@@ -8,6 +8,7 @@ import type { LeucoTurnTimeoutClock } from "@/engine/turn-timeouts"
 import { errorMessage } from "@/error-message"
 import {
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_INTERRUPT_GRACE_MS,
   DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
@@ -21,6 +22,7 @@ import type { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 export {
   DEFAULT_TURN_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_INTERRUPT_GRACE_MS,
   DEFAULT_TURN_CONCURRENCY,
   DEFAULT_TURN_QUEUE_MAX_BYTES,
   DEFAULT_TURN_QUEUE_MAX_ITEMS,
@@ -34,8 +36,8 @@ export {
  * a stuck turn would block every subsequent message on the same project.
  *
  * A separate no-notification timer catches stalled turns earlier. On either
- * timeout the codex child is restarted (the in-flight turn dies with it) and
- * the project thread is re-resumed on the next call.
+ * timeout Leuco interrupts only the affected turn. Replacing the shared Codex
+ * child is a fallback for a failed interrupt or a transport-level failure.
  */
 type Logger = (line: string) => void
 
@@ -75,6 +77,7 @@ export type LeucoProjectRuntimeProps = {
   /** Hard wall-clock and no-notification limits. Overridable for tests. */
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
+  turnInterruptGraceMs?: number
   turnConcurrency?: number
   /** Pending-turn admission limits. Overridable for embedded runtimes and tests. */
   turnQueueMaxItems?: number
@@ -88,6 +91,8 @@ type CommandOutputOverflow = {
   callId: string
   threadId: string | null
 }
+
+type TurnSettlement = { status: "settled"; result: string | Error } | { status: "timed-out" }
 
 /**
  * Owns one project: a single Codex app-server child and its connectors.
@@ -112,6 +117,7 @@ export class LeucoProjectRuntime {
   private readonly presets: string[]
   private readonly turnTimeoutMs: number
   private readonly turnIdleTimeoutMs: number
+  private readonly turnInterruptGraceMs: number
   private readonly turnQueue: ProjectTurnQueue
   private readonly turnTimeoutClock: LeucoTurnTimeoutClock
   private codexGeneration = 0
@@ -144,12 +150,14 @@ export class LeucoProjectRuntime {
     this.presets = props.presets ?? []
     this.turnTimeoutMs = props.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
     this.turnIdleTimeoutMs = props.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
+    this.turnInterruptGraceMs = props.turnInterruptGraceMs ?? DEFAULT_TURN_INTERRUPT_GRACE_MS
     const turnConcurrency = props.turnConcurrency ?? DEFAULT_TURN_CONCURRENCY
     const turnQueueMaxItems = props.turnQueueMaxItems ?? DEFAULT_TURN_QUEUE_MAX_ITEMS
     const turnQueueMaxBytes = props.turnQueueMaxBytes ?? DEFAULT_TURN_QUEUE_MAX_BYTES
     this.turnTimeoutClock = props.turnTimeoutClock ?? TURN_TIMEOUT_CLOCK
     assertPositiveInteger("turnTimeoutMs", this.turnTimeoutMs)
     assertPositiveInteger("turnIdleTimeoutMs", this.turnIdleTimeoutMs)
+    assertPositiveInteger("turnInterruptGraceMs", this.turnInterruptGraceMs)
     assertPositiveInteger("turnConcurrency", turnConcurrency)
     assertPositiveInteger("turnQueueMaxItems", turnQueueMaxItems)
     assertPositiveInteger("turnQueueMaxBytes", turnQueueMaxBytes)
@@ -364,18 +372,92 @@ export class LeucoProjectRuntime {
     text: string,
     timeouts: LeucoTurnTimeouts,
   ): Promise<string | Error> {
-    const reply = await Promise.race([
-      this.codex.runTextTurn(threadId, text, {
+    let turnSettled = false
+    const turnPromise = this.codex
+      .runTextTurn(threadId, text, {
         cwd: this.projectPath,
         onActivity: () => timeouts.activity(),
-      }),
-      timeouts.hardTimeout,
-      timeouts.idleTimeout,
-    ])
+      })
+      .then((result) => {
+        turnSettled = true
+        return result
+      })
+    const reply = await Promise.race([turnPromise, timeouts.hardTimeout, timeouts.idleTimeout])
     if (reply instanceof Error) {
+      if (timeouts.isTimeout(reply)) {
+        await this.interruptTimedOutTurn(threadId, reply, turnPromise, () => turnSettled)
+        return reply
+      }
       await this.recoverRestartableTurn(threadKey, threadId, reply, timeouts)
     }
     return reply
+  }
+
+  private async interruptTimedOutTurn(
+    threadId: string,
+    timeoutError: Error,
+    turnPromise: Promise<string | Error>,
+    isTurnSettled: () => boolean,
+  ): Promise<void> {
+    const interrupted = await this.codex.interruptTurn(threadId)
+    if (interrupted instanceof Error || interrupted.status === "not-active") {
+      if (isTurnSettled() && this.codex.isRunning()) {
+        this.log(
+          `[leuco] ${this.projectName}: timed-out turn ${threadId} had already settled; shared codex child kept`,
+        )
+        return
+      }
+      const detail =
+        interrupted instanceof Error
+          ? interrupted.message
+          : `codex reported no active turn for ${threadId}`
+      await this.restartCodexChild(`${timeoutError.message}; turn isolation failed: ${detail}`)
+      return
+    }
+
+    const settlement = await this.waitForTurnSettlement(turnPromise)
+    if (settlement.status === "timed-out") {
+      await this.restartCodexChild(
+        `${timeoutError.message}; turn ${interrupted.turnId} did not finish within ${
+          this.turnInterruptGraceMs / 1000
+        }s after turn/interrupt`,
+      )
+      return
+    }
+    if (
+      !this.codex.isRunning() ||
+      (settlement.result instanceof Error && isTurnInterruptFailure(settlement.result))
+    ) {
+      const detail =
+        settlement.result instanceof Error
+          ? settlement.result.message
+          : "codex child exited during turn interruption"
+      await this.restartCodexChild(`${timeoutError.message}; turn isolation failed: ${detail}`)
+      return
+    }
+
+    this.log(
+      `[leuco] ${this.projectName}: interrupted only timed-out turn ${interrupted.turnId}; shared codex child kept`,
+    )
+  }
+
+  private async waitForTurnSettlement(
+    turnPromise: Promise<string | Error>,
+  ): Promise<TurnSettlement> {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      return await Promise.race([
+        turnPromise.then((result) => ({ status: "settled" as const, result })),
+        new Promise<TurnSettlement>((resolve) => {
+          timer = this.turnTimeoutClock.setTimeout(
+            () => resolve({ status: "timed-out" }),
+            this.turnInterruptGraceMs,
+          )
+        }),
+      ])
+    } finally {
+      if (timer !== null) this.turnTimeoutClock.clearTimeout(timer)
+    }
   }
 
   private async recoverRestartableTurn(
@@ -406,7 +488,9 @@ export class LeucoProjectRuntime {
     } else {
       this.lastCommandOutputOverflows.set(conversationKey, current)
     }
-    await this.restartCodexChild(error.message)
+    this.log(
+      `[leuco] ${this.projectName}: command output overflow isolated to thread ${threadId ?? conversationKey}; shared codex child kept`,
+    )
   }
 
   private async restartCodexChild(reason: string): Promise<void> {
@@ -639,12 +723,15 @@ const isRestartableTurnError = (error: Error): boolean => {
   return (
     error.message.startsWith("codex turn hard deadline exceeded") ||
     error.message.startsWith("codex turn idle timeout") ||
-    error.message.startsWith("codex command output exceeded") ||
+    isTurnInterruptFailure(error) ||
     error.message.startsWith("codex protocol frame exceeded") ||
     error.message.startsWith("codex stdin failed") ||
     error.message.startsWith("codex app-server exited")
   )
 }
+
+const isTurnInterruptFailure = (error: Error): boolean =>
+  error.message.startsWith("codex turn interrupt failed")
 
 const assertPositiveInteger = (name: string, value: number): void => {
   if (!Number.isSafeInteger(value) || value < 1) {
