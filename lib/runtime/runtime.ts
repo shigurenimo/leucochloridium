@@ -48,6 +48,8 @@ export type LeucoRuntimeProps = {
   /** Loopback gateway port for daemon health, status, and thread control. */
   port?: number
   home?: string
+  /** Existing Codex auth file shared into each project runtime. */
+  codexAuthPath?: string
   codexBin?: string
   onLog?: Logger
   /** Dependency seam for runtime composition tests. */
@@ -122,6 +124,7 @@ export class LeucoRuntime {
           project,
           paths,
           env: buildProps.env,
+          codexAuthPath: buildProps.codexAuthPath ?? paths.codexAuthPath(),
           codexBin: buildProps.codexBin,
           onLog,
           eventLog,
@@ -266,6 +269,7 @@ type BuildProjectRuntimeProps = {
   project: Project
   paths: LeucoPaths
   env: NodeJS.ProcessEnv
+  codexAuthPath: string
   codexBin: string | undefined
   onLog: Logger
   eventLog: LeucoEventLog
@@ -294,7 +298,7 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
     projectPath: props.project.path,
     extraMcpServers: props.project.mcpServers,
   })
-  ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
+  ensureAuthSymlink(codexHome, props.codexAuthPath)
 
   const childEnv = buildCodexChildEnv({
     env: props.env,

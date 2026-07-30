@@ -159,7 +159,8 @@ read-modify-writeするため、project変更は必ず `updateProject()` を使�
 
 各projectの `.codex/` はconfigとCodex memoryを分離する。`auth.json` だけは
 `~/.codex/auth.json` へsymlinkし、ログインを共有する。regular fileがある場合は
-そのprojectの意図的な別ログインとみなして上書きしない。
+そのprojectの意図的な別ログインとみなして上書きしない。埋め込みAPIは
+`codexAuthPath` で認証元だけ変更でき、project別 `CODEX_HOME` の挙動は変えない。
 
 `events.db` はSlack本文を含むため本体、WAL、SHMを0600へ寄せる。
 projectの `config.toml` は外部MCP環境変数を含み得るため0600。

@@ -437,6 +437,23 @@ const runtime = LeucoRuntime.build({ env: process.env })
 await runtime.start()
 ```
 
+Custom data homes can still share the machine's existing Codex login:
+
+```ts
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { LeucoRuntime } from "leuco"
+
+const runtime = LeucoRuntime.build({
+  env: process.env,
+  home: join(homedir(), ".inta", "backroom"),
+  codexAuthPath: join(homedir(), ".codex", "auth.json"),
+})
+await runtime.start()
+```
+
+Only the auth source changes. Each project's `CODEX_HOME`, configuration, memory, and runtime behavior remain isolated exactly as in the standalone CLI.
+
 The package root intentionally exposes only the stable composition root (`LeucoRuntime`), project and connector contracts, and the structured event-log contract. Daemon, gateway, CLI, stores, concrete connectors, and test fakes remain internal. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
 
 Run the complete local verification before publishing:

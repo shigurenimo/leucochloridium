@@ -2,6 +2,12 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.5 - 2026-07-31
+
+### Added
+
+- Programmable APIの`LeucoRuntime.build()`で`codexAuthPath`を指定し、project別`CODEX_HOME`の挙動を変えずに任意のCodex認証を共有できるように追加。
+
 ## 0.17.4 - 2026-07-30
 
 ### Fixed

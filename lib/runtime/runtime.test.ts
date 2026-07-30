@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -93,6 +94,29 @@ describe("LeucoRuntime", () => {
     expect(configToml).toContain("[mcp_servers.private_api]")
     expect(configToml).toContain('PRIVATE_API_TOKEN = "secret-value"')
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
+  })
+
+  it("shares an explicitly selected Codex auth file into the project runtime", async () => {
+    const paths = new LeucoPaths({ home })
+    const store = new LeucoProjectStore({ paths })
+    const sharedCodexHome = join(home, "shared-codex")
+    const sharedAuthPath = join(sharedCodexHome, "auth.json")
+    store.save(sampleProject())
+    mkdirSync(sharedCodexHome, { recursive: true })
+    writeFileSync(sharedAuthPath, "shared credentials")
+
+    const runtime = LeucoRuntime.build({
+      env: {},
+      home,
+      codexAuthPath: sharedAuthPath,
+      eventLog: new LeucoEventLog(),
+    })
+
+    expect(readFileSync(join(paths.projectHome(PROJECT_ID), "config.toml"), "utf8")).toContain(
+      'model = "gpt-5.6-terra"',
+    )
+    expect(readlinkSync(join(paths.projectHome(PROJECT_ID), "auth.json"))).toBe(sharedAuthPath)
+    await runtime.stop()
   })
 
   it("starts healthy runtimes and supervises a project whose initial build failed", async () => {
