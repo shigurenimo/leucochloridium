@@ -18,6 +18,24 @@ const project: Project = {
 }
 
 describe("isCurrentCodexProject", () => {
+  it("uses LEUCO_PROJECT_ID when CODEX_HOME is shared", () => {
+    expect(
+      isCurrentCodexProject(project, {
+        CODEX_HOME: "/Users/i/.codex",
+        LEUCO_PROJECT_ID: project.id,
+      }),
+    ).toBe(true)
+  })
+
+  it("rejects another LEUCO_PROJECT_ID even when CODEX_HOME is shared", () => {
+    expect(
+      isCurrentCodexProject(project, {
+        CODEX_HOME: "/Users/i/.codex",
+        LEUCO_PROJECT_ID: "1418d059-f8c6-45a1-9483-94e10ca8da9e",
+      }),
+    ).toBe(false)
+  })
+
   it("returns true when CODEX_HOME points at the project's codex home", () => {
     expect(
       isCurrentCodexProject(project, {

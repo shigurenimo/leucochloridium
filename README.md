@@ -283,7 +283,7 @@ Codexがproject scope付きの`leuco slack call`を明示的に実行した場�
 
 A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
 
-Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
+The standalone CLI gives each project its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`. Embedded runtimes can instead inherit an existing Codex home as described under [Using Leuco as a library](#using-leuco-as-a-library).
 
 ### Codex認証共有の注意
 
@@ -436,6 +436,22 @@ import { LeucoRuntime } from "leuco"
 const runtime = LeucoRuntime.build({ env: process.env })
 await runtime.start()
 ```
+
+An embedder can use the machine's existing Codex installation:
+
+```ts
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { LeucoRuntime } from "leuco"
+
+const runtime = LeucoRuntime.build({
+  env: process.env,
+  codexHome: join(homedir(), ".codex"),
+})
+await runtime.start()
+```
+
+This inherits that Codex home's authentication, user configuration, skills, and plugins. Leuco layers project-specific model, approval, sandbox, trust, and MCP settings through `codex app-server -c` arguments and never rewrites the shared `config.toml`. Project-scoped `AGENTS.md` memory remains under Leuco's project directory.
 
 The package root intentionally exposes only the stable composition root (`LeucoRuntime`), project and connector contracts, and the structured event-log contract. Daemon, gateway, CLI, stores, concrete connectors, and test fakes remain internal. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
 

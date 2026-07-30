@@ -116,7 +116,8 @@ Codex notification、runtime、supervisor eventを書く。
 - projectごとのstateを `~/.leuco/projects/<id>/state.json` から読む
 - enabled projectから `LeucoProjectRuntime` をbuildする
 - enabled connectorだけをruntimeへ組み込む
-- projectごとに独立した `CODEX_HOME` とCodex子プロセスを作る
+- standaloneではprojectごとに独立した `CODEX_HOME`、埋め込み指定時は共有
+  `codexHome` とProject固有`-c`設定でCodex子プロセスを作る
 - Codex子へprojectの `LEUCO_PROJECT_ID` を渡す
 - `LeucoProjectSupervisor` がproject slot、retry、pause、reconcileを所有する
 - Hono gatewayがhealth、status、thread、daemon controlをloopback portで受ける
@@ -157,9 +158,12 @@ read-modify-writeするため、project変更は必ず `updateProject()` を使�
 古いsnapshotを `save()` で書き戻してはならない。state更新は
 `LeucoProjectStateStore` に限定する。
 
-各projectの `.codex/` はconfigとCodex memoryを分離する。`auth.json` だけは
-`~/.codex/auth.json` へsymlinkし、ログインを共有する。regular fileがある場合は
-そのprojectの意図的な別ログインとみなして上書きしない。
+standaloneでは各projectの `.codex/` がconfigとCodex memoryを分離する。
+`auth.json` だけは `~/.codex/auth.json` へsymlinkし、ログインを共有する。
+regular fileがある場合はそのprojectの意図的な別ログインとみなして上書きしない。
+埋め込みAPIで `codexHome` を指定した場合は、認証・利用者config・skills・pluginsを
+そこから継承し、Project固有設定だけapp-serverの `-c` 引数で重ねる。共有
+`config.toml` は書き換えず、Project用 `.codex/AGENTS.md` はmemoryとして維持する。
 
 `events.db` はSlack本文を含むため本体、WAL、SHMを0600へ寄せる。
 projectの `config.toml` は外部MCP環境変数を含み得るため0600。
@@ -187,8 +191,9 @@ hackは次の三つ。
 - `leuco doctor` またはactionable errorで故障を発見できるようにする
 - この一覧へ追加し、不要になった時点でcompatibility codeごと削除する
 
-project別 `CODEX_HOME` はconfig、memory、sessionの整理上の分離であり、
-同一OS userと `danger-full-access` の間にsecurity isolationを作るものではない。
+project別home、または埋め込み時の共有 `CODEX_HOME` はconfig、memory、sessionの
+整理方法であり、同一OS userと `danger-full-access` の間にsecurity isolationを
+作るものではない。
 
 ## CLI route
 

@@ -5,6 +5,8 @@ export const isCurrentCodexProject = (
   project: Project,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean => {
+  if (env.LEUCO_PROJECT_ID !== undefined) return env.LEUCO_PROJECT_ID === project.id
+
   const codexHome = env.CODEX_HOME
   if (typeof codexHome !== "string" || codexHome.length === 0) return false
 
