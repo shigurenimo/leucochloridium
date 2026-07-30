@@ -19,6 +19,7 @@ type ProjectRetry = {
   projectName: string
   signature: string | null
   retryAt: number
+  phase: "build" | "start" | "stop"
 }
 
 type ProjectSlot = {
@@ -242,7 +243,18 @@ export class LeucoProjectSupervisor implements DaemonControl {
           await runtime.start()
           slot.retry = null
         } catch (err) {
-          await this.safeStop(runtime)
+          const cleanupError = await this.tryStop(runtime)
+          if (cleanupError !== null) {
+            this.recordFailure(slot, {
+              projectId: runtime.projectId,
+              projectName: runtime.projectName,
+              signature: runtime.configSignature ?? this.currentSignature(runtime.projectId),
+              phase: "stop",
+              error: cleanupError,
+            })
+            continue
+          }
+
           slot.runtime = null
           slot.signature = null
           this.recordFailure(slot, {
@@ -306,8 +318,10 @@ export class LeucoProjectSupervisor implements DaemonControl {
       if (target !== undefined) continue
 
       if (slot.runtime !== null) {
-        removed.push(slot.runtime.projectName)
-        await this.stopSlotRuntime(slot)
+        if (this.stopRetryIsDeferred(slot)) continue
+        const previousName = slot.runtime.projectName
+        if (!(await this.stopSlotRuntime(slot, false))) continue
+        removed.push(previousName)
       }
       this.slots.delete(projectId)
     }
@@ -316,11 +330,15 @@ export class LeucoProjectSupervisor implements DaemonControl {
       const slot = this.getOrCreateSlot(target.project.id)
       if (slot.paused) {
         if (slot.runtime !== null) {
-          removed.push(slot.runtime.projectName)
-          await this.stopSlotRuntime(slot)
+          if (this.stopRetryIsDeferred(slot)) continue
+          const previousName = slot.runtime.projectName
+          if (!(await this.stopSlotRuntime(slot, false))) continue
+          removed.push(previousName)
         }
         continue
       }
+
+      if (slot.runtime !== null && this.stopRetryIsDeferred(slot)) continue
 
       if (slot.runtime !== null && !this.runtimeNeedsRebuild(slot, target)) {
         slot.retry = null
@@ -330,7 +348,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       if (slot.runtime !== null) {
         const previousName = slot.runtime.projectName
         this.log(`[leuco] reconcile: rebuilding ${previousName}`)
-        await this.stopSlotRuntime(slot)
+        if (!(await this.stopSlotRuntime(slot, false))) continue
         removed.push(previousName)
       }
 
@@ -392,7 +410,21 @@ export class LeucoProjectSupervisor implements DaemonControl {
       slot.retry = null
       return true
     } catch (err) {
-      await this.safeStop(runtime)
+      const cleanupError = await this.tryStop(runtime)
+      if (cleanupError !== null) {
+        slot.runtime = runtime
+        slot.signature = signature
+        this.recordFailure(slot, {
+          projectId: project.id,
+          projectName: project.name,
+          signature,
+          phase: "stop",
+          error: cleanupError,
+        })
+        if (failLoudly) throw cleanupError
+        return false
+      }
+
       this.recordFailure(slot, {
         projectId: project.id,
         projectName: project.name,
@@ -405,23 +437,47 @@ export class LeucoProjectSupervisor implements DaemonControl {
     }
   }
 
-  private async stopSlotRuntime(slot: ProjectSlot): Promise<void> {
+  private async stopSlotRuntime(slot: ProjectSlot, failLoudly = true): Promise<boolean> {
     const runtime = slot.runtime
+    if (runtime === null) {
+      slot.signature = null
+      slot.retry = null
+      return true
+    }
+
+    const stopError = await this.tryStop(runtime)
+    if (stopError !== null) {
+      this.recordFailure(slot, {
+        projectId: runtime.projectId,
+        projectName: runtime.projectName,
+        signature: runtime.configSignature ?? slot.signature,
+        phase: "stop",
+        error: stopError,
+      })
+      if (failLoudly) throw stopError
+      return false
+    }
+
     slot.runtime = null
     slot.signature = null
     slot.retry = null
-    if (runtime !== null) await this.safeStop(runtime)
+    return true
   }
 
   private runtimeNeedsRebuild(slot: ProjectSlot, target: ProjectTarget): boolean {
     const runtime = slot.runtime
     if (runtime === null) return true
+    if (slot.retry?.phase === "stop") return true
     if (runtime.projectName !== target.project.name) return true
     if (slot.signature !== null) return slot.signature !== target.signature
     if (runtime.configSignature !== null) return runtime.configSignature !== target.signature
 
     const current = runtime.listConnectors().slice().sort().join(",")
     return current !== enabledConnectorSignature(target.project)
+  }
+
+  private stopRetryIsDeferred(slot: ProjectSlot): boolean {
+    return slot.retry?.phase === "stop" && slot.retry.retryAt > Date.now()
   }
 
   private getOrCreateSlot(projectId: string): ProjectSlot {
@@ -445,10 +501,16 @@ export class LeucoProjectSupervisor implements DaemonControl {
   }
 
   private async safeStop(runtime: LeucoProjectRuntime): Promise<void> {
+    await this.tryStop(runtime)
+  }
+
+  private async tryStop(runtime: LeucoProjectRuntime): Promise<Error | null> {
     try {
       await runtime.stop()
+      return null
     } catch (err) {
       this.log(`[leuco] reconcile: ${runtime.projectName}: stop failed: ${errorMessage(err)}`)
+      return err instanceof Error ? err : new Error(errorMessage(err))
     }
   }
 
@@ -458,7 +520,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       projectId: string
       projectName: string
       signature: string | null
-      phase: "build" | "start"
+      phase: "build" | "start" | "stop"
       error: unknown
     },
   ): void {
@@ -475,6 +537,7 @@ export class LeucoProjectSupervisor implements DaemonControl {
       projectName: input.projectName,
       signature: input.signature,
       retryAt,
+      phase: input.phase,
     }
     this.log(`[leuco] ${reason}; retry ${attempt} in ${Math.ceil(retryDelay / 1000)}s`)
     this.eventLog.append({

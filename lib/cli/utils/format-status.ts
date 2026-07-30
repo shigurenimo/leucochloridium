@@ -2,7 +2,7 @@ import type { LeucoDaemon } from "@/daemon/leuco-daemon"
 import { renderYaml } from "@/cli/utils/render-yaml"
 import { LeucoProjectStore } from "@/projects/project-store"
 
-type DaemonPort = Pick<LeucoDaemon, "clearStalePid" | "status">
+type DaemonPort = Pick<LeucoDaemon, "status">
 
 type ProjectStorePort = Pick<LeucoProjectStore, "listRunnable">
 
@@ -16,10 +16,6 @@ export const formatStatus = (
   projectStore: ProjectStorePort = new LeucoProjectStore(),
 ): StatusResult => {
   const status = daemon.status()
-
-  if (!status.isRunning && status.pid !== null) {
-    daemon.clearStalePid()
-  }
 
   const runnableProjects = projectStore.listRunnable()
 

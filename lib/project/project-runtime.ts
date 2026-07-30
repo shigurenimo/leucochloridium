@@ -251,18 +251,33 @@ export class LeucoProjectRuntime {
     // Start every connector shutdown before killing Codex so each connector can
     // invalidate timers/generations immediately. Do not await their drains
     // yet: a schedule tick may itself be awaiting the active Codex turn.
-    const connectorStops = this.connectors.map(async (connector) => {
+    const connectorStops = this.connectors.map(async (connector): Promise<string | null> => {
       try {
         await connector.stop()
+        return null
       } catch (err) {
-        this.log(`[leuco] connector ${connector.name} stop: ${errorMessage(err)}`)
+        const failure = `connector ${connector.name}: ${errorMessage(err)}`
+        this.log(`[leuco] ${failure}`)
+        return failure
       }
     })
 
-    await this.codex.stop().catch((err: unknown) => {
+    let codexFailure: string | null = null
+    try {
+      await this.codex.stop()
+    } catch (err) {
+      codexFailure = `codex: ${errorMessage(err)}`
       this.log(`[leuco] codex stop (${this.projectName}): ${errorMessage(err)}`)
-    })
-    await Promise.all(connectorStops)
+    }
+
+    const failures: string[] = []
+    for (const failure of await Promise.all(connectorStops)) {
+      if (failure !== null) failures.push(failure)
+    }
+    if (codexFailure !== null) failures.push(codexFailure)
+    if (failures.length > 0) {
+      throw new Error(`project runtime ${this.projectName} stop incomplete: ${failures.join("; ")}`)
+    }
 
     this.eventLog.append({
       ts: Date.now(),

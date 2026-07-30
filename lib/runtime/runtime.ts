@@ -37,6 +37,12 @@ type GatewayLifecycle = {
   stop(): Promise<void>
 }
 
+type RuntimeLifecycle = {
+  hasStarted: boolean
+  hasStopped: boolean
+  stopPromise: Promise<void> | null
+}
+
 export type LeucoRuntimeProps = {
   env: NodeJS.ProcessEnv
   /** Loopback gateway port for daemon health, status, and thread control. */
@@ -58,6 +64,12 @@ export type LeucoRuntimeProps = {
  * builds one `LeucoProjectRuntime` per enabled project, and wires the engine.
  */
 export class LeucoRuntime {
+  private readonly lifecycle: RuntimeLifecycle = {
+    hasStarted: false,
+    hasStopped: false,
+    stopPromise: null,
+  }
+
   private constructor(
     private readonly props: {
       projectStore: LeucoProjectStore
@@ -182,27 +194,42 @@ export class LeucoRuntime {
   }
 
   async start(): Promise<void> {
-    this.props.gateway.start()
+    if (this.lifecycle.hasStopped) throw new Error("LeucoRuntime cannot start after stop")
+    if (this.lifecycle.hasStarted) throw new Error("LeucoRuntime is already started")
+    this.lifecycle.hasStarted = true
+
     try {
+      this.props.gateway.start()
       await this.props.supervisor.start()
       // A project whose synchronous composition failed above is absent from
       // the initial runtime array. Reconcile immediately so the supervisor
       // records its retry state.
       await this.props.supervisor.reconcile()
     } catch (error) {
-      await this.stopGateway("startup rollback")
+      await this.stop()
       throw error
     }
   }
 
-  async stop(): Promise<void> {
-    await this.props.supervisor.stop()
-    await this.stopGateway("shutdown")
-    this.props.eventLog.close()
+  stop(): Promise<void> {
+    if (this.lifecycle.stopPromise !== null) return this.lifecycle.stopPromise
+
+    this.lifecycle.hasStopped = true
+    this.lifecycle.stopPromise = this.runStop()
+    return this.lifecycle.stopPromise
   }
 
   async reload(): Promise<void> {
     await this.props.supervisor.reconcile()
+  }
+
+  private async runStop(): Promise<void> {
+    try {
+      await this.props.supervisor.stop()
+    } finally {
+      await this.stopGateway("shutdown")
+      this.props.eventLog.close()
+    }
   }
 
   private async stopGateway(context: string): Promise<void> {

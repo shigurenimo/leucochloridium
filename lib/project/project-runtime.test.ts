@@ -164,9 +164,35 @@ describe("LeucoProjectRuntime.start / stop", () => {
     })
 
     await runtime.start()
-    await runtime.stop()
+    await expect(runtime.stop()).rejects.toThrow(
+      "project runtime demo stop incomplete: connector broken: stop failed",
+    )
 
     expect(calls).toEqual(["codex.stop"])
+  })
+
+  it("reports a Codex shutdown failure after stopping every connector", async () => {
+    const calls: string[] = []
+    const connector = fakeConnector("slack")
+    connector.stop = async () => {
+      calls.push("connector.stop")
+    }
+    const runtime = buildRuntime({
+      codex: fakeCodex({
+        stop: async () => {
+          calls.push("codex.stop")
+          throw new Error("codex stop failed")
+        },
+      }),
+      connectors: [connector],
+    })
+
+    await runtime.start()
+    await expect(runtime.stop()).rejects.toThrow(
+      "project runtime demo stop incomplete: codex: codex stop failed",
+    )
+
+    expect(calls).toEqual(["connector.stop", "codex.stop"])
   })
 
   it("replaces only the requested connector and keeps the replacement for shutdown", async () => {

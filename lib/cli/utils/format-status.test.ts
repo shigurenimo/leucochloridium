@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { Project } from "@/config/config-schema"
 import { formatStatus } from "@/cli/utils/format-status"
 
@@ -19,9 +19,7 @@ const healthyProject: Project = {
 
 describe("formatStatus", () => {
   it("reports healthy projects and isolates invalid project entries", () => {
-    const clearStalePid = vi.fn()
     const daemon = {
-      clearStalePid,
       status: () => ({
         pid: 42,
         isRunning: true,
@@ -43,6 +41,24 @@ describe("formatStatus", () => {
     expect(status.text).toContain("projectIssues:")
     expect(status.text).toContain("project: broken")
     expect(status.text).toContain('error: "id: invalid UUID"')
-    expect(clearStalePid).not.toHaveBeenCalled()
+  })
+
+  it("reports stale status without requiring a destructive cleanup operation", () => {
+    const daemon = {
+      status: () => ({
+        pid: 42,
+        isRunning: false,
+        pidPath: "/tmp/leuco.pid",
+        logPath: "/tmp/leuco.log",
+      }),
+    }
+    const projectStore = {
+      listRunnable: () => ({ projects: [], issues: [] }),
+    }
+
+    const status = formatStatus(daemon, projectStore)
+
+    expect(status.isRunning).toBe(false)
+    expect(status.text).not.toContain("pid:")
   })
 })

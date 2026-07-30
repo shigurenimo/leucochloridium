@@ -63,6 +63,20 @@ describe("LeucoDaemon", () => {
     })
   })
 
+  it("keeps a live verified lease when process identity is temporarily unavailable", () => {
+    writeFileSync(paths.daemonPidPath(), leaseText(12345, "daemon"))
+    const processPort = new MemoryDaemonProcess({ liveLegacyPids: [12345] })
+
+    const status = new LeucoDaemon({ paths, processPort }).status()
+
+    expect(status).toMatchObject({
+      pid: 12345,
+      isRunning: true,
+      identityVerified: false,
+    })
+    expect(readFileSync(paths.daemonPidPath(), "utf8")).toBe(leaseText(12345, "daemon"))
+  })
+
   it("treats a reused pid with a different process identity as stale without signalling it", () => {
     writeFileSync(paths.daemonPidPath(), leaseText(12345, "old-process"))
     const processPort = new MemoryDaemonProcess({

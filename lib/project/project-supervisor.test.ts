@@ -723,6 +723,54 @@ describe("LeucoProjectSupervisor.reconcile", () => {
     expect(supervisor.listProjects()[0]?.isRunning).toBe(true)
   })
 
+  it("does not start a replacement until the previous runtime stops successfully", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"))
+    try {
+      const project = makeProject("demo")
+      let stopAttempts = 0
+      const previous = buildProjectRuntime(
+        "demo",
+        fakeCodex({
+          stop: async () => {
+            stopAttempts++
+            if (stopAttempts === 1) throw new Error("old runtime still alive")
+          },
+        }),
+      )
+      const replacementStart = vi.fn(async () => undefined)
+      const replacement = buildProjectRuntime("demo", fakeCodex({ start: replacementStart }))
+      const buildReplacement = vi.fn(() => replacement)
+      const supervisor = new LeucoProjectSupervisor({
+        buildProjectConnector: noConnectorBuild,
+        runtimes: [previous],
+        projectStore: fakeStore([project]),
+        buildProjectRuntime: buildReplacement,
+        onLog: () => {},
+      })
+      await supervisor.start()
+
+      await expect(supervisor.restartProject(project.id)).rejects.toThrow(
+        "project runtime demo stop incomplete: codex: old runtime still alive",
+      )
+      expect(buildReplacement).not.toHaveBeenCalled()
+
+      await supervisor.reconcile()
+      expect(stopAttempts).toBe(1)
+      expect(buildReplacement).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(stopAttempts).toBe(2)
+      expect(buildReplacement).toHaveBeenCalledTimes(1)
+      expect(replacementStart).toHaveBeenCalledTimes(1)
+
+      await supervisor.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("keeps runtimes that are still enabled and present", async () => {
     const stops: string[] = []
     const a = buildProjectRuntime(

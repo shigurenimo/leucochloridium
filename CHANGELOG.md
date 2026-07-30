@@ -2,6 +2,15 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.3 - 2026-07-30
+
+### Fixed
+
+- daemon readiness確認をglobal `fetch`から独立させ、失敗時にlog pathと原因を診断できるように修正。
+- process identityの一時的な取得失敗をdaemon停止と誤認せず、`leuco status`が稼働中または置換後のPID leaseを削除しないように修正。
+- project runtimeの停止失敗時は旧runtimeを保持して再試行し、停止完了前にreplacementを起動しないように修正。
+- `LeucoRuntime.stop()`後の`start()`を明示的に拒否し、gatewayだけが再起動する半起動状態を防止。
+
 ## 0.17.2 - 2026-07-29
 
 ### Fixed

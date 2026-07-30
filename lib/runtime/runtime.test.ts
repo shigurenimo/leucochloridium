@@ -282,4 +282,42 @@ describe("LeucoRuntime", () => {
     expect(config).toContain('env = { SAFE_KEY = "value\\r\\nnext" }')
     await runtime.stop()
   })
+
+  it("rejects start after stop instead of entering a half-started state", async () => {
+    const gatewayStart = vi.fn()
+    const gatewayStop = vi.fn(async () => undefined)
+    const runtime = LeucoRuntime.build({
+      env: {},
+      home,
+      eventLog: new LeucoEventLog(),
+      buildGateway: () => ({ start: gatewayStart, stop: gatewayStop }),
+    })
+
+    await runtime.start()
+    await runtime.stop()
+    await expect(runtime.start()).rejects.toThrow("LeucoRuntime cannot start after stop")
+
+    expect(gatewayStart).toHaveBeenCalledTimes(1)
+    expect(gatewayStop).toHaveBeenCalledTimes(1)
+  })
+
+  it("shares one shutdown across concurrent stop calls", async () => {
+    const gatewayStopGate = Promise.withResolvers<void>()
+    const gatewayStop = vi.fn(async () => gatewayStopGate.promise)
+    const runtime = LeucoRuntime.build({
+      env: {},
+      home,
+      eventLog: new LeucoEventLog(),
+      buildGateway: () => ({ start: vi.fn(), stop: gatewayStop }),
+    })
+    await runtime.start()
+
+    const first = runtime.stop()
+    const second = runtime.stop()
+
+    expect(second).toBe(first)
+    gatewayStopGate.resolve()
+    await Promise.all([first, second])
+    expect(gatewayStop).toHaveBeenCalledTimes(1)
+  })
 })

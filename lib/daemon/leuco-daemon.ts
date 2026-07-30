@@ -52,6 +52,11 @@ export type DaemonStopResult = {
   pid: number | null
 }
 
+type DaemonLeaseStatus = {
+  isRunning: boolean
+  identityVerified: boolean
+}
+
 /**
  * Machine-wide background daemon manager. State lives at
  * `~/.leuco/daemon/{pid,log}`; the daemon supervises every registered
@@ -137,12 +142,12 @@ export class LeucoDaemon {
     const pidPath = this.paths.daemonPidPath()
     const logPath = this.paths.daemonLogPath()
     const lease = readPidLease(pidPath)
-    const isRunning = lease !== null && this.isLeaseRunning(lease)
+    const leaseStatus = lease === null ? null : this.inspectLease(lease)
 
     return {
       pid: lease?.pid ?? null,
-      isRunning,
-      identityVerified: isRunning && lease !== null && lease.processIdentity !== null,
+      isRunning: leaseStatus?.isRunning ?? false,
+      identityVerified: leaseStatus?.identityVerified ?? false,
       pidPath,
       logPath,
     }
@@ -285,10 +290,6 @@ export class LeucoDaemon {
     return { signalled, pid: lease.pid }
   }
 
-  clearStalePid(): void {
-    this.withPidLeaseLock(() => removePidFile(this.paths.daemonPidPath()))
-  }
-
   private withPidLeaseLock<T>(fn: () => T): T {
     return withFileLock(
       {
@@ -300,10 +301,21 @@ export class LeucoDaemon {
   }
 
   private isLeaseRunning(lease: DaemonPidLease): boolean {
+    return this.inspectLease(lease).isRunning
+  }
+
+  private inspectLease(lease: DaemonPidLease): DaemonLeaseStatus {
     if (lease.processIdentity === null) {
-      return this.processPort.isAlive(lease.pid)
+      return { isRunning: this.processPort.isAlive(lease.pid), identityVerified: false }
     }
-    return this.isLeaseVerified(lease)
+
+    const processIdentity = this.processPort.getIdentity(lease.pid)
+    if (processIdentity === null) {
+      return { isRunning: this.processPort.isAlive(lease.pid), identityVerified: false }
+    }
+
+    const identityVerified = processIdentity === lease.processIdentity
+    return { isRunning: identityVerified, identityVerified }
   }
 
   private isLeaseVerified(lease: DaemonPidLease): boolean {
