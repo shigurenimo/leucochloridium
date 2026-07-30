@@ -181,6 +181,7 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
           text: message.text ?? null,
           ts: message.ts,
           threadTs: message.thread_ts ?? null,
+          replyCount: message.reply_count ?? null,
           subtype: message.subtype ?? null,
           botId: message.bot_id ?? null,
         },
@@ -372,6 +373,7 @@ const historyMessageSchema = z
     text: z.string().optional(),
     ts: z.string().optional(),
     thread_ts: z.string().optional(),
+    reply_count: z.number().int().nonnegative().optional(),
     subtype: z.string().optional(),
     bot_id: z.string().optional(),
   })

@@ -77,7 +77,9 @@ const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
  * forwards through `ctx.runTextTurn` and lets Codex decide whether to run
  * `leuco slack call` to surface a visible reply. Errors from
  * `runTextTurn` are caught so a single failing entry does not derail the
- * tick loop for the others.
+ * tick loop for the others. Cron decisions are persisted before dispatch:
+ * after a crash it is safer to miss one occurrence than to replay a turn
+ * whose external side effects may already have happened.
  */
 export class LeucoScheduleConnector implements Connector {
   readonly name: string
@@ -94,11 +96,10 @@ export class LeucoScheduleConnector implements Connector {
    * the durable marker and settings deletion failed. */
   private readonly deliveredOneShotRunAt = new Map<string, string>()
   /** How far (epoch ms, minute-aligned) the catch-up walk has scanned per
-   * entry in THIS process. Persisted `lastFiredAt` only advances on a
-   * successful turn, so without this in-memory floor a persistently failing
-   * cron would be re-fired by the catch-up branch on every tick until the
-   * 24h lookback expires. With it, a failed fire is retried once via
-   * catch-up and then left for the next daemon start. */
+   * entry in THIS process. If the durable decision write fails before
+   * dispatch, this floor lets the next catch-up reconsider that occurrence
+   * once without retrying it on every later tick. No turn starts until the
+   * durable marker succeeds. */
   private readonly catchUpWalkedTo = new Map<string, number>()
   private generation = 0
   private generationController: AbortController | null = null
@@ -291,8 +292,7 @@ export class LeucoScheduleConnector implements Connector {
     if (latest === null || this.isTickCancelled(tick)) return false
 
     this.lastFiredMinute.set(entry.id, minuteEpoch)
-    await this.fire(entry, tick, "cron")
-    return true
+    return await this.fire(entry, tick, "cron")
   }
 
   private async fire(
@@ -301,6 +301,17 @@ export class LeucoScheduleConnector implements Connector {
     kind: "cron" | "one-shot",
   ): Promise<boolean> {
     if (this.isTickCancelled(tick)) return false
+
+    if (kind === "cron") {
+      try {
+        this.props.store.markFired(entry.id, this.now().getTime())
+      } catch (err) {
+        tick.ctx.onLog(
+          `[${this.name}] entry ${entry.name} not fired because durable mark failed: ${errorMessage(err)}`,
+        )
+        return false
+      }
+    }
 
     tick.ctx.eventLog.append({
       ts: Date.now(),
@@ -324,16 +335,6 @@ export class LeucoScheduleConnector implements Connector {
         tick.ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
       }
       return false
-    }
-
-    if (kind === "cron") {
-      try {
-        this.props.store.markFired(entry.id, this.now().getTime())
-      } catch (err) {
-        tick.ctx.onLog(
-          `[${this.name}] entry ${entry.name} fired but failed to mark: ${errorMessage(err)}`,
-        )
-      }
     }
 
     return true

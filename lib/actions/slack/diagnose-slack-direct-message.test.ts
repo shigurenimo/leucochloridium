@@ -8,6 +8,7 @@ const INBOUND: SlackHistoryMessage = {
   text: "hello",
   ts: "100.0",
   threadTs: null,
+  replyCount: null,
   subtype: null,
   botId: null,
 }
@@ -135,5 +136,59 @@ describe("diagnoseSlackDirectMessage", () => {
 
     expect(result.status).toBe("turn_failed")
     expect(result.error).toBe("selected model is at capacity")
+  })
+
+  it("does not reuse an old terminal event for the latest turn", () => {
+    const events: LeucoEvent[] = [
+      {
+        ts: 1,
+        type: "slack.event",
+        project: "demo",
+        connector: "slack",
+        event: {
+          kind: "message",
+          channel: "D1",
+          user: "U1",
+          rawText: "hello",
+          text: "hello",
+          threadTs: "100.0",
+          ts: "100.0",
+          isThreadRoot: true,
+          mentioned: true,
+          source: "message",
+        },
+      },
+      {
+        ts: 2,
+        type: "turn.start",
+        project: "demo",
+        threadKey: "slack:D1:100.0",
+        input: "old",
+      },
+      {
+        ts: 3,
+        type: "turn.complete",
+        project: "demo",
+        threadKey: "slack:D1:100.0",
+        reply: "old reply",
+      },
+      {
+        ts: 4,
+        type: "turn.start",
+        project: "demo",
+        threadKey: "slack:D1:100.0",
+        input: "hello",
+      },
+    ]
+    const result = diagnoseSlackDirectMessage({
+      conversationId: "D1",
+      botUserId: "UBOT",
+      messages: [INBOUND],
+      events,
+      eventLogAvailable: true,
+    })
+
+    expect(result.status).toBe("turn_in_progress")
+    expect(result.turn).toBe("in_progress")
   })
 })

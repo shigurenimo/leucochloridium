@@ -67,6 +67,7 @@ export type SlackHistoryMessage = {
   text: string | null
   ts: string
   threadTs: string | null
+  replyCount: number | null
   subtype: string | null
   botId: string | null
 }

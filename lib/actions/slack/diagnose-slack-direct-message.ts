@@ -212,13 +212,14 @@ const findTurnState = (
     )
     .sort((a, b) => a.ts - b.ts)
 
-  if (!matching.some((event) => event.type === "turn.start")) {
+  const latestStartIndex = matching.findLastIndex((event) => event.type === "turn.start")
+  if (latestStartIndex === -1) {
     return { status: "not_started", error: null }
   }
 
-  const terminal = matching.findLast(
-    (event) => event.type === "turn.complete" || event.type === "turn.error",
-  )
+  const terminal = matching
+    .slice(latestStartIndex + 1)
+    .findLast((event) => event.type === "turn.complete" || event.type === "turn.error")
   if (terminal === undefined) return { status: "in_progress", error: null }
   if (terminal.type === "turn.error") return { status: "failed", error: terminal.error }
   return { status: "completed", error: null }

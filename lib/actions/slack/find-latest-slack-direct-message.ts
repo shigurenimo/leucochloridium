@@ -2,6 +2,7 @@ import type {
   LeucoSlackWebClient,
   SlackHistoryMessage,
 } from "@/connectors/slack/leuco-slack-web-client"
+import { fetchSlackDirectMessageHistory } from "@/actions/slack/fetch-slack-direct-message-history"
 
 export type LatestSlackDirectMessage = {
   conversationId: string
@@ -19,8 +20,8 @@ const CONVERSATION_PAGE_LIMIT = 200
 
 /**
  * Find the newest human-authored message across every DM visible to the
- * project's Slack token. `conversations.list` is cursor-paginated; each
- * history page is fetched once and retained for the existing diagnosis step.
+ * project's Slack token. `conversations.list` is cursor-paginated; thread
+ * roots with replies are expanded before choosing the latest message.
  */
 export const findLatestSlackDirectMessage = async (
   props: Props,
@@ -47,19 +48,18 @@ export const findLatestSlackDirectMessage = async (
     // and firing one request per conversation at once would create a burst
     // large enough to trigger Slack's per-method rate limits.
     for (const conversation of conversations) {
-      const history = await props.client.conversationsHistory({
-        channel: conversation.id,
-        oldest: null,
-        inclusive: null,
+      const messages = await fetchSlackDirectMessageHistory({
+        client: props.client,
+        conversationId: conversation.id,
         limit: props.historyLimit,
       })
-      const message = findLatestHumanMessage(history.messages, props.botUserId)
+      const message = findLatestHumanMessage(messages, props.botUserId)
       if (message === null) continue
       if (latest !== null && slackTs(message.ts) <= slackTs(latest.message.ts)) continue
       latest = {
         conversationId: conversation.id,
         message,
-        messages: history.messages,
+        messages,
       }
     }
 

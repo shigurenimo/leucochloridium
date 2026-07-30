@@ -378,6 +378,47 @@ describe("LeucoScheduleConnector lifecycle isolation", () => {
 })
 
 describe("LeucoScheduleConnector failure containment", () => {
+  it("waits for a durable cron marker before dispatching the occurrence", async () => {
+    const entry = cronEntry({ runAt: "30 9 * * *" })
+    const store = makeStore([entry])
+    store.lastFiredAt[entry.id] = new Date(2026, 4, 6, 9, 30).getTime()
+    const markerFailures = { remaining: 1 }
+    const clock = { nowMs: new Date(2026, 4, 7, 9, 30).getTime() }
+    const guardedStore: ScheduleStorePort = {
+      listEntries: () => store.listEntries(),
+      removeEntry: (entryId) => store.removeEntry(entryId),
+      getLastFiredAt: (entryId) => store.getLastFiredAt(entryId),
+      markFired: (entryId, firedAt) => {
+        if (markerFailures.remaining > 0) {
+          markerFailures.remaining -= 1
+          throw new Error("disk unavailable")
+        }
+        store.markFired(entryId, firedAt)
+      },
+    }
+    const connector = buildConnector(guardedStore, () => new Date(clock.nowMs))
+    const { ctx, captured } = makeCtx()
+
+    await connector.start(ctx)
+    await connector.waitForStartupTick()
+
+    expect(captured.turns).toEqual([])
+    expect(captured.logs).toContain(
+      "[cron] entry every-minute not fired because durable mark failed: disk unavailable",
+    )
+
+    clock.nowMs += 60_000
+    await connector.tickOnce()
+
+    expect(captured.turns).toHaveLength(1)
+    expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
+
+    clock.nowMs += 60_000
+    await connector.tickOnce()
+
+    expect(captured.turns).toHaveLength(1)
+  })
+
   it("retains a failed one-shot and retries with exponential backoff until success", async () => {
     const entry = isoEntry()
     const store = makeStore([entry])
@@ -532,7 +573,7 @@ describe("LeucoScheduleConnector failure containment", () => {
     ).toBe(true)
   })
 
-  it("retries a failed cron turn once via catch-up, then stops until restart", async () => {
+  it("does not replay a failed cron turn after persisting its fire decision", async () => {
     const entry = cronEntry({ runAt: "30 9 * * *" })
     const store = makeStore([entry])
     store.lastFiredAt[entry.id] = new Date(2026, 4, 6, 10, 0).getTime()
@@ -558,15 +599,13 @@ describe("LeucoScheduleConnector failure containment", () => {
 
     now = new Date(2026, 4, 7, 9, 31)
     await connector.tickOnce()
-    // one catch-up retry for the failed 9:30 fire
-    expect(captured.turns).toHaveLength(2)
+    expect(captured.turns).toHaveLength(1)
 
     now = new Date(2026, 4, 7, 9, 32)
     await connector.tickOnce()
     now = new Date(2026, 4, 7, 9, 33)
     await connector.tickOnce()
-    // no retry storm: the walked floor stops the catch-up from re-firing
-    expect(captured.turns).toHaveLength(2)
+    expect(captured.turns).toHaveLength(1)
   })
 
   it("contains store errors thrown inside the catch-up path", async () => {

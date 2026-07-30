@@ -42,11 +42,18 @@ export class LeucoProjectStateStore {
   }
 
   clearCodexThreads(projectId: string): ProjectState {
-    return this.update(projectId, (state) => ({
-      ...state,
-      codexThreadId: null,
-      codexThreadIds: {},
-    }))
+    const path = this.paths.projectStatePath(projectId)
+
+    return withFileLock({ lockPath: `${path}.lock` }, () => {
+      const state = this.loadForReset(projectId)
+      const updated = projectStateSchema.parse({
+        ...state,
+        codexThreadId: null,
+        codexThreadIds: {},
+      })
+      atomicWriteJson({ path, data: updated, mode: 0o600 })
+      return updated
+    })
   }
 
   markScheduleEntryFired(projectId: string, entryId: string, firedAt: number): void {
@@ -76,6 +83,22 @@ export class LeucoProjectStateStore {
       atomicWriteJson({ path, data: updated, mode: 0o600 })
       return updated
     })
+  }
+
+  private loadForReset(projectId: string): ProjectState {
+    const path = this.paths.projectStatePath(projectId)
+    if (!existsSync(path)) return copyState(EMPTY_PROJECT_STATE)
+
+    const text = readFileSync(path, "utf8")
+    let json: unknown
+    try {
+      json = JSON.parse(text)
+    } catch {
+      return copyState(EMPTY_PROJECT_STATE)
+    }
+
+    const parsed = projectStateSchema.safeParse(json)
+    return parsed.success ? parsed.data : copyState(EMPTY_PROJECT_STATE)
   }
 }
 

@@ -74,6 +74,8 @@ type CountRow = { n: number }
 type MaxRow = { max: number }
 type VersionRow = { user_version: number }
 type ColumnRow = { name: string }
+type PageCountRow = { page_count: number }
+type PageSizeRow = { page_size: number }
 
 /** Conservative whitelist for column names interpolated into SQL. */
 const COLUMN_NAME_RE = /^[a-z_][a-z0-9_]*$/
@@ -459,8 +461,8 @@ export class SqliteEventLog<E, const I extends ReadonlyArray<string> = readonly 
   }
 
   private byteSize(): number {
-    const pageCount = this.db.prepare<{ n: number }, []>("PRAGMA page_count").get()?.n ?? 0
-    const pageSize = this.db.prepare<{ n: number }, []>("PRAGMA page_size").get()?.n ?? 0
+    const pageCount = this.db.prepare<PageCountRow, []>("PRAGMA page_count").get()?.page_count ?? 0
+    const pageSize = this.db.prepare<PageSizeRow, []>("PRAGMA page_size").get()?.page_size ?? 0
 
     return pageCount * pageSize
   }

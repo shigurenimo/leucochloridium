@@ -1,6 +1,6 @@
 {
   "name": "leuco",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "description": "Self-hosted multi-project gateway that runs the Codex app-server as a Slack bot. Bun-only.",
   "keywords": [
     "bot",

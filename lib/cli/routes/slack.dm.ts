@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception"
 import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { z } from "zod"
 import { diagnoseSlackDirectMessage } from "@/actions/slack/diagnose-slack-direct-message"
+import { fetchSlackDirectMessageHistory } from "@/actions/slack/fetch-slack-direct-message-history"
 import { findLatestSlackDirectMessage } from "@/actions/slack/find-latest-slack-direct-message"
 import { resolveSlackTokens } from "@/actions/slack/slack-call"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
@@ -80,14 +81,11 @@ export const slackDmHandler = factory.createHandlers(async (c) => {
         })
       : {
           conversationId: parsedConversationId.data,
-          messages: (
-            await client.conversationsHistory({
-              channel: parsedConversationId.data,
-              oldest: null,
-              inclusive: null,
-              limit,
-            })
-          ).messages,
+          messages: await fetchSlackDirectMessageHistory({
+            client,
+            conversationId: parsedConversationId.data,
+            limit,
+          }),
         }
 
   const eventLogPath = c.var.daemon.getEventLogPath()

@@ -31,28 +31,18 @@ export const resetProjectSession = async (
   }
 
   const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
-  const previous = stateStore.load(project.id)
-  const previousThreadId = previous.codexThreadId
-  const previousThreadCount = Object.keys(previous.codexThreadIds).length
 
   const daemonRunning = c.var.daemon.status().isRunning
   if (!daemonRunning || !project.enabled) {
     stateStore.clearCodexThreads(project.id)
-    const wasEmpty = previousThreadId === null && previousThreadCount === 0
-    const tail = wasEmpty
-      ? " (was already empty)"
-      : ` (cleared ${previousThreadCount + (previousThreadId === null ? 0 : 1)} thread ids)`
     const activation = project.enabled
       ? " (daemon stopped; takes effect on next start)"
       : " (project disabled; takes effect on enable)"
-    return c.text(`reset session for "${projectName}"${tail}${activation}`)
+    return c.text(`reset session for "${projectName}"${activation}`)
   }
 
   const reset = await new DaemonControlClient().resetProjectSession(project.id)
   if (!reset) throw new HTTPException(503, { message: "daemon control is unavailable" })
 
-  const clearedCount = previousThreadCount + (previousThreadId === null ? 0 : 1)
-  const previousMsg = clearedCount === 0 ? "" : ` cleared=${clearedCount}`
-
-  return c.text(`reset session for "${projectName}"${previousMsg}`)
+  return c.text(`reset session for "${projectName}"`)
 }

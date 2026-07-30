@@ -2,6 +2,15 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.4 - 2026-07-30
+
+### Fixed
+
+- cronのfire decisionをturn実行前に永続化し、保存失敗やCodex turn失敗後に同じoccurrenceを重複実行しないように修正。
+- 壊れたproject `state.json`をsession resetでcanonicalな空stateへ置換し、CLIから復旧できるように修正。
+- 実行中のSQLite Event Logでバイト上限を正しく計測し、長時間稼働中も古いeventを削除するように修正。
+- Slack DM診断でthread replyを含む最新human messageを選び、最新turnより古いterminal eventを誤用しないように修正。
+
 ## 0.17.3 - 2026-07-30
 
 ### Fixed

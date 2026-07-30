@@ -123,6 +123,49 @@ describe("LeucoFetchSlackWebClient", () => {
     })
   })
 
+  it("normalizes Slack thread reply counts from conversations.history", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            messages: [
+              {
+                user: "U1",
+                text: "root",
+                ts: "100.0",
+                reply_count: 2,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    )
+    const client = new LeucoFetchSlackWebClient({
+      botToken: "xoxb-test",
+      fetchFn: fetchMock,
+    })
+
+    const history = await client.conversationsHistory({
+      channel: "D1",
+      oldest: null,
+      inclusive: null,
+      limit: 50,
+    })
+
+    expect(history.messages).toEqual([
+      {
+        user: "U1",
+        text: "root",
+        ts: "100.0",
+        threadTs: null,
+        replyCount: 2,
+        subtype: null,
+        botId: null,
+      },
+    ])
+  })
+
   it("retries once after a 429 honoring retry-after", async () => {
     const responses = [
       new Response("rate limited", { status: 429, headers: { "Retry-After": "0" } }),

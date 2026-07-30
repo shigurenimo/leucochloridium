@@ -8,6 +8,7 @@ const message = (ts: string, props: Partial<SlackHistoryMessage> = {}): SlackHis
   text: "hello",
   ts,
   threadTs: null,
+  replyCount: null,
   subtype: null,
   botId: null,
   ...props,
@@ -85,6 +86,45 @@ describe("findLatestSlackDirectMessage", () => {
     })
 
     expect(result).toBeNull()
+  })
+
+  it("selects a human thread reply newer than every top-level DM", async () => {
+    const root = message("100.0", { replyCount: 1 })
+    const reply = message("300.0", { threadTs: "100.0" })
+    const client = new LeucoMemorySlackWebClient({
+      conversationsList: {
+        channels: [
+          { id: "D1", isIm: true },
+          { id: "D2", isIm: true },
+        ],
+        nextCursor: null,
+      },
+      conversationsHistory: ({ channel }) => ({
+        messages: channel === "D1" ? [root] : [message("200.0")],
+      }),
+      conversationsReplies: { messages: [root, reply] },
+    })
+
+    const result = await findLatestSlackDirectMessage({
+      client,
+      botUserId: "UBOT",
+      historyLimit: 50,
+    })
+
+    expect(result).toMatchObject({
+      conversationId: "D1",
+      message: { ts: "300.0", threadTs: "100.0" },
+    })
+    expect(result?.messages).toEqual([root, reply])
+    expect(client.calls.conversationsReplies).toEqual([
+      {
+        channel: "D1",
+        ts: "100.0",
+        oldest: null,
+        inclusive: null,
+        limit: 50,
+      },
+    ])
   })
 
   it("stops when Slack repeats a pagination cursor", async () => {

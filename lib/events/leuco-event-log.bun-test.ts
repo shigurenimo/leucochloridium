@@ -142,6 +142,25 @@ describe("LeucoEventLog", () => {
     eventLog.close()
   })
 
+  test("trims SQLite rows when the live database exceeds its byte cap", () => {
+    const eventLog = new SqliteEventLog<{ type: string; body: string }>({
+      path: join(dir, "bounded.db"),
+      maxBytes: 64 * 1024,
+      targetBytes: 32 * 1024,
+    })
+
+    for (let index = 0; index < 500; index++) {
+      const inserted = eventLog.insert({
+        ts: index,
+        event: { type: "large", body: "x".repeat(2_048) },
+      })
+      expect(inserted).not.toBeInstanceOf(Error)
+    }
+
+    expect(eventLog.query({ limit: 1_000 }).length).toBeLessThan(500)
+    eventLog.close()
+  })
+
   test("bounds large turn and notification payloads on disk", () => {
     const path = join(dir, "events.db")
     const eventLog = new LeucoEventLog({ eventLogPath: path })
