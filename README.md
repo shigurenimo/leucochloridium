@@ -273,7 +273,7 @@ final answerはSlackへ自動投稿されません。通常返信を含むすべ
 Codexがproject scope付きの`leuco slack call`を明示的に実行した場合だけ行われます。
 エラー時の定型文は合成しません。
 
-A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
+A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout or command-output overflow sends `turn/interrupt` for only the affected Codex turn, so concurrent Slack threads keep running. Leuco replaces the project's shared Codex child only when turn interruption fails, thread setup stalls, the protocol transport becomes unusable, or the Codex process exits. Persisted thread ids survive that fallback recovery. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
 
 Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
 
@@ -340,7 +340,7 @@ leuco config set turnQueueMaxItems 64
 leuco config set turnQueueMaxBytes 262144
 ```
 
-`turnIdleTimeoutMs`はCodexから通知がない状態の上限、`turnTimeoutMs`は1ターン全体の上限です。先に上限へ達した場合は停止したCodex childを置き換えます。`turnConcurrency`はスレッド別モードで同時実行できる異なる会話の上限です。`turnQueueMaxItems`と`turnQueueMaxBytes`は待機中の処理量を制限し、過負荷時はメモリを増やし続けず記録付きで拒否します。変更後はLeucoを再起動してください。
+`turnIdleTimeoutMs`はCodexから通知がない状態の上限、`turnTimeoutMs`は1ターン全体の上限です。先に上限へ達した場合は対象ターンだけを中断し、中断できないときに限ってCodex childを置き換えます。`turnConcurrency`はスレッド別モードで同時実行できる異なる会話の上限です。`turnQueueMaxItems`と`turnQueueMaxBytes`は待機中の処理量を制限し、過負荷時はメモリを増やし続けず記録付きで拒否します。変更後はLeucoを再起動してください。
 
 ## Troubleshooting
 

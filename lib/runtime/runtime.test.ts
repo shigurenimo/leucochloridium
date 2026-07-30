@@ -47,6 +47,7 @@ const fakeCodex = (onStart: () => void): CodexClientPort => ({
   startThread: async () => ({ thread: { id: "thread" } }),
   resumeThread: async (params) => ({ thread: { id: params.threadId } }),
   runTextTurn: async (_threadId, text) => text,
+  interruptTurn: async () => ({ status: "not-active" }),
 })
 
 describe("LeucoRuntime", () => {

@@ -4,6 +4,9 @@ export const DEFAULT_TURN_TIMEOUT_MS = 10 * 60 * 1000
 /** Default period without Codex notifications before a turn is considered stalled. */
 export const DEFAULT_TURN_IDLE_TIMEOUT_MS = 2 * 60 * 1000
 
+/** Time allowed for an acknowledged turn/interrupt to produce turn/completed. */
+export const DEFAULT_TURN_INTERRUPT_GRACE_MS = 15 * 1000
+
 /** Maximum number of different conversation threads that may run at once per project. */
 export const DEFAULT_TURN_CONCURRENCY = 4
 
