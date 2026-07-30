@@ -259,7 +259,9 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const form = new FormData()
-    form.append("file", new Blob([args.content]), args.filename)
+    const content = new ArrayBuffer(args.content.byteLength)
+    new Uint8Array(content).set(args.content)
+    form.append("file", new Blob([content]), args.filename)
 
     try {
       const fetchFn = this.props.fetchFn ?? globalThis.fetch
