@@ -5,6 +5,7 @@ import {
   type SlackAuthTest,
   type SlackConversationInfo,
   type SlackConversationList,
+  type SlackFileUpload,
   type SlackHistoryMessage,
   type SlackHistorySlice,
   type SlackSearchMessages,
@@ -162,6 +163,27 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     return { userId: parsed.data.user_id ?? null }
   }
 
+  async filesUpload(args: SlackFileUpload): Promise<{ fileId: string }> {
+    const prepared = await this.callOk("files.getUploadURLExternal", {
+      filename: args.filename,
+      length: args.content.byteLength,
+    })
+    const upload = slackExternalUploadSchema.safeParse(prepared)
+    if (!upload.success) throw new Error("slack file upload: invalid prepare response")
+
+    await this.postExternalFile(upload.data.upload_url, args)
+
+    const body: Record<string, unknown> = {
+      files: [{ id: upload.data.file_id, title: args.title }],
+      channel_id: args.channelId,
+    }
+    if (args.threadTs !== null) body.thread_ts = args.threadTs
+    if (args.initialComment !== null) body.initial_comment = args.initialComment
+    await this.callOk("files.completeUploadExternal", body)
+
+    return { fileId: upload.data.file_id }
+  }
+
   async apiCall(method: string, body: Record<string, unknown>): Promise<unknown> {
     return FORM_ENCODED_METHODS.has(method)
       ? await this.postForm(method, body)
@@ -230,6 +252,32 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       },
       body: params.toString(),
     })
+  }
+
+  private async postExternalFile(uploadUrl: string, args: SlackFileUpload): Promise<void> {
+    const timeoutMs = this.props.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const form = new FormData()
+    form.append("file", new Blob([args.content]), args.filename)
+
+    try {
+      const fetchFn = this.props.fetchFn ?? globalThis.fetch
+      const response = await fetchFn(uploadUrl, {
+        method: "POST",
+        body: form,
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`slack file upload http ${response.status}`)
+      await response.body?.cancel().catch(() => undefined)
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`slack file upload timed out after ${timeoutMs}ms`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** POST once; on a 429 honor Retry-After and retry exactly once. No general
@@ -343,6 +391,7 @@ const FORM_ENCODED_METHODS = new Set([
   "conversations.info",
   "conversations.list",
   "conversations.replies",
+  "files.getUploadURLExternal",
   "search.messages",
 ])
 
@@ -356,6 +405,11 @@ const authTestSchema = z
     user_id: z.string().optional(),
   })
   .passthrough()
+
+const slackExternalUploadSchema = z.object({
+  upload_url: z.string(),
+  file_id: z.string(),
+})
 
 const conversationsInfoSchema = z
   .object({

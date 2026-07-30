@@ -3,6 +3,7 @@ import {
   type SlackAuthTest,
   type SlackConversationInfo,
   type SlackConversationList,
+  type SlackFileUpload,
   type SlackHistorySlice,
   type SlackSearchMessages,
 } from "@/connectors/slack/leuco-slack-web-client"
@@ -45,6 +46,7 @@ export type LeucoMemorySlackWebClientProps = {
     }
   >
   authTest?: SlackMemoryResponder<SlackAuthTest, void>
+  filesUpload?: SlackMemoryResponder<{ fileId: string }, SlackFileUpload>
   apiCall?: SlackMemoryResponder<unknown, { method: string; body: Record<string, unknown> }>
 }
 
@@ -80,6 +82,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
       count: number | null
     }>
     authTest: Array<void>
+    filesUpload: SlackFileUpload[]
     apiCall: Array<{ method: string; body: Record<string, unknown> }>
   }
 
@@ -95,6 +98,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
       conversationsHistory: [],
       searchMessages: [],
       authTest: [],
+      filesUpload: [],
       apiCall: [],
     }
   }
@@ -175,6 +179,12 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
     this.calls.authTest.push(undefined as void)
 
     return this.invoke(this.props.authTest, undefined as void, { userId: null })
+  }
+
+  async filesUpload(args: SlackFileUpload): Promise<{ fileId: string }> {
+    this.calls.filesUpload.push(args)
+
+    return this.invoke(this.props.filesUpload, args, { fileId: "F-memory" })
   }
 
   async apiCall(method: string, body: Record<string, unknown>): Promise<unknown> {

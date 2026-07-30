@@ -14,6 +14,26 @@ describe("parseCliInvocation", () => {
     expect(parseCliInvocation(["update"]).path).toBe("/update")
   })
 
+  it("expands slack upload-file", () => {
+    const parsed = parseCliInvocation([
+      "slack",
+      "upload-file",
+      "--channel",
+      "C1",
+      "--file",
+      "/tmp/banner.png",
+      "--thread-ts",
+      "100.0",
+    ])
+
+    expect(parsed.path).toBe("/slack/upload-file")
+    expect(parsed.parsed.flags).toEqual({
+      channel: "C1",
+      file: "/tmp/banner.png",
+      "thread-ts": "100.0",
+    })
+  })
+
   it("expands /projects/<leaf>", () => {
     expect(parseCliInvocation(["projects", "list"]).path).toBe("/projects/list")
     expect(parseCliInvocation(["projects", "add"]).path).toBe("/projects/add")

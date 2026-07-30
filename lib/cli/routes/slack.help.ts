@@ -1,6 +1,9 @@
 export const help = `leuco slack / forward Slack Web API calls using a project's stored token
 
 usage / leuco slack call <method> [--project <p>] [--body '<json>'] [--connector <c>]
+        leuco slack upload-file --channel <id> --file <path> [--thread-ts <ts>]
+                                [--title <title>] [--comment <text>]
+                                [--project <p>] [--connector <c>]
         leuco slack dm [conversation-id] [--project <p>] [--limit <N>] [--json]
 
 options:
@@ -9,6 +12,7 @@ options:
   --project / project whose stored bot token is used; optional inside a project runtime
               Codex session and required otherwise
   --connector / pick a specific Slack connector when the project has multiple
+  upload-file / upload a local file with the project's stored Slack bot token
 
 DM diagnosis:
   leuco slack dm / automatically inspect the newest human DM and compare it

@@ -237,6 +237,14 @@ leuco slack call chat.postMessage \
   --project <p> \
   --body '{"channel":"C0123","text":"hello"}'
 
+leuco slack upload-file \
+  --project <p> \
+  --connector slack \
+  --channel C0123 \
+  --thread-ts 100.0 \
+  --file ./banner.png \
+  --title "banner.png"
+
 leuco projects <p> connectors <c> download-file \
   --file F0123 \
   --out ./download.bin

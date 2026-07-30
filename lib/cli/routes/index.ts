@@ -42,6 +42,7 @@ import { runHandler } from "@/cli/routes/run"
 import { slackCallHandler } from "@/cli/routes/slack.call"
 import { slackDmHandler } from "@/cli/routes/slack.dm"
 import { help as slackHelp } from "@/cli/routes/slack.help"
+import { slackUploadFileHandler } from "@/cli/routes/slack.upload-file"
 import { startHandler } from "@/cli/routes/start"
 import { statusHandler } from "@/cli/routes/status"
 import { stopHandler } from "@/cli/routes/stop"
@@ -123,6 +124,7 @@ export const app = base
   .command("/slack", ...groupHelpHandler(slackHelp))
   .command("/slack/call", ...slackCallHandler)
   .command("/slack/dm", ...slackDmHandler)
+  .command("/slack/upload-file", ...slackUploadFileHandler)
 
   .command("/config", ...configListHandler)
   .command("/config/list", ...configListHandler)

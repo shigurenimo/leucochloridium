@@ -51,6 +51,8 @@ export abstract class LeucoSlackWebClient {
 
   abstract authTest(): Promise<SlackAuthTest>
 
+  abstract filesUpload(args: SlackFileUpload): Promise<{ fileId: string }>
+
   abstract apiCall(method: string, body: Record<string, unknown>): Promise<unknown>
 }
 
@@ -96,4 +98,13 @@ export type SlackSearchMessageMatch = {
 
 export type SlackSearchMessages = {
   matches: ReadonlyArray<SlackSearchMessageMatch>
+}
+
+export type SlackFileUpload = {
+  content: Uint8Array
+  filename: string
+  title: string
+  channelId: string
+  threadTs: string | null
+  initialComment: string | null
 }

@@ -123,6 +123,87 @@ describe("LeucoFetchSlackWebClient", () => {
     })
   })
 
+  it("posts files.getUploadURLExternal as form-encoded data through apiCall", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({ ok: true, upload_url: "https://upload.example", file_id: "F1" }),
+          {
+            status: 200,
+          },
+        ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
+    await client.apiCall("files.getUploadURLExternal", {
+      filename: "banner.png",
+      length: 841_529,
+    })
+
+    const [url, init] = onlyFetchCall(fetchMock)
+    expect(url).toBe("https://slack.com/api/files.getUploadURLExternal")
+    expectFormBody(init, {
+      filename: "banner.png",
+      length: "841529",
+    })
+  })
+
+  it("uploads and shares a local file through Slack external upload", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/files.getUploadURLExternal")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            upload_url: "https://files.slack.com/upload/test",
+            file_id: "F1",
+          }),
+          { status: 200 },
+        )
+      }
+      if (String(url) === "https://files.slack.com/upload/test") {
+        return new Response("OK", { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    const client = new LeucoFetchSlackWebClient({
+      botToken: "xoxp-test",
+      fetchFn: fetchMock,
+    })
+
+    await expect(
+      client.filesUpload({
+        content: new TextEncoder().encode("png"),
+        filename: "banner.png",
+        title: "Banner",
+        channelId: "C1",
+        threadTs: "100.0",
+        initialComment: "done",
+      }),
+    ).resolves.toEqual({ fileId: "F1" })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const prepareCall = fetchMock.mock.calls[0]
+    const uploadCall = fetchMock.mock.calls[1]
+    const completeCall = fetchMock.mock.calls[2]
+    if (prepareCall === undefined || uploadCall === undefined || completeCall === undefined) {
+      throw new Error("expected three fetch calls")
+    }
+    expectFormBody(prepareCall[1] ?? {}, {
+      filename: "banner.png",
+      length: "3",
+    })
+    expect(String(uploadCall[0])).toBe("https://files.slack.com/upload/test")
+    expect(uploadCall[1]?.body).toBeInstanceOf(FormData)
+    expect(String(completeCall[0])).toBe("https://slack.com/api/files.completeUploadExternal")
+    expect(JSON.parse(String(completeCall[1]?.body))).toEqual({
+      files: [{ id: "F1", title: "Banner" }],
+      channel_id: "C1",
+      thread_ts: "100.0",
+      initial_comment: "done",
+    })
+  })
+
   it("normalizes Slack thread reply counts from conversations.history", async () => {
     const fetchMock = vi.fn(
       async () =>
