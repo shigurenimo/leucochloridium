@@ -235,7 +235,11 @@ const pollDaemonReadiness = async (
 
     const waitMs = Math.min(settings.pollIntervalMs, deadline - settings.readiness.now())
     if (waitMs <= 0) {
-      return readinessTimeoutError(settings, daemon.getLogPath())
+      return readinessTimeoutError(
+        settings,
+        daemon.getLogPath(),
+        settings.readiness.getDiagnostic(),
+      )
     }
     await settings.readiness.sleep(waitMs)
   }
@@ -261,9 +265,14 @@ const daemonExitedError = (pid: number, logPath: string): Error => {
   )
 }
 
-const readinessTimeoutError = (settings: ReadinessSettings, logPath: string): Error => {
+const readinessTimeoutError = (
+  settings: ReadinessSettings,
+  logPath: string,
+  diagnostic: string | null,
+): Error => {
+  const detail = diagnostic === null ? "" : `; last probe: ${diagnostic}`
   return new Error(
-    `daemon gateway did not become ready at http://127.0.0.1:${settings.port}/health within ${settings.timeoutMs}ms; log: ${logPath}`,
+    `daemon gateway did not become ready at http://127.0.0.1:${settings.port}/health within ${settings.timeoutMs}ms${detail}; log: ${logPath}`,
   )
 }
 

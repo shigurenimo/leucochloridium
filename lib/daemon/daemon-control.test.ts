@@ -216,6 +216,29 @@ describe("daemon control", () => {
     expect(result).toMatchObject({ mode: "detached", pid: 202 })
   })
 
+  it("includes the final probe failure in a readiness timeout", async () => {
+    const calls: string[] = []
+    const readiness = new MemoryDaemonReadiness({
+      replies: [new Error("connection refused"), new Error("connection refused")],
+    })
+
+    const result = await startDaemon({
+      daemon: fakeDaemon(calls),
+      platform: "linux",
+      binPath: "/bin/leuco",
+      env: {},
+      readiness,
+      readinessTimeoutMs: 20,
+      readinessPollIntervalMs: 10,
+    })
+
+    expect(result).toEqual(
+      new Error(
+        "daemon gateway did not become ready at http://127.0.0.1:7331/health within 20ms; last probe: connection refused; log: /tmp/leuco.log",
+      ),
+    )
+  })
+
   it("gracefully stops before kickstarting and verifying a managed restart", async () => {
     const calls: string[] = []
     const daemon = fakeDaemon(calls, true)
