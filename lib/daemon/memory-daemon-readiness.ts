@@ -12,6 +12,7 @@ export class MemoryDaemonReadiness extends DaemonReadinessPort {
   readonly sleeps: number[] = []
   private readonly replies: ProbeReply[]
   private clockMs = 0
+  private diagnostic: string | null = null
 
   constructor(private readonly props: Props = {}) {
     super()
@@ -21,8 +22,16 @@ export class MemoryDaemonReadiness extends DaemonReadinessPort {
   async getHealthyPid(props: GatewayProbeProps): Promise<number | null> {
     this.probes.push(props)
     const reply = this.replies.shift() ?? null
-    if (reply instanceof Error) throw reply
+    if (reply instanceof Error) {
+      this.diagnostic = reply.message
+      throw reply
+    }
+    this.diagnostic = null
     return reply
+  }
+
+  getDiagnostic(): string | null {
+    return this.diagnostic
   }
 
   now(): number {
