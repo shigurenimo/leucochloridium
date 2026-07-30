@@ -21,9 +21,13 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("/tmp/demo")
     expect(out).toContain("The local `leuco` CLI controls the same runtime")
     expect(out).toContain("`leuco --help`")
+    expect(out).toContain("locked to project `demo` by `LEUCO_PROJECT_ID`")
+    expect(out).toContain("Never unset or override it")
+    expect(out).toContain("Leuco operations are CLI-only")
+    expect(out).toContain("Do not look for or call a built-in Leuco MCP server")
   })
 
-  it("omits Slack instructions when no Slack channel is connected", () => {
+  it("omits Slack instructions when no Slack connector is connected", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
     expect(out).not.toContain("## Slack runtime")
     expect(out).not.toContain("slack_call")
@@ -32,25 +36,25 @@ describe("LeucoSystemPromptBuilder", () => {
   it("gives the exact project instruction path and keeps it narrowly scoped", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
 
-    expect(out).toContain("## Tenant AGENTS.md")
+    expect(out).toContain("## Project AGENTS.md")
     expect(out).toContain("`/tmp/leuco/demo/.codex/AGENTS.md`")
-    expect(out).toContain("tenant-specific durable instructions and memory file")
+    expect(out).toContain("project-specific durable instructions and memory file")
     expect(out).toContain("repository instructions")
     expect(out).not.toContain("preserve unrelated user-authored memory")
     expect(out).not.toContain("update your own rules or memory")
   })
 
-  it("omits tenant instruction guidance when CODEX_HOME is unavailable", () => {
+  it("omits project instruction guidance when CODEX_HOME is unavailable", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
       codexHome: null,
     }).build()
 
-    expect(out).not.toContain("Tenant AGENTS.md")
+    expect(out).not.toContain("Project AGENTS.md")
     expect(out).not.toContain("AGENTS.md")
   })
 
-  it("includes each channel's bot user id when known", () => {
+  it("includes each connector's bot user id when known", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
       identities: [
@@ -59,10 +63,10 @@ describe("LeucoSystemPromptBuilder", () => {
       ],
     }).build()
 
-    expect(out).toContain("channel-config `general`")
+    expect(out).toContain("connector-config `general`")
     expect(out).toContain("`U01ABC`")
     expect(out).toContain("<@U01ABC>")
-    expect(out).toContain("channel-config `ops`")
+    expect(out).toContain("connector-config `ops`")
     expect(out).toContain("not yet known")
   })
 
@@ -75,9 +79,15 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("## Slack runtime")
     expect(out).toContain("Never reply to your own user id")
     expect(out).toContain("inspect enough of its current history")
-    expect(out).toContain("`slack_call` MCP tool")
+    expect(out).toContain("`leuco slack call <method>")
+    expect(out).toContain("Do not pass `--project`")
+    expect(out).toContain("`leuco connectors <connector-config> download-file")
     expect(out).toContain("`thread_ts`")
-    expect(out).toContain("Finishing without `slack_call` stays silent")
+    expect(out).toContain("final answer is internal Codex transport output")
+    expect(out).toContain("never posted to Slack by Leuco")
+    expect(out).toContain("Every Slack write requires an explicit Leuco Slack command")
+    expect(out).toContain("`leuco slack upload-file")
+    expect(out).toContain("When silence is intentional, do not run a Slack write command")
     expect(out).toContain("The primary agent owns Slack writes")
   })
 
@@ -101,6 +111,26 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("## Local command hygiene")
     expect(out).toContain("Keep shell output bounded")
     expect(out).toContain("`rg -m`")
+    expect(out).toContain("Do not run machine-wide Leuco administration commands")
+  })
+
+  it("requires the scoped CLI for every Slack write", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      identities: [{ name: "general", type: "slack", botUserId: "U01ABC" }],
+    }).build()
+
+    expect(out).toContain("## Slack runtime")
+    expect(out).toContain("`leuco slack call <method>")
+    expect(out).not.toContain("slack_call")
+    expect(out).toContain("`thread_ts`")
+    expect(out).toContain("final answer is internal Codex transport output")
+    expect(out).toContain("never posted to Slack by Leuco")
+    expect(out).toContain("Every Slack write requires an explicit Leuco Slack command")
+    expect(out).toContain("`leuco slack upload-file")
+    expect(out).toContain("--connector <connector-config>")
+    expect(out).toContain("Slack CLI output is bounded")
+    expect(out).toContain("small `limit`")
   })
 
   it("appends per-agent instructions after a separator", () => {
@@ -153,13 +183,13 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out.split("\n---\n").length).toBe(2)
   })
 
-  it("omits schedule instructions when no schedule channel is registered", () => {
+  it("omits schedule instructions when no schedule connector is registered", () => {
     const out = new LeucoSystemPromptBuilder(baseProps).build()
     expect(out).not.toContain("## Scheduled prompts")
     expect(out).not.toContain("schedule_create")
   })
 
-  it("lists schedule channels and the schedule_* MCP tools when present", () => {
+  it("lists schedule connectors and their scoped CLI commands when present", () => {
     const out = new LeucoSystemPromptBuilder({
       ...baseProps,
       identities: [
@@ -170,13 +200,14 @@ describe("LeucoSystemPromptBuilder", () => {
 
     expect(out).toContain("## Scheduled prompts")
     expect(out).toContain("`cron`")
-    expect(out).toContain("`schedule_create`")
-    expect(out).toContain("`schedule_list`")
-    expect(out).toContain("`schedule_delete`")
-    expect(out).toContain("<schedule channel=")
+    expect(out).toContain("`leuco connectors <connector-config> schedules add")
+    expect(out).toContain("`leuco connectors <connector-config> schedules list`")
+    expect(out).toContain("`leuco connectors <connector-config> schedules remove")
+    expect(out).not.toContain("schedule_create")
+    expect(out).toContain("<schedule connector=")
     expect(out).toContain("Do not send an external message")
     expect(out).toContain("avoid duplicate messages")
-    // schedule channels do not appear under the Slack identity heading
+    // schedule connectors do not appear under the Slack identity heading
     const slackIdx = out.indexOf("## Slack runtime")
     const scheduleIdx = out.indexOf("## Scheduled prompts")
     const cronInSlackBlock = out.slice(slackIdx, scheduleIdx).includes("`cron`")

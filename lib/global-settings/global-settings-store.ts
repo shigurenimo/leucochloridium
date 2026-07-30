@@ -8,7 +8,7 @@ import {
 } from "@/global-settings/global-settings-schema"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-type Props = {
+export type LeucoGlobalSettingsStoreProps = {
   paths?: LeucoPaths
 }
 
@@ -23,7 +23,7 @@ type Props = {
 export class LeucoGlobalSettingsStore {
   private readonly paths: LeucoPaths
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoGlobalSettingsStoreProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
     Object.freeze(this)
   }
@@ -36,6 +36,26 @@ export class LeucoGlobalSettingsStore {
       const raw = readFileSync(path, "utf8")
       const json: unknown = JSON.parse(raw)
       return globalSettingsSchema.parse(json)
+    } catch (err) {
+      if (err instanceof Error) return err
+      return new Error(String(err))
+    }
+  }
+
+  /**
+   * Parse daemon-wide scalar settings without letting one malformed project
+   * prevent every other project from starting. The project store validates
+   * entries independently; this view must never be saved because its
+   * `projects` array is intentionally empty.
+   */
+  loadRuntimeSettings(): GlobalSettings | Error {
+    const path = this.paths.settingsPath()
+    if (!existsSync(path)) return globalSettingsSchema.parse(undefined)
+
+    try {
+      const raw = readFileSync(path, "utf8")
+      const json: unknown = JSON.parse(raw)
+      return globalSettingsSchema.parse(withoutProjects(json))
     } catch (err) {
       if (err instanceof Error) return err
       return new Error(String(err))
@@ -110,4 +130,9 @@ const coerceCliValue = (raw: string): string | boolean | number => {
   if (raw.trim().length > 0 && Number.isFinite(asNumber)) return asNumber
 
   return raw
+}
+
+const withoutProjects = (value: unknown): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value
+  return { ...Object.fromEntries(Object.entries(value)), projects: [] }
 }

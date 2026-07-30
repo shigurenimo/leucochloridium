@@ -1,6 +1,11 @@
 import type { ThreadStartResult } from "@/engine/codex/codex-schemas"
 import type { ThreadResumeParams, ThreadStartParams } from "@/engine/codex/codex-types"
 
+export type CodexTurnOptions = {
+  cwd?: string
+  onActivity?: (method: string) => void
+}
+
 /**
  * Structural contract the engine relies on. `LeucoCodexClient` implements this
  * by shape; tests can substitute any matching object without touching the
@@ -15,5 +20,9 @@ export type CodexClientPort = {
    * (caller should fall back to `startThread`), or to `Error` for any other
    * failure (rule: backend functions return `T | Error` instead of throwing). */
   resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null | Error>
-  runTextTurn(threadId: string, text: string, cwd?: string): Promise<string | Error>
+  runTextTurn(
+    threadId: string,
+    text: string,
+    options?: string | CodexTurnOptions,
+  ): Promise<string | Error>
 }

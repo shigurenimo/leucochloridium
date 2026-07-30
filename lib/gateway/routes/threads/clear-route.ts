@@ -18,7 +18,7 @@ export const threadsClearHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: "threadKey required in body" })
   }
 
-  const cleared = c.var.deps.engine.clearThread(parsed.data.threadKey)
+  const cleared = c.var.deps.control.clearThread(parsed.data.threadKey)
   if (!cleared) {
     throw new HTTPException(404, {
       message: `thread not found: ${parsed.data.threadKey}`,

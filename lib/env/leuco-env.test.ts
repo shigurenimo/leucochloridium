@@ -118,7 +118,7 @@ describe("LeucoEnv.parseCli", () => {
     expect(result.LEUCO_PORT).toBe(9743)
   })
 
-  it("defaults LEUCO_PORT to 7331 when unset (gateway is required for MCP)", () => {
+  it("defaults the loopback daemon gateway to port 7331", () => {
     const result = new LeucoEnv({ env: {} }).parseCli()
     expect(result).not.toBeInstanceOf(Error)
     if (result instanceof Error) return
@@ -129,5 +129,15 @@ describe("LeucoEnv.parseCli", () => {
     const env: NodeJS.ProcessEnv = { LEUCO_PORT: "-1" }
     const result = new LeucoEnv({ env }).parseCli()
     expect(result).toBeInstanceOf(Error)
+  })
+
+  it("accepts a UUID project scope for runtime Codex children", () => {
+    const env: NodeJS.ProcessEnv = {
+      LEUCO_PROJECT_ID: "45ec9e03-5da4-4566-aa82-143cc38b8df5",
+    }
+    const result = new LeucoEnv({ env }).parseCli()
+    expect(result).not.toBeInstanceOf(Error)
+    if (result instanceof Error) return
+    expect(result.LEUCO_PROJECT_ID).toBe(env.LEUCO_PROJECT_ID)
   })
 })

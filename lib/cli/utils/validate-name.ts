@@ -1,7 +1,7 @@
 const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
 
 /**
- * Check that a project / agent / channel name matches `^[a-z][a-z0-9_-]*$`,
+ * Check that a project or connector name matches `^[a-z][a-z0-9_-]*$`,
  * the same shape `safeName` enforces in the zod schema. Throws when the name
  * is rejected so callers do not need to branch on the return value.
  */

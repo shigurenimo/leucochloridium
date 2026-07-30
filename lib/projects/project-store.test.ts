@@ -6,11 +6,12 @@ import type { Project, ScheduleEntry } from "@/config/config-schema"
 import { PromptPreset } from "@/prompts/presets"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStateStore } from "@/projects/project-state-store"
 
 const DEMO_ID = "00000000-0000-4000-8000-000000000000"
 
 const sampleProject = (overrides: Partial<Project> = {}): Project => ({
-  version: 2,
+  version: 3,
   id: DEMO_ID,
   name: "demo",
   path: "/tmp/demo",
@@ -19,7 +20,7 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
   model: null,
   developerInstructions: null,
   prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
-  channels: [
+  connectors: [
     {
       id: "11111111-1111-4111-8111-111111111111",
       name: "slack",
@@ -36,8 +37,8 @@ const sampleProject = (overrides: Partial<Project> = {}): Project => ({
     },
   ],
   mcpServers: {},
-  state: { codexThreadId: null, scheduleLastFiredAt: {} },
   ...overrides,
+  conversationScope: overrides.conversationScope ?? "project",
 })
 
 describe("LeucoProjectStore", () => {
@@ -71,7 +72,7 @@ describe("LeucoProjectStore", () => {
     expect(mode).toBe(0o600)
   })
 
-  it("save() creates the project UUID directory for .codex/ and state.json", () => {
+  it("save() creates the project UUID directory used by CODEX_HOME", () => {
     store.save(sampleProject())
     const projectDir = join(home, ".leuco", "projects", DEMO_ID)
     expect(statSync(projectDir).isDirectory()).toBe(true)
@@ -79,7 +80,7 @@ describe("LeucoProjectStore", () => {
 
   it("round-trips data through save -> load by id", () => {
     const project = sampleProject({
-      channels: [
+      connectors: [
         {
           id: "22222222-2222-4222-8222-222222222222",
           name: "slack",
@@ -112,6 +113,56 @@ describe("LeucoProjectStore", () => {
     expect(result.map((p) => p.name).sort()).toEqual(["alpha", "beta"])
   })
 
+  it("listRunnable isolates an invalid project without rewriting settings", () => {
+    const settingsPath = store.getPaths().settingsPath()
+    mkdirSync(join(home, ".leuco"), { recursive: true })
+    const rawSettings = {
+      keepAwake: true,
+      projects: [
+        sampleProject(),
+        {
+          ...sampleProject({
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "broken",
+          }),
+          connectors: [{ type: "unknown-connector" }],
+        },
+      ],
+    }
+    writeFileSync(settingsPath, JSON.stringify(rawSettings))
+
+    const runnable = store.listRunnable()
+
+    expect(runnable.projects.map((project) => project.name)).toEqual(["demo"])
+    expect(runnable.issues).toHaveLength(1)
+    expect(runnable.issues[0]).toMatchObject({ index: 1, project: "broken" })
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(rawSettings)
+    expect(() => store.list()).toThrow()
+  })
+
+  it("listRunnable does not bypass duplicate project id isolation", () => {
+    const settingsPath = store.getPaths().settingsPath()
+    mkdirSync(join(home, ".leuco"), { recursive: true })
+    const rawSettings = {
+      projects: [
+        sampleProject(),
+        sampleProject({ name: "duplicate", path: "/tmp/duplicate" }),
+        { ...sampleProject({ name: "broken" }), id: "not-a-uuid" },
+      ],
+    }
+    writeFileSync(settingsPath, JSON.stringify(rawSettings))
+
+    const runnable = store.listRunnable()
+
+    expect(runnable.projects.map((project) => project.name)).toEqual(["demo"])
+    expect(runnable.issues).toHaveLength(2)
+    expect(runnable.issues[0]).toMatchObject({
+      project: "duplicate",
+      error: `duplicate project id: ${DEMO_ID}`,
+    })
+    expect(runnable.issues[1]).toMatchObject({ project: "broken" })
+  })
+
   it("save() updates an existing project by id", () => {
     store.save(sampleProject({ name: "before" }))
     store.save(sampleProject({ name: "after" }))
@@ -119,6 +170,34 @@ describe("LeucoProjectStore", () => {
     const list = store.list()
     expect(list).toHaveLength(1)
     expect(list[0]!.name).toBe("after")
+  })
+
+  it("save() cannot overwrite daemon-owned runtime state", () => {
+    const stale = sampleProject({ name: "before" })
+    store.save(stale)
+    const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
+    stateStore.setCodexThreadId(DEMO_ID, "thread-new")
+    stateStore.markScheduleEntryFired(DEMO_ID, "schedule", 123)
+
+    store.save({ ...stale, name: "after" })
+
+    expect(store.load(DEMO_ID).name).toBe("after")
+    expect(stateStore.load(DEMO_ID)).toMatchObject({
+      codexThreadId: "thread-new",
+      scheduleLastFiredAt: { schedule: 123 },
+    })
+  })
+
+  it("updateProject mutates configuration against the latest on-disk project", () => {
+    store.save(sampleProject({ name: "latest" }))
+
+    const updated = store.updateProject(DEMO_ID, (project) => ({
+      ...project,
+      enabled: false,
+    }))
+
+    expect(updated.name).toBe("latest")
+    expect(store.load(DEMO_ID).enabled).toBe(false)
   })
 
   it("resolveByName() returns a single match", () => {
@@ -172,73 +251,30 @@ describe("LeucoProjectStore", () => {
     expect(store.list()).toEqual([])
   })
 
-  it("list() migrates legacy per-project settings.json into unified file", () => {
-    const paths = store.getPaths()
-    const projectDir = paths.projectDir(DEMO_ID)
-    mkdirSync(projectDir, { recursive: true })
-    writeFileSync(
-      join(projectDir, "settings.json"),
-      JSON.stringify({
-        version: 2,
-        id: DEMO_ID,
-        name: "legacy",
-        path: "/tmp/legacy",
-        enabled: true,
-        useCommonInstructions: true,
-        prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK, PromptPreset.STYLE_SLACK],
-        channels: [],
-        mcpServers: {},
-      }),
-    )
-
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    expect(result[0]!.name).toBe("legacy")
-
-    const perProjectFile = join(projectDir, "settings.json")
-    expect(() => statSync(perProjectFile)).toThrow()
-
-    const unified = JSON.parse(readFileSync(paths.settingsPath(), "utf8"))
-    expect(unified.projects).toHaveLength(1)
-  })
-
-  it("list() migrates legacy state.json into the project's state field", () => {
+  it.each([
+    ["a missing version", undefined],
+    ["v1", 1],
+    ["a future version", 4],
+  ])("list() rejects %s without rewriting unified settings", (_label, version) => {
     store.save(sampleProject())
-    const paths = store.getPaths()
-    const statePath = paths.projectStatePath(DEMO_ID)
-    writeFileSync(
-      statePath,
-      JSON.stringify({ codexThreadId: "thread-123", scheduleLastFiredAt: { e1: 1000 } }),
-    )
+    const settingsPath = store.getPaths().settingsPath()
+    const project = {
+      ...sampleProject(),
+      version,
+      futureOnlyField: { mustNotBeDropped: true },
+    }
+    if (version === undefined) delete (project as { version?: unknown }).version
+    const text = `${JSON.stringify({ projects: [project] }, null, 2)}\n`
+    writeFileSync(settingsPath, text)
 
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    expect(result[0]!.state.codexThreadId).toBe("thread-123")
-    expect(result[0]!.state.scheduleLastFiredAt).toEqual({ e1: 1000 })
-    expect(() => statSync(statePath)).toThrow()
-  })
-
-  it("list() migrates a legacy name-keyed directory to id-keyed", () => {
-    const paths = store.getPaths()
-    const legacyDir = join(paths.projectsRoot(), "legacy-demo")
-    mkdirSync(legacyDir, { recursive: true })
-    writeFileSync(
-      join(legacyDir, "settings.json"),
-      JSON.stringify({ name: "legacy-demo", path: "/tmp/legacy-demo", agents: [] }),
-    )
-
-    const result = store.list()
-    expect(result).toHaveLength(1)
-    const project = result[0]!
-    expect(project.name).toBe("legacy-demo")
-    expect(typeof project.id).toBe("string")
-    expect(project.id.length).toBeGreaterThan(0)
+    expect(() => store.list()).toThrow()
+    expect(readFileSync(settingsPath, "utf8")).toBe(text)
   })
 
   describe("schedule entries", () => {
     const projectWithScheduleChannel = (): Project =>
       sampleProject({
-        channels: [
+        connectors: [
           {
             id: "33333333-3333-4333-8333-333333333333",
             name: "cron",
@@ -265,37 +301,37 @@ describe("LeucoProjectStore", () => {
     it("addScheduleEntry appends a new entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries.map((e) => e.name)).toEqual(["morning-standup"])
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries.map((e) => e.name)).toEqual(["morning-standup"])
     })
 
     it("addScheduleEntry rejects duplicate name", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "cron",
+          connectorName: "cron",
           entry: sampleEntry({ id: "55555555-5555-4555-8555-555555555555" }),
         }),
       ).toThrow()
     })
 
-    it("addScheduleEntry rejects when channel is not schedule", () => {
+    it("addScheduleEntry rejects when connector is not schedule", () => {
       store.save(sampleProject())
       expect(() =>
         store.addScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "slack",
+          connectorName: "slack",
           entry: sampleEntry(),
         }),
       ).toThrow()
@@ -304,30 +340,33 @@ describe("LeucoProjectStore", () => {
     it("removeScheduleEntry by id removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
+      const stateStore = new LeucoProjectStateStore({ paths: store.getPaths() })
+      stateStore.markScheduleEntryFired(DEMO_ID, "44444444-4444-4444-8444-444444444444", 123)
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryIdOrName: "44444444-4444-4444-8444-444444444444",
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries).toEqual([])
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries).toEqual([])
+      expect(stateStore.load(DEMO_ID).scheduleLastFiredAt).toEqual({})
     })
 
     it("removeScheduleEntry by name removes the entry", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.removeScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryIdOrName: "morning-standup",
       })
     })
@@ -336,7 +375,7 @@ describe("LeucoProjectStore", () => {
       expect(() =>
         store.removeScheduleEntry({
           projectId: DEMO_ID,
-          channelName: "cron",
+          connectorName: "cron",
           entryIdOrName: "nope",
         }),
       ).toThrow()
@@ -345,38 +384,38 @@ describe("LeucoProjectStore", () => {
     it("updateScheduleEntry patches one entry by id", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { enabled: false },
       })
 
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries[0]!.enabled).toBe(false)
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries[0]!.enabled).toBe(false)
     })
 
     it("updateScheduleEntry preserves id even if patch tries to override", () => {
       store.addScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entry: sampleEntry(),
       })
       store.updateScheduleEntry({
         projectId: DEMO_ID,
-        channelName: "cron",
+        connectorName: "cron",
         entryId: "44444444-4444-4444-8444-444444444444",
         patch: { id: "evil" } as Partial<ScheduleEntry>,
       })
       const project = store.load(DEMO_ID)
-      const channel = project.channels.find((c) => c.name === "cron")!
-      if (channel.type !== "schedule") throw new Error("expected schedule channel")
-      expect(channel.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
+      const connector = project.connectors.find((c) => c.name === "cron")!
+      if (connector.type !== "schedule") throw new Error("expected schedule connector")
+      expect(connector.entries[0]!.id).toBe("44444444-4444-4444-8444-444444444444")
     })
   })
 })

@@ -1,6 +1,6 @@
 import { factory } from "@/gateway/gateway-factory"
 import { healthHandler } from "@/gateway/routes/health-route"
-import { mcpHandler } from "@/gateway/routes/mcp-route"
+import { controlRoutes } from "@/gateway/routes/control/routes"
 import { statusHandler } from "@/gateway/routes/status-route"
 import { threadsRoutes } from "@/gateway/routes/threads/routes"
 
@@ -12,5 +12,5 @@ export const gatewayRoutes = factory
   .createApp()
   .get("/health", ...healthHandler)
   .get("/status", ...statusHandler)
-  .all("/mcp/:project", ...mcpHandler)
+  .route("/", controlRoutes)
   .route("/", threadsRoutes)

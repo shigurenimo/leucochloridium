@@ -6,14 +6,13 @@ commands:
   start / start daemon in background
   run / run in foreground
   stop / stop daemon
-  kill / kill daemon and all codex processes
   restart / stop + start
   status / daemon + project state
   logs / print log (-f to follow)
   events / query event log (--preset, --type, --project)
-  update / install latest version
-  doctor / diagnose daemon, projects, and channels
-  projects / manage projects and channels
+  doctor / diagnose daemon, projects, and connectors
+  update / update to the latest published version
+  projects / manage projects and connectors
   config / machine-wide settings
   boot / macOS LaunchAgent
   slack / forward Slack API calls

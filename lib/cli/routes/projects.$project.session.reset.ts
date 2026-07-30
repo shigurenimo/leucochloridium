@@ -6,9 +6,10 @@ const help = `leuco projects <p> session reset / start a fresh Codex session
 
 usage / leuco projects <p> session reset [--force]
 
-Clears the Codex thread id so the next turn starts a fresh Codex session.
+Clears every shared and thread-scoped Codex thread id so the next turn starts
+a fresh Codex session.
 Codex memories, auth, Slack tokens, project settings, and repository files are kept.
-If the project is enabled, the tenant is restarted so the in-memory thread id is
+If the project is enabled, its runtime is restarted so the in-memory thread id is
 also discarded.
 
 options:

@@ -1,6 +1,7 @@
 import { HTTPException } from "hono/http-exception"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { daemonSupervisionWarning, restartDaemon } from "@/daemon/daemon-control"
 import { cliEnvSchema } from "@/env/cli-env-schema"
 
 const help = `leuco restart / stop then start
@@ -21,17 +22,21 @@ export const restartHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(400, { message: lines.join("\n") })
   }
 
-  const daemon = c.var.daemon
-  const lines: string[] = []
-
-  const stopped = daemon.stop()
-  if (stopped.stopped) {
-    lines.push(`stopped (pid ${stopped.pid})`)
+  const result = await restartDaemon({
+    daemon: c.var.daemon,
+    binPath: c.var.binPath,
+    env: process.env,
+  })
+  if (result instanceof Error) {
+    throw new HTTPException(500, { message: result.message })
   }
 
-  const result = daemon.start({ binPath: c.var.binPath, env: process.env })
-
-  lines.push(`leuco: started (pid ${result.pid})`)
-  lines.push(`log: ${result.logPath}`)
+  const restarted =
+    result.mode === "launchd"
+      ? `leuco: restarted via launchd (${result.label})`
+      : `leuco: restarted (pid ${result.pid})`
+  const lines = [restarted, `log: ${result.logPath}`]
+  const warning = daemonSupervisionWarning(result)
+  if (warning !== null) lines.push(warning)
   return c.text(lines.join("\n"))
 })

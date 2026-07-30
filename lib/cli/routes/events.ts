@@ -1,26 +1,38 @@
 import { existsSync } from "node:fs"
 import { HTTPException } from "hono/http-exception"
-import { FunnelLogSqliteSink } from "@interactive-inc/claude-funnel/logger"
 import { factory } from "@/cli/cli-factory"
-import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
+import { resolveProjectFilter } from "@/cli/utils/lookup-config"
+import { flagBool, flagString, readCliBody } from "@/cli/utils/read-cli-body"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoEvent } from "@/events/leuco-event-types"
+import { LeucoProjectStore } from "@/projects/project-store"
 
 const PRESETS: Record<string, { types: string[]; description: string }> = {
   turns: {
-    types: ["turn.start", "turn.complete", "turn.error"],
-    description: "codex turn lifecycle (start / complete / error)",
+    types: ["turn.queued", "turn.rejected", "turn.start", "turn.complete", "turn.error"],
+    description: "codex turn lifecycle (queued / rejected / start / complete / error)",
   },
   errors: {
-    types: ["turn.error", "engine.reconcile.failed", "slack.error"],
-    description: "turn errors, reconcile failures, slack auth/connection errors",
+    types: [
+      "turn.error",
+      "turn.rejected",
+      "codex.recovery",
+      "supervisor.reconcile.failed",
+      "slack.error",
+    ],
+    description: "turn errors, codex recovery, reconcile failures, slack errors",
   },
   lifecycle: {
-    types: ["tenant.started", "tenant.stopped", "engine.reconcile", "slack.connection"],
-    description: "tenant start/stop, engine reconcile, slack connection transitions",
+    types: ["runtime.started", "runtime.stopped", "supervisor.reconcile", "slack.connection"],
+    description: "project runtime start/stop, engine reconcile, slack connection transitions",
   },
   schedule: {
     types: ["schedule.fired"],
     description: "cron and one-shot schedule firings",
+  },
+  recovery: {
+    types: ["codex.recovery"],
+    description: "codex child recovery attempts and outcomes",
   },
 }
 
@@ -44,9 +56,11 @@ presets (--preset <name>):
 ${presetList}
 
 event types:
-  log  tenant.started  tenant.stopped  engine.reconcile
-  engine.reconcile.failed  slack.event  slack.connection  slack.error
-  turn.start  turn.complete  turn.error  codex.notification  schedule.fired
+  log  runtime.started  runtime.stopped  supervisor.reconcile
+  supervisor.reconcile.failed  slack.event  slack.connection  slack.error
+  turn.queued  turn.rejected  turn.start  turn.complete  turn.error
+  codex.recovery
+  codex.notification  schedule.fired
 
 output / one line per event, newest first. --json outputs raw JSON objects.
 
@@ -69,31 +83,52 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "turn.start") {
-    return `${time}  TURN   ${event.project}  start  ${event.threadKey}  ${event.input.slice(0, 80)}`
+    const metrics = `wait=${event.queueWaitMs ?? "?"}ms batch=${event.batchSize ?? 1}`
+    return `${time}  TURN   ${event.project}  start   ${event.threadKey}  ${metrics}  ${event.input.slice(0, 80)}`
+  }
+
+  if (event.type === "turn.queued") {
+    const bytes = event.queueBytes === undefined ? "" : ` bytes=${event.queueBytes}`
+    return `${time}  TURN   ${event.project}  queued    ${event.threadKey}  depth=${event.queueDepth}${bytes}`
+  }
+
+  if (event.type === "turn.rejected") {
+    return `${time}  TURN   ${event.project}  rejected  ${event.threadKey}  pending=${event.queueDepth} bytes=${event.queueBytes} input=${event.inputBytes}  ${event.reason}`
   }
 
   if (event.type === "turn.complete") {
-    return `${time}  TURN   ${event.project}  done   ${event.threadKey}  ${event.reply.slice(0, 80)}`
+    const metrics = `duration=${event.durationMs ?? "?"}ms wait=${event.queueWaitMs ?? "?"}ms`
+    return `${time}  TURN   ${event.project}  done    ${event.threadKey}  ${metrics}  ${event.reply.slice(0, 80)}`
   }
 
   if (event.type === "turn.error") {
-    return `${time}  TURN   ${event.project}  error  ${event.threadKey}  ${event.error}`
+    const metrics = `duration=${event.durationMs ?? "?"}ms wait=${event.queueWaitMs ?? "?"}ms`
+    return `${time}  TURN   ${event.project}  error   ${event.threadKey}  ${metrics}  ${event.error}`
   }
 
-  if (event.type === "tenant.started" || event.type === "tenant.stopped") {
+  if (event.type === "codex.recovery") {
+    const error = event.error === null ? "" : `  error=${event.error}`
+    return `${time}  RECOVER  ${event.project}  ${event.status}  duration=${event.durationMs}ms  reason=${event.reason}${error}`
+  }
+
+  if (event.type === "runtime.started" || event.type === "runtime.stopped") {
     return `${time}  ${event.type.padEnd(20)}  ${event.project}`
   }
 
-  if (event.type === "engine.reconcile") {
-    return `${time}  engine.reconcile     added=[${event.added.join(",")}] removed=[${event.removed.join(",")}]`
+  if (event.type === "supervisor.reconcile") {
+    return `${time}  supervisor.reconcile     added=[${event.added.join(",")}] removed=[${event.removed.join(",")}]`
   }
 
-  if (event.type === "engine.reconcile.failed") {
-    return `${time}  engine.reconcile.failed  ${event.reason}`
+  if (event.type === "supervisor.reconcile.failed") {
+    const retry =
+      event.attempt === undefined
+        ? ""
+        : `  project=${event.project ?? "unknown"} attempt=${event.attempt} retryAt=${event.retryAt ?? "unknown"}`
+    return `${time}  supervisor.reconcile.failed  ${event.reason}${retry}`
   }
 
   if (event.type === "schedule.fired") {
-    return `${time}  schedule.fired       ${event.project}  ${event.entryName}  ${event.kind}`
+    return `${time}  schedule.fired       ${event.project}  ${event.connector}  ${event.entryName}  ${event.kind}`
   }
 
   if (event.type === "codex.notification") {
@@ -101,16 +136,16 @@ const formatEvent = (event: LeucoEvent): string => {
   }
 
   if (event.type === "slack.event") {
-    return `${time}  slack.event          ${event.project}  ${event.channel}`
+    return `${time}  slack.event          ${event.project}  ${event.connector}  ${event.event.channel}`
   }
 
   if (event.type === "slack.connection") {
-    return `${time}  slack.connection     ${event.project}  ${event.channel}  ${event.status}`
+    return `${time}  slack.connection     ${event.project}  ${event.connector}  ${event.status}`
   }
 
   if (event.type === "slack.error") {
     const errSuffix = event.error !== null ? `  err=${event.error}` : ""
-    return `${time}  slack.error          ${event.project}  ${event.channel}  ${event.level}  ${event.action}: ${event.message}${errSuffix}`
+    return `${time}  slack.error          ${event.project}  ${event.connector}  ${event.level}  ${event.action}: ${event.message}${errSuffix}`
   }
 
   return `${time}  unknown`
@@ -126,16 +161,14 @@ export const eventsHandler = factory.createHandlers(async (c) => {
     throw new HTTPException(404, { message: `no event log yet: ${eventLogPath}` })
   }
 
-  const sink = new FunnelLogSqliteSink<LeucoEvent, ["project"]>({
-    path: eventLogPath,
-    indexes: ["project"],
-    extractIndexes: (event) => ({
-      project: "project" in event && typeof event.project === "string" ? event.project : null,
-    }),
-  })
+  const eventLog = new LeucoEventLog({ eventLogPath })
 
   const limit = parseLimitFlag(body.flags.limit)
-  const projectFilter = typeof body.flags.project === "string" ? body.flags.project : undefined
+  const projectFilter = resolveProjectFilter(
+    c,
+    new LeucoProjectStore(),
+    flagString(body.flags.project),
+  )
   const asJson = flagBool(body.flags.json)
 
   const presetName = typeof body.flags.preset === "string" ? body.flags.preset : null
@@ -150,28 +183,28 @@ export const eventsHandler = factory.createHandlers(async (c) => {
   const presetTypes = presetName !== null ? PRESETS[presetName]!.types : null
   const filterTypes = typeFlag !== null ? [typeFlag] : presetTypes
 
-  let allEntries: Awaited<ReturnType<typeof sink.query>>
+  let allEntries: ReadonlyArray<{ seq: number; ts: number; event: LeucoEvent }>
   try {
     allEntries =
       filterTypes !== null
         ? filterTypes.flatMap((type) =>
-            sink.query({
+            eventLog.query({
               type,
-              where: projectFilter ? { project: projectFilter } : undefined,
+              ...(projectFilter === null ? {} : { project: projectFilter }),
               limit,
               order: "desc",
             }),
           )
-        : sink.query({
-            where: projectFilter ? { project: projectFilter } : undefined,
+        : eventLog.query({
+            ...(projectFilter === null ? {} : { project: projectFilter }),
             limit,
             order: "desc",
           })
   } finally {
-    sink.close()
+    eventLog.close()
   }
 
-  const sorted = allEntries.sort((a, b) => b.seq - a.seq).slice(0, limit)
+  const sorted = [...allEntries].sort((a, b) => b.seq - a.seq).slice(0, limit)
 
   if (sorted.length === 0) {
     return c.text("no events")

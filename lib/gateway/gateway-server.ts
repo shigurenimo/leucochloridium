@@ -1,48 +1,43 @@
 import type { Server } from "bun"
+import type { DaemonControl } from "@/control/daemon-control"
 import { buildGatewayApp } from "@/gateway/build-gateway-app"
-import type { LeucoEngine } from "@/engine/engine"
 
-type Props = {
-  engine: LeucoEngine
+export type LeucoGatewayServerProps = {
+  control: DaemonControl
   port: number
-  mcpTokenForProject: (projectId: string) => string | null
   selfPid?: number
   onLog?: (line: string) => void
 }
 
 /**
  * In-process HTTP gateway: runs `Bun.serve` against the Hono app built by
- * `buildGatewayApp`. Started by the engine on every run — the MCP route at
- * `/mcp/:project` depends on it.
+ * `buildGatewayApp`. Started by the engine on every run for loopback daemon
+ * health, status, and thread control.
  */
 export class LeucoGatewayServer {
-  private readonly engine: LeucoEngine
+  private readonly control: DaemonControl
   private readonly port: number
   private readonly selfPid: number
   private readonly onLog: ((line: string) => void) | undefined
-  private readonly mcpTokenForProject: (projectId: string) => string | null
-  private server: Server | null = null
+  private server: Server<undefined> | null = null
 
-  constructor(props: Props) {
-    this.engine = props.engine
+  constructor(props: LeucoGatewayServerProps) {
+    this.control = props.control
     this.port = props.port
     this.selfPid = props.selfPid ?? process.pid
     this.onLog = props.onLog
-    this.mcpTokenForProject = props.mcpTokenForProject
   }
 
-  start(): Server {
+  start(): Server<undefined> {
     if (this.server) return this.server
 
     const app = buildGatewayApp({
       selfPid: this.selfPid,
-      engine: this.engine,
-      mcpTokenForProject: this.mcpTokenForProject,
+      control: this.control,
     })
 
-    // Bind to loopback only. The MCP route is bearer-protected, but `/status`,
-    // `/health`, and `/threads` are not — exposing them on every interface
-    // would leak pid + thread ids to anyone on the LAN.
+    // Bind to loopback only. Exposing these routes on every interface would
+    // leak pid and thread ids to anyone on the LAN.
     this.server = Bun.serve({
       port: this.port,
       hostname: "127.0.0.1",
@@ -59,9 +54,7 @@ export class LeucoGatewayServer {
 
   /**
    * Gracefully drain the server before resolving. `Bun.Server.stop()` returns
-   * a Promise that settles once existing requests finish; awaiting it lets
-   * in-flight MCP tool calls complete before the engine tears down their
-   * backing tenants.
+   * a Promise that settles once existing requests finish.
    */
   async stop(): Promise<void> {
     if (!this.server) return

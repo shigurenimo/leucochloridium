@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import { LaunchctlBin } from "@/boot/launchctl-bin"
 import type { LaunchctlPort } from "@/boot/launchctl-port"
 import { toLaunchAgentPlist } from "@/boot/to-launch-agent-plist"
@@ -69,7 +69,8 @@ export class LeucoLaunchAgent {
     const daemonDir = this.paths.daemonDir()
 
     if (!existsSync(plistDir)) mkdirSync(plistDir, { recursive: true })
-    if (!existsSync(daemonDir)) mkdirSync(daemonDir, { recursive: true })
+    if (!existsSync(daemonDir)) mkdirSync(daemonDir, { recursive: true, mode: 0o700 })
+    chmodSync(daemonDir, 0o700)
 
     const settings = new LeucoGlobalSettingsStore({ paths: this.paths }).load()
     // Refusing to install on a corrupted settings.json is safer than guessing
@@ -85,8 +86,11 @@ export class LeucoLaunchAgent {
       bunPath: installProps.bunPath,
       binPath: installProps.binPath,
       workingDirectory: installProps.workingDirectory,
-      stdoutPath: join(daemonDir, "launchd.out.log"),
-      stderrPath: join(daemonDir, "launchd.err.log"),
+      // Keep launchd and `leuco start` on one diagnostic stream. The `run`
+      // process also claims daemon/pid, so status/stop/logs now describe the
+      // same daemon regardless of which supervisor launched it.
+      stdoutPath: this.paths.daemonLogPath(),
+      stderrPath: this.paths.daemonLogPath(),
       envVars: installProps.envVars ?? {},
       keepAwake,
     })
@@ -102,6 +106,9 @@ export class LeucoLaunchAgent {
       // ended up in the env (e.g. user-set `LEUCO_OPENAI_KEY`) would
       // otherwise be world-readable on a multi-user mac.
       writeFileSync(plistPath, plist, { mode: 0o600 })
+      // `mode` applies only when creating a file. Harden an existing plist
+      // too, because older releases may have left embedded tokens readable.
+      chmodSync(plistPath, 0o600)
     } catch (err) {
       if (err instanceof Error) return err
       return new Error(String(err))
@@ -130,6 +137,10 @@ export class LeucoLaunchAgent {
     }
 
     return { plistPath, label: LABEL, removed: isInstalled }
+  }
+
+  async kickstart(): Promise<void | Error> {
+    return await this.launchctl.kickstart(LABEL)
   }
 
   async status(): Promise<LaunchAgentStatus | Error> {

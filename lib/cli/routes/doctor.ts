@@ -3,10 +3,12 @@ import { join } from "node:path"
 import { factory } from "@/cli/cli-factory"
 import { flagBool, readCliBody } from "@/cli/utils/read-cli-body"
 import { renderYaml } from "@/cli/utils/render-yaml"
+import type { DoctorCheck } from "@/cli/utils/doctor-check"
+import { toDaemonDoctorChecks } from "@/cli/utils/to-daemon-doctor-checks"
 import { LeucoPaths } from "@/paths/leuco-paths"
-import { LeucoProjectStore } from "@/projects/project-store"
+import { LeucoProjectStore, type RunnableProjectList } from "@/projects/project-store"
 
-const help = `leuco doctor / diagnose daemon, projects, and channels
+const help = `leuco doctor / diagnose daemon, projects, and connectors
 
 usage / leuco doctor [--fix]
 
@@ -17,7 +19,7 @@ checks:
   - codex: binary on PATH, version
   - settings: file exists, parseable, permissions
   - projects: path exists, codex home, auth symlink, config.toml
-  - channels: token presence, socket mode readiness
+  - connectors: token presence, socket mode readiness
   - zombies: orphaned codex app-server processes
 
 options:
@@ -27,10 +29,7 @@ exit codes:
   0 / all checks passed
   1 / one or more issues found`
 
-type Check = {
-  status: "ok" | "warn" | "error"
-  message: string
-}
+type Check = DoctorCheck
 
 type ZombieProcess = {
   pid: number
@@ -48,7 +47,7 @@ type ProjectReport = {
   path: string
   enabled: boolean
   checks: Record<string, Check>
-  channels: Array<{
+  connectors: Array<{
     name: string
     type: string
     enabled: boolean
@@ -68,51 +67,6 @@ type DoctorReport = {
 const ok = (message: string): Check => ({ status: "ok", message })
 const warn = (message: string): Check => ({ status: "warn", message })
 const error = (message: string): Check => ({ status: "error", message })
-
-const checkDaemon = (pidPath: string, logPath: string): Record<string, Check> => {
-  const checks: Record<string, Check> = {}
-
-  if (!existsSync(pidPath)) {
-    checks.pid = warn("no pid file — daemon is not running")
-    checks.process = error("daemon not running")
-    return checks
-  }
-
-  const pidText = readFileSync(pidPath, "utf8").trim()
-  const pid = Number.parseInt(pidText, 10)
-
-  if (!Number.isFinite(pid)) {
-    checks.pid = error(`pid file contains invalid value: ${pidText}`)
-    checks.process = error("daemon not running")
-    return checks
-  }
-
-  checks.pid = ok(`pid ${pid}`)
-
-  try {
-    process.kill(pid, 0)
-    checks.process = ok(`process ${pid} alive`)
-  } catch (err) {
-    if (err instanceof Error && "code" in err && err.code === "EPERM") {
-      checks.process = ok(`process ${pid} alive (permission restricted)`)
-    } else {
-      checks.process = error(`process ${pid} not found — stale pid file`)
-    }
-  }
-
-  if (existsSync(logPath)) {
-    const logStat = statSync(logPath)
-    const ageSec = (Date.now() - logStat.mtimeMs) / 1000
-    checks.log =
-      ageSec < 600
-        ? ok(`log active (${Math.round(ageSec)}s ago)`)
-        : warn(`log stale (${Math.round(ageSec)}s since last write)`)
-  } else {
-    checks.log = warn("log file missing")
-  }
-
-  return checks
-}
 
 const checkCodex = (): Record<string, Check> => {
   const checks: Record<string, Check> = {}
@@ -190,7 +144,7 @@ const checkProject = (
     name: string
     path: string
     enabled: boolean
-    channels: Array<{
+    connectors: Array<{
       name: string
       type: string
       enabled: boolean
@@ -250,39 +204,43 @@ const checkProject = (
     checks.configToml = error(`${configToml} missing`)
   }
 
-  const channelReports = project.channels.map((ch) => {
-    const channelChecks: Record<string, Check> = {}
+  const channelReports = project.connectors.map((ch) => {
+    const connectorChecks: Record<string, Check> = {}
 
     if (ch.type === "slack") {
-      const hasBotToken = typeof ch.botToken === "string" && ch.botToken.length > 0
-      const hasAppToken = typeof ch.appToken === "string" && ch.appToken.length > 0
+      const botToken =
+        typeof ch.botToken === "string" && ch.botToken.length > 0 ? ch.botToken : null
+      const appToken =
+        typeof ch.appToken === "string" && ch.appToken.length > 0 ? ch.appToken : null
 
-      channelChecks.botToken = hasBotToken
-        ? ok(`set (${ch.botToken!.slice(0, 8)}…)`)
-        : error("missing — set with `leuco projects <p> channels <c> set-tokens`")
+      connectorChecks.botToken =
+        botToken !== null
+          ? ok("set")
+          : error("missing — set with `leuco projects <p> connectors <c> set-tokens`")
 
-      channelChecks.appToken = hasAppToken
-        ? ok(`set (${ch.appToken!.slice(0, 8)}…)`)
-        : error("missing — socket mode requires an app-level token")
+      connectorChecks.appToken =
+        appToken !== null ? ok("set") : error("missing — socket mode requires an app-level token")
 
-      if (hasBotToken && !ch.botToken!.startsWith("xoxb-") && !ch.botToken!.startsWith("xoxp-")) {
-        channelChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
+      // xoxp- (user token) is a supported configuration — `connectors add` and
+      // the slack token schema both accept it, so don't warn on it here.
+      if (botToken !== null && !botToken.startsWith("xoxb-") && !botToken.startsWith("xoxp-")) {
+        connectorChecks.botTokenFormat = warn("expected xoxb- or xoxp- prefix")
       }
 
-      if (hasAppToken && !ch.appToken!.startsWith("xapp-")) {
-        channelChecks.appTokenFormat = warn("expected xapp- prefix")
+      if (appToken !== null && !appToken.startsWith("xapp-")) {
+        connectorChecks.appTokenFormat = warn("expected xapp- prefix")
       }
     }
 
     if (ch.type === "schedule") {
-      channelChecks.type = ok("schedule channel — no tokens required")
+      connectorChecks.type = ok("schedule connector — no tokens required")
     }
 
     return {
       name: ch.name,
       type: ch.type,
       enabled: ch.enabled,
-      checks: channelChecks,
+      checks: connectorChecks,
     }
   })
 
@@ -291,7 +249,7 @@ const checkProject = (
     path: project.path,
     enabled: project.enabled,
     checks,
-    channels: channelReports,
+    connectors: channelReports,
   }
 }
 
@@ -422,8 +380,8 @@ const allChecks = (report: DoctorReport): Array<"ok" | "warn" | "error"> => {
 
   for (const project of report.projects) {
     for (const check of Object.values(project.checks)) statuses.push(check.status)
-    for (const channel of project.channels) {
-      for (const check of Object.values(channel.checks)) statuses.push(check.status)
+    for (const connector of project.connectors) {
+      for (const check of Object.values(connector.checks)) statuses.push(check.status)
     }
   }
 
@@ -438,36 +396,56 @@ export const doctorHandler = factory.createHandlers(async (c) => {
   const paths = new LeucoPaths()
   const store = new LeucoProjectStore({ paths })
 
-  let projects: ReturnType<LeucoProjectStore["list"]> = []
+  let runnableProjects: RunnableProjectList = { projects: [], issues: [] }
 
   try {
-    projects = store.list()
+    runnableProjects = store.listRunnable()
   } catch {
     // settings parse failed — handled by checkSettings
   }
 
-  const daemonChecks = checkDaemon(paths.daemonPidPath(), paths.daemonLogPath())
+  const daemonStatus = c.var.daemon.status()
+  const hasPidFile = existsSync(daemonStatus.pidPath)
+  const pidText = hasPidFile ? readFileSync(daemonStatus.pidPath, "utf8").trim() : null
+  const logAgeSeconds = existsSync(daemonStatus.logPath)
+    ? (Date.now() - statSync(daemonStatus.logPath).mtimeMs) / 1000
+    : null
+  const daemonChecks = toDaemonDoctorChecks({
+    daemonStatus,
+    hasPidFile,
+    pidText,
+    logAgeSeconds,
+  })
   const isDaemonRunning = daemonChecks.process?.status === "ok"
   const daemonPidMatch = daemonChecks.pid?.message.match(/pid (\d+)/)
   const daemonPid = daemonPidMatch ? Number.parseInt(daemonPidMatch[1]!, 10) : null
+  const settingsChecks = checkSettings(paths.settingsPath())
+  if (runnableProjects.issues.length > 0) {
+    const invalidProjectMessages = runnableProjects.issues.map(
+      (issue) => `projects[${issue.index}] (${issue.project}): ${issue.error}`,
+    )
+    settingsChecks.projects = error(
+      `invalid project entries found: ${invalidProjectMessages.join("; ")}`,
+    )
+  }
 
   const report: DoctorReport = {
     status: "ok",
     daemon: daemonChecks,
     codex: checkCodex(),
-    settings: checkSettings(paths.settingsPath()),
-    projects: projects.map((p) =>
+    settings: settingsChecks,
+    projects: runnableProjects.projects.map((project) =>
       checkProject(paths, {
-        id: p.id,
-        name: p.name,
-        path: p.path,
-        enabled: p.enabled,
-        channels: p.channels.map((ch) => ({
-          name: ch.name,
-          type: ch.type,
-          enabled: ch.enabled,
-          ...("botToken" in ch ? { botToken: ch.botToken } : {}),
-          ...("appToken" in ch ? { appToken: ch.appToken } : {}),
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        enabled: project.enabled,
+        connectors: project.connectors.map((connector) => ({
+          name: connector.name,
+          type: connector.type,
+          enabled: connector.enabled,
+          ...("botToken" in connector ? { botToken: connector.botToken } : {}),
+          ...("appToken" in connector ? { appToken: connector.appToken } : {}),
         })),
       }),
     ),

@@ -69,4 +69,13 @@ describe("atomicWriteJson", () => {
 
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ v: 2 })
   })
+
+  test("writes a complete large UTF-8 payload before publishing", () => {
+    const path = join(dir, "large.json")
+    const value = "応答を失わない".repeat(32_768)
+
+    atomicWriteJson({ path, data: { value } })
+
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ value })
+  })
 })

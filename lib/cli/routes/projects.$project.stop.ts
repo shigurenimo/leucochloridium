@@ -9,7 +9,7 @@ const help = `leuco projects <p> stop / disable a project and reload daemon
 
 usage / leuco projects <p> stop [--force]
 
-Sets enabled=false in settings.json. The project definition (.codex, channels)
+Sets enabled=false in settings.json. The project definition (.codex, connectors)
 is preserved -- re-enable with \`leuco projects <p> start\`.
 
 options:
@@ -22,7 +22,7 @@ export const projectsStopHandler = factory.createHandlers(async (c) => {
   const projectName = c.req.param("project")!
 
   const store = new LeucoProjectStore()
-  const project = resolveProject(store, projectName, { preferCwd: c.var.cwd })
+  const project = resolveProject(c, store, projectName)
   if (!flagBool(body.flags.force) && isCurrentCodexProject(project)) {
     throw new HTTPException(400, { message: selfProjectGuardMessage(projectName, "stop") })
   }

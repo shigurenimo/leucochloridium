@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -6,7 +6,7 @@ import { LeucoLaunchAgent } from "@/boot/leuco-launch-agent"
 import type { LaunchctlPort } from "@/boot/launchctl-port"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-type Call = { kind: "bootstrap" | "bootout" | "isLoaded"; arg: string }
+type Call = { kind: "bootstrap" | "bootout" | "kickstart" | "isLoaded"; arg: string }
 
 const fakeLaunchctl = (): {
   port: LaunchctlPort
@@ -24,6 +24,9 @@ const fakeLaunchctl = (): {
     async bootout(plistPath) {
       calls.push({ kind: "bootout", arg: plistPath })
       loaded = false
+    },
+    async kickstart(label) {
+      calls.push({ kind: "kickstart", arg: label })
     },
     async isLoaded(label) {
       calls.push({ kind: "isLoaded", arg: label })
@@ -72,6 +75,9 @@ describe("LeucoLaunchAgent", () => {
       expect(text).toContain("<key>Label</key>")
       expect(text).toContain("<string>io.leuco.daemon</string>")
       expect(text).toContain("<string>/usr/local/bin/bun</string>")
+      expect(text.split(paths.daemonLogPath())).toHaveLength(3)
+      expect(statSync(plistPath).mode & 0o777).toBe(0o600)
+      expect(statSync(paths.daemonDir()).mode & 0o777).toBe(0o700)
 
       expect(calls).toEqual([{ kind: "bootstrap", arg: plistPath }])
     })
@@ -85,6 +91,7 @@ describe("LeucoLaunchAgent", () => {
         binPath: "/x",
         workingDirectory: "/y",
       })
+      chmodSync(paths.launchAgentPlistPath(), 0o644)
       calls.length = 0
 
       await agent.install({
@@ -98,6 +105,7 @@ describe("LeucoLaunchAgent", () => {
         { kind: "bootout", arg: plistPath },
         { kind: "bootstrap", arg: plistPath },
       ])
+      expect(statSync(plistPath).mode & 0o777).toBe(0o600)
     })
 
     it("propagates launchctl bootstrap failures", async () => {
@@ -106,6 +114,7 @@ describe("LeucoLaunchAgent", () => {
           return new Error("nope")
         },
         async bootout() {},
+        async kickstart() {},
         async isLoaded() {
           return false
         },
@@ -185,6 +194,18 @@ describe("LeucoLaunchAgent", () => {
 
       expect(status.isInstalled).toBe(true)
       expect(status.isLoaded).toBe(true)
+    })
+  })
+
+  describe("kickstart", () => {
+    it("starts the loaded job by label", async () => {
+      const { port, calls } = fakeLaunchctl()
+      const agent = new LeucoLaunchAgent({ paths, launchctl: port })
+
+      const result = await agent.kickstart()
+
+      expect(result).toBeUndefined()
+      expect(calls).toEqual([{ kind: "kickstart", arg: "io.leuco.daemon" }])
     })
   })
 })

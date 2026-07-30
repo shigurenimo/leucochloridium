@@ -1,22 +1,34 @@
 import { spawn } from "node:child_process"
 import {
+  chmodSync,
+  closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   statSync,
+  truncateSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs"
+import type { DaemonPidLease } from "@/daemon/daemon-pid-lease"
+import type { DaemonProcessPort } from "@/daemon/daemon-process-port"
+import { parseLegacyDaemonPid } from "@/daemon/legacy-pid-lease/parse-legacy-daemon-pid"
+import { toVerifiedLegacyDaemonPidLease } from "@/daemon/legacy-pid-lease/to-verified-legacy-daemon-pid-lease"
+import { NodeDaemonProcess } from "@/daemon/node-daemon-process"
+import { atomicWriteText } from "@/fs/atomic-write-text"
+import { withFileLock } from "@/fs/with-file-lock"
 import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
 import { LeucoPaths } from "@/paths/leuco-paths"
 
-type Props = {
+export type LeucoDaemonProps = {
   paths?: LeucoPaths
+  pidLockTimeoutMs?: number
+  processPort?: DaemonProcessPort
 }
 
-type StartProps = {
+export type LeucoDaemonStartProps = {
   binPath: string
   cwd?: string
   env: NodeJS.ProcessEnv
@@ -25,6 +37,7 @@ type StartProps = {
 export type DaemonStatus = {
   pid: number | null
   isRunning: boolean
+  identityVerified?: boolean
   pidPath: string
   logPath: string
 }
@@ -39,17 +52,26 @@ export type DaemonStopResult = {
   pid: number | null
 }
 
+type DaemonLeaseStatus = {
+  isRunning: boolean
+  identityVerified: boolean
+}
+
 /**
  * Machine-wide background daemon manager. State lives at
  * `~/.leuco/daemon/{pid,log}`; the daemon supervises every registered
- * project's tenants in one process, so there is exactly one daemon per
+ * project runtimes in one process, so there is exactly one daemon per
  * machine regardless of how many projects are configured.
  */
 export class LeucoDaemon {
   private readonly paths: LeucoPaths
+  private readonly pidLockTimeoutMs: number | undefined
+  private readonly processPort: DaemonProcessPort
 
-  constructor(props: Props = {}) {
+  constructor(props: LeucoDaemonProps = {}) {
     this.paths = props.paths ?? new LeucoPaths()
+    this.pidLockTimeoutMs = props.pidLockTimeoutMs
+    this.processPort = props.processPort ?? new NodeDaemonProcess()
     Object.freeze(this)
   }
 
@@ -65,38 +87,103 @@ export class LeucoDaemon {
     return this.paths.daemonEventLogPath()
   }
 
+  /**
+   * Register a foreground `leuco run` process in the same pid file used by
+   * `leuco start`. launchd invokes `run` directly, so without this lease the
+   * CLI reports it as stopped and can start a second daemon on the same port.
+   */
+  claimCurrentProcess(): void {
+    this.withPidLeaseLock(() => {
+      const pidPath = this.paths.daemonPidPath()
+      const currentLease = readPidLease(pidPath)
+      if (
+        currentLease !== null &&
+        currentLease.pid !== process.pid &&
+        this.isLeaseRunning(currentLease)
+      ) {
+        throw new Error(`leuco already running (pid ${currentLease.pid})`)
+      }
+      const currentIdentity = this.requireProcessIdentity(process.pid)
+
+      const stateDir = this.paths.daemonDir()
+      if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+      chmodSync(stateDir, 0o700)
+      const logPath = this.paths.daemonLogPath()
+      if (existsSync(logPath)) {
+        // launchd opens StandardOutPath before this process starts, so a
+        // rename would leave it writing to the old inode. Copy + truncate
+        // bounds that already-open stream without disconnecting diagnostics.
+        rotateOpenLogIfLarge(logPath)
+        chmodSync(logPath, 0o600)
+      }
+
+      const lease = toVerifiedLease(process.pid, currentIdentity)
+      writePidLease(pidPath, lease)
+      if (!isSameLease(readPidLease(pidPath), lease)) {
+        throw new Error("failed to verify daemon pid lease ownership")
+      }
+    })
+  }
+
+  /**
+   * Release only this process's lease. The ownership check prevents an old
+   * process exiting late from deleting the pid file of its replacement.
+   */
+  releaseCurrentProcess(): boolean {
+    const pidPath = this.paths.daemonPidPath()
+    const processIdentity = this.processPort.getIdentity(process.pid)
+    if (processIdentity === null) return false
+
+    const lease = toVerifiedLease(process.pid, processIdentity)
+    return this.withPidLeaseLock(() => removePidFileIfOwned(pidPath, lease))
+  }
+
   status(): DaemonStatus {
     const pidPath = this.paths.daemonPidPath()
     const logPath = this.paths.daemonLogPath()
-    const pid = readPid(pidPath)
+    const lease = readPidLease(pidPath)
+    const leaseStatus = lease === null ? null : this.inspectLease(lease)
 
     return {
-      pid,
-      isRunning: pid !== null && pidIsAlive(pid),
+      pid: lease?.pid ?? null,
+      isRunning: leaseStatus?.isRunning ?? false,
+      identityVerified: leaseStatus?.identityVerified ?? false,
       pidPath,
       logPath,
     }
   }
 
-  start(props: StartProps): DaemonStartResult {
+  start(props: LeucoDaemonStartProps): DaemonStartResult {
+    const result = this.withPidLeaseLock(() => this.startLocked(props))
+    this.maybeKeepAwake(result.pid)
+    return result
+  }
+
+  private startLocked(props: LeucoDaemonStartProps): DaemonStartResult {
     const status = this.status()
     if (status.isRunning) {
       throw new Error(`leuco already running (pid ${status.pid})`)
     }
 
     const stateDir = this.paths.daemonDir()
-    if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
+    if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+    chmodSync(stateDir, 0o700)
 
     rotateLogIfLarge(status.logPath)
-
-    const logFd = openSync(status.logPath, "a")
-
-    const child = spawn(process.execPath, [props.binPath, "run"], {
-      cwd: props.cwd ?? this.paths.getHome(),
-      env: props.env,
-      stdio: ["ignore", logFd, logFd],
-      detached: true,
-    })
+    const logFd = openSync(status.logPath, "a", 0o600)
+    chmodSync(status.logPath, 0o600)
+    const child = (() => {
+      try {
+        return spawn(process.execPath, [props.binPath, "run"], {
+          cwd: props.cwd ?? this.paths.getHome(),
+          env: props.env,
+          stdio: ["ignore", logFd, logFd],
+          detached: true,
+        })
+      } finally {
+        closeSync(logFd)
+      }
+    })()
 
     if (typeof child.pid !== "number") {
       throw new Error("failed to spawn daemon (no pid)")
@@ -108,44 +195,22 @@ export class LeucoDaemon {
     // port. unref()/keepAwake() are after the write because both depend on
     // the pid being persisted first.
     try {
-      this.writePidExclusive(status.pidPath, child.pid)
-    } catch (error) {
-      try {
-        process.kill(child.pid, "SIGTERM")
-      } catch {
-        // best-effort: child may already have exited
+      const processIdentity = this.waitForProcessIdentity(child.pid)
+      if (processIdentity === null) {
+        throw new Error("failed to identify spawned daemon process")
       }
+      const lease = toVerifiedLease(child.pid, processIdentity)
+      writePidLease(status.pidPath, lease)
+      if (!isSameLease(readPidLease(status.pidPath), lease)) {
+        throw new Error("failed to verify spawned daemon pid lease ownership")
+      }
+    } catch (error) {
+      this.processPort.sendSignal(child.pid, "SIGTERM")
       throw error
     }
     child.unref()
 
-    this.maybeKeepAwake(child.pid)
-
     return { pid: child.pid, logPath: status.logPath }
-  }
-
-  /**
-   * `wx` refuses to overwrite an existing pid file, shrinking the
-   * check-then-spawn race: when two `leuco start` calls run concurrently the
-   * loser of this write gets an EEXIST instead of silently clobbering the
-   * winner's pid. A stale file left by a crashed daemon (status() said "not
-   * running") is removed once, then the exclusive write is retried.
-   */
-  private writePidExclusive(pidPath: string, pid: number): void {
-    try {
-      writeFileSync(pidPath, `${pid}\n`, { mode: 0o600, flag: "wx" })
-      return
-    } catch (error) {
-      if (!isErrnoCode(error, "EEXIST")) throw error
-    }
-
-    const holder = readPid(pidPath)
-    if (holder !== null && holder !== pid && pidIsAlive(holder)) {
-      throw new Error(`leuco already running (pid ${holder})`)
-    }
-
-    removePidFile(pidPath)
-    writeFileSync(pidPath, `${pid}\n`, { mode: 0o600, flag: "wx" })
   }
 
   /**
@@ -180,99 +245,176 @@ export class LeucoDaemon {
    * Send SIGTERM and wait for the child to actually exit before removing the
    * pid file. Removing the pid file too early causes back-to-back
    * `stop()` → `start()` flows (move-to, rename, merge-into, relocate) to
-   * spawn a second daemon that fights for the gateway port. After a 10s grace
+   * spawn a second daemon that fights for the gateway port. After a 15s grace
    * period SIGKILL is sent; the pid file is removed in either case.
    */
   stop(): DaemonStopResult {
-    const status = this.status()
-    if (status.pid === null) return { stopped: false, pid: null }
+    const pidPath = this.paths.daemonPidPath()
+    const lease = readPidLease(pidPath)
+    if (lease === null) return { stopped: false, pid: null }
 
-    const pid = status.pid
-    let stopped = false
-    try {
-      process.kill(pid, "SIGTERM")
-      stopped = true
-    } catch {
-      // already gone
-    }
+    const signalLease = this.withPidLeaseLock(() => this.toSignalSafeLease(pidPath, lease))
+    const signalSent =
+      signalLease !== null &&
+      this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGTERM"))
 
-    if (stopped) {
-      waitForExit(pid, SHUTDOWN_GRACE_MS)
-      if (pidIsAlive(pid)) {
-        try {
-          process.kill(pid, "SIGKILL")
-        } catch {
-          // already gone
-        }
-        waitForExit(pid, SIGKILL_GRACE_MS)
+    if (signalLease !== null && signalSent) {
+      this.waitForExit(signalLease, SHUTDOWN_GRACE_MS)
+      if (this.isLeaseVerified(signalLease)) {
+        this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGKILL"))
+        this.waitForExit(signalLease, SIGKILL_GRACE_MS)
       }
     }
 
-    removePidFile(status.pidPath)
-    return { stopped, pid }
+    const observedLease = signalLease ?? lease
+    const isRunning = this.isLeaseRunning(observedLease)
+    const stopped = signalSent && !isRunning
+    // launchd may already have started a replacement after the old process
+    // exited. Never let the old stop operation erase the replacement's lease.
+    if (!isRunning) {
+      this.withPidLeaseLock(() => removePidFileIfOwned(pidPath, observedLease))
+    }
+    return { stopped, pid: lease.pid }
   }
 
-  /** Send SIGHUP so a running daemon re-reads config and reconciles tenants. */
+  /** Send SIGHUP so a running daemon re-reads config and reconciles projects. */
   reload(): { signalled: boolean; pid: number | null } {
-    const status = this.status()
-    if (!status.isRunning || status.pid === null) {
-      return { signalled: false, pid: status.pid }
+    const pidPath = this.paths.daemonPidPath()
+    const lease = readPidLease(pidPath)
+    if (lease === null) return { signalled: false, pid: null }
+
+    const signalLease = this.withPidLeaseLock(() => this.toSignalSafeLease(pidPath, lease))
+    const signalled =
+      signalLease !== null &&
+      this.withPidLeaseLock(() => this.sendSignalIfOwned(pidPath, signalLease, "SIGHUP"))
+    return { signalled, pid: lease.pid }
+  }
+
+  private withPidLeaseLock<T>(fn: () => T): T {
+    return withFileLock(
+      {
+        lockPath: `${this.paths.daemonPidPath()}.lock`,
+        timeoutMs: this.pidLockTimeoutMs,
+      },
+      fn,
+    )
+  }
+
+  private isLeaseRunning(lease: DaemonPidLease): boolean {
+    return this.inspectLease(lease).isRunning
+  }
+
+  private inspectLease(lease: DaemonPidLease): DaemonLeaseStatus {
+    if (lease.processIdentity === null) {
+      return { isRunning: this.processPort.isAlive(lease.pid), identityVerified: false }
     }
-    try {
-      process.kill(status.pid, "SIGHUP")
-      return { signalled: true, pid: status.pid }
-    } catch {
-      return { signalled: false, pid: status.pid }
+
+    const processIdentity = this.processPort.getIdentity(lease.pid)
+    if (processIdentity === null) {
+      return { isRunning: this.processPort.isAlive(lease.pid), identityVerified: false }
+    }
+
+    const identityVerified = processIdentity === lease.processIdentity
+    return { isRunning: identityVerified, identityVerified }
+  }
+
+  private isLeaseVerified(lease: DaemonPidLease): boolean {
+    if (lease.processIdentity === null) return false
+    return this.processPort.getIdentity(lease.pid) === lease.processIdentity
+  }
+
+  private toSignalSafeLease(pidPath: string, lease: DaemonPidLease): DaemonPidLease | null {
+    if (lease.processIdentity !== null) return lease
+    if (!isSameLease(readPidLease(pidPath), lease)) return null
+
+    const processIdentity = this.processPort.getIdentity(lease.pid)
+    const migratedLease = toVerifiedLegacyDaemonPidLease({
+      pid: lease.pid,
+      processCommand: this.processPort.getCommand(lease.pid),
+      processIdentity,
+    })
+    if (migratedLease === null) return null
+    if (this.processPort.getIdentity(lease.pid) !== processIdentity) return null
+
+    writePidLease(pidPath, migratedLease)
+    return isSameLease(readPidLease(pidPath), migratedLease) ? migratedLease : null
+  }
+
+  private sendSignalIfOwned(
+    pidPath: string,
+    lease: DaemonPidLease,
+    signal: NodeJS.Signals,
+  ): boolean {
+    if (!isSameLease(readPidLease(pidPath), lease)) return false
+    if (!this.isLeaseVerified(lease)) return false
+    return this.processPort.sendSignal(lease.pid, signal)
+  }
+
+  private waitForExit(lease: DaemonPidLease, timeoutMs: number): void {
+    const deadline = this.processPort.now() + timeoutMs
+    while (this.isLeaseVerified(lease)) {
+      if (this.processPort.now() >= deadline) return
+      this.processPort.sleep(POLL_INTERVAL_MS)
     }
   }
 
-  clearStalePid(): void {
-    removePidFile(this.paths.daemonPidPath())
+  private waitForProcessIdentity(pid: number): string | null {
+    const deadline = this.processPort.now() + PROCESS_IDENTITY_TIMEOUT_MS
+    while (true) {
+      const identity = this.processPort.getIdentity(pid)
+      if (identity !== null) return identity
+      if (this.processPort.now() >= deadline) return null
+      this.processPort.sleep(PROCESS_IDENTITY_POLL_MS)
+    }
+  }
+
+  private requireProcessIdentity(pid: number): string {
+    const identity = this.processPort.getIdentity(pid)
+    if (identity !== null) return identity
+    throw new Error(`failed to identify daemon process ${pid}`)
   }
 }
 
-const readPid = (path: string): number | null => {
+const readPidLease = (path: string): DaemonPidLease | null => {
   try {
     const text = readFileSync(path, "utf8").trim()
-    const pid = Number.parseInt(text, 10)
-    // 0 / negative pids address process groups — a corrupted pid file must
-    // never make stop() SIGTERM the caller's whole group or every process.
-    return Number.isInteger(pid) && pid > 0 ? pid : null
+    const legacyPid = parseLegacyDaemonPid(text)
+    if (legacyPid !== null) return { version: 1, pid: legacyPid, processIdentity: null }
+
+    const value: unknown = JSON.parse(text)
+    if (typeof value !== "object" || value === null) return null
+    if (!("version" in value) || value.version !== 1) return null
+    if (!("pid" in value) || typeof value.pid !== "number") return null
+    if (!Number.isSafeInteger(value.pid) || value.pid <= 0) return null
+    if (!("processIdentity" in value) || typeof value.processIdentity !== "string") return null
+    if (value.processIdentity.length < 1 || value.processIdentity.length > 256) return null
+
+    return {
+      version: 1,
+      pid: value.pid,
+      processIdentity: value.processIdentity,
+    }
   } catch {
     return null
   }
 }
 
-const pidIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    if (isNodeErrno(error) && error.code === "EPERM") return true
-    return false
-  }
+const toVerifiedLease = (pid: number, processIdentity: string): DaemonPidLease => {
+  return { version: 1, pid, processIdentity }
 }
 
-const isNodeErrno = (error: unknown): error is NodeJS.ErrnoException => {
-  return error instanceof Error && "code" in error
+const writePidLease = (path: string, lease: DaemonPidLease): void => {
+  atomicWriteText({
+    path,
+    text: `${JSON.stringify(lease)}\n`,
+    mode: 0o600,
+  })
+  chmodSync(path, 0o600)
 }
 
-const isErrnoCode = (error: unknown, code: string): boolean => {
-  return isNodeErrno(error) && error.code === code
-}
-
-const LOG_ROTATE_BYTES = 10 * 1024 * 1024
-
-/** Cap the append-only daemon log: past 10MB the old log moves to `<log>.1`
- * (replacing the previous backup) so a long-lived daemon cannot eat the disk. */
-const rotateLogIfLarge = (logPath: string): void => {
-  try {
-    const stat = statSync(logPath)
-    if (stat.size < LOG_ROTATE_BYTES) return
-    renameSync(logPath, `${logPath}.1`)
-  } catch {
-    // missing log (fresh install) or unrotatable — appending still works
-  }
+const isSameLease = (left: DaemonPidLease | null, right: DaemonPidLease | null): boolean => {
+  if (left === null || right === null) return left === right
+  return left.pid === right.pid && left.processIdentity === right.processIdentity
 }
 
 const removePidFile = (path: string): void => {
@@ -283,14 +425,41 @@ const removePidFile = (path: string): void => {
   }
 }
 
-const SHUTDOWN_GRACE_MS = 10_000
-const SIGKILL_GRACE_MS = 2_000
-const POLL_INTERVAL_MS = 50
+const removePidFileIfOwned = (path: string, lease: DaemonPidLease): boolean => {
+  if (!isSameLease(readPidLease(path), lease)) return false
+  removePidFile(path)
+  return true
+}
 
-const waitForExit = (pid: number, timeoutMs: number): void => {
-  const deadline = Date.now() + timeoutMs
-  while (pidIsAlive(pid)) {
-    if (Date.now() >= deadline) return
-    Bun.sleepSync(POLL_INTERVAL_MS)
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024
+
+const rotateLogIfLarge = (logPath: string): void => {
+  try {
+    if (statSync(logPath).size < LOG_ROTATE_BYTES) return
+    const rotatedPath = `${logPath}.1`
+    renameSync(logPath, rotatedPath)
+    chmodSync(rotatedPath, 0o600)
+  } catch {
+    // A missing or temporarily unrotatable log must not block daemon startup.
   }
 }
+
+const rotateOpenLogIfLarge = (logPath: string): void => {
+  try {
+    if (statSync(logPath).size < LOG_ROTATE_BYTES) return
+    const rotatedPath = `${logPath}.1`
+    copyFileSync(logPath, rotatedPath)
+    chmodSync(rotatedPath, 0o600)
+    truncateSync(logPath, 0)
+  } catch {
+    // Log maintenance must not prevent launchd's child from claiming its pid.
+  }
+}
+
+// `leuco run` has a 12s internal shutdown deadline. Keep the outer daemon
+// manager's SIGTERM window longer so normal cleanup wins before SIGKILL.
+const SHUTDOWN_GRACE_MS = 15_000
+const SIGKILL_GRACE_MS = 2_000
+const POLL_INTERVAL_MS = 50
+const PROCESS_IDENTITY_TIMEOUT_MS = 1_000
+const PROCESS_IDENTITY_POLL_MS = 10

@@ -1,6 +1,6 @@
 /**
- * Cross-channel security preset. Tenant-specific authority and account
- * policies stay in the tenant AGENTS.md; these rules apply everywhere.
+ * Cross-channel security preset. Project runtime-specific authority and account
+ * policies stay in the project runtime AGENTS.md; these rules apply everywhere.
  */
 export const SECURITY_PRESET = {
   slug: "SECURITY",

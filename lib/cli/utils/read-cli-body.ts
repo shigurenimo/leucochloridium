@@ -1,6 +1,6 @@
-import type { Context } from "hono"
 import { HTTPException } from "hono/http-exception"
 import { z } from "zod"
+import type { CliContext } from "@/cli/cli-factory"
 import { errorMessage } from "@/error-message"
 
 const cliBodySchema = z.object({
@@ -10,7 +10,7 @@ const cliBodySchema = z.object({
 
 export type CliBody = z.infer<typeof cliBodySchema>
 
-export const readCliBody = async (c: Context): Promise<CliBody> => {
+export const readCliBody = async (c: CliContext): Promise<CliBody> => {
   const text = await c.req.text()
   // Treat a literally empty body as `{}` (matches the previous fallback when
   // every leuco CLI invocation was JSON-encoded); only a body that contains

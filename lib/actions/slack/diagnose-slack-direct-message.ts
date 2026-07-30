@@ -1,4 +1,4 @@
-import type { SlackHistoryMessage } from "@/channels/slack/leuco-slack-web-client"
+import type { SlackHistoryMessage } from "@/connectors/slack/leuco-slack-web-client"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 export type SlackDirectMessageDiagnosis = {
@@ -26,6 +26,7 @@ type Props = {
   messages: ReadonlyArray<SlackHistoryMessage>
   events: ReadonlyArray<LeucoEvent>
   eventLogAvailable: boolean
+  usesUserToken?: boolean
 }
 
 /**
@@ -89,8 +90,9 @@ export const diagnoseSlackDirectMessage = (props: Props): SlackDirectMessageDiag
       botReply: { status: "missing", ts: null },
       status: "socket_event_missing",
       error: null,
-      nextAction:
-        "Slack history has this DM, but Socket Mode did not deliver it. Subscribe to message.im and reinstall the Slack app.",
+      nextAction: props.usesUserToken
+        ? "Slack history has this DM, but Socket Mode did not deliver it. In Event Subscriptions, add message.im under Subscribe to events on behalf of users, grant the im:history scope, and reinstall the Slack app."
+        : "Slack history has this DM, but Socket Mode did not deliver it. Subscribe to message.im, grant the im:history scope, and reinstall the Slack app.",
     }
   }
 
@@ -186,8 +188,8 @@ const hasSocketEvent = (
   return events.some(
     (event) =>
       event.type === "slack.event" &&
-      event.channel === conversationId &&
       event.event.kind === "message" &&
+      event.event.channel === conversationId &&
       event.event.ts === messageTs,
   )
 }
@@ -210,13 +212,14 @@ const findTurnState = (
     )
     .sort((a, b) => a.ts - b.ts)
 
-  if (!matching.some((event) => event.type === "turn.start")) {
+  const latestStartIndex = matching.findLastIndex((event) => event.type === "turn.start")
+  if (latestStartIndex === -1) {
     return { status: "not_started", error: null }
   }
 
-  const terminal = matching.findLast(
-    (event) => event.type === "turn.complete" || event.type === "turn.error",
-  )
+  const terminal = matching
+    .slice(latestStartIndex + 1)
+    .findLast((event) => event.type === "turn.complete" || event.type === "turn.error")
   if (terminal === undefined) return { status: "in_progress", error: null }
   if (terminal.type === "turn.error") return { status: "failed", error: terminal.error }
   return { status: "completed", error: null }

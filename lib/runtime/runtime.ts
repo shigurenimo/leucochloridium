@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto"
 import {
   chmodSync,
   existsSync,
@@ -10,125 +9,184 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
-import { LeucoChannelHost } from "@/channels/channel-host"
+import { LeucoConnectorHost } from "@/connectors/connector-host"
+import type { Connector } from "@/connectors/connector"
 import type { McpServer, Project } from "@/config/config-schema"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { tomlString } from "@/engine/codex/toml-string"
-import { LeucoEngine } from "@/engine/engine"
-import { tenantConfigSignature } from "@/engine/tenant-config-signature"
-import { LeucoTenant } from "@/engine/tenant"
+import { toBoundedCodexNotification } from "@/engine/codex/to-bounded-codex-notification"
+import { LeucoProjectSupervisor } from "@/project/project-supervisor"
+import { projectRuntimeSignature } from "@/project/project-runtime-signature"
+import { LeucoProjectRuntime } from "@/project/project-runtime"
 import { DEFAULT_LEUCO_PORT } from "@/env/cli-env-schema"
-import { LeucoEventBus } from "@/events/leuco-event-bus"
+import { errorMessage } from "@/error-message"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 import { atomicWriteText } from "@/fs/atomic-write-text"
+import { LeucoGlobalSettingsStore } from "@/global-settings/global-settings-store"
+import { LeucoGatewayServer, type LeucoGatewayServerProps } from "@/gateway/gateway-server"
 import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { LeucoPromptPresets } from "@/prompts/presets"
+import { buildCodexChildEnv } from "@/runtime/build-codex-child-env"
 
 type Logger = (line: string) => void
 
-type Props = {
+type GatewayLifecycle = {
+  start(): unknown
+  stop(): Promise<void>
+}
+
+type RuntimeLifecycle = {
+  hasStarted: boolean
+  hasStopped: boolean
+  stopPromise: Promise<void> | null
+}
+
+export type LeucoRuntimeProps = {
   env: NodeJS.ProcessEnv
-  /** Gateway port for `/mcp/<projectId>`. Defaults to the CLI port (7331). */
+  /** Loopback gateway port for daemon health, status, and thread control. */
   port?: number
   home?: string
   codexBin?: string
   onLog?: Logger
+  /** Dependency seam for runtime composition tests. */
+  buildProjectRuntime?: (project: Project) => LeucoProjectRuntime
+  /** Builds one fresh connector for targeted hot restart. */
+  buildProjectConnector?: (project: Project, connectorName: string) => Connector
+  /** Optional override owned and closed by the runtime. */
+  eventLog?: LeucoEventLog
+  buildGateway?: (props: LeucoGatewayServerProps) => GatewayLifecycle
 }
 
-const LEUCO_MCP_TOKEN_ENV = "LEUCO_MCP_TOKEN"
-
 /**
- * Composition root: scans every registered project under
- * `~/.leuco/projects/<id>/settings.json`, builds one `LeucoTenant` per
- * enabled project, and wires the engine.
+ * Composition root: reads every registered project from unified settings,
+ * builds one `LeucoProjectRuntime` per enabled project, and wires the engine.
  */
 export class LeucoRuntime {
+  private readonly lifecycle: RuntimeLifecycle = {
+    hasStarted: false,
+    hasStopped: false,
+    stopPromise: null,
+  }
+
   private constructor(
     private readonly props: {
       projectStore: LeucoProjectStore
-      engine: LeucoEngine
-      paths: LeucoPaths
-      env: NodeJS.ProcessEnv
-      codexBin: string | undefined
+      supervisor: LeucoProjectSupervisor
+      gateway: GatewayLifecycle
+      eventLog: LeucoEventLog
       onLog: Logger
     },
   ) {
     Object.freeze(this)
   }
 
-  static build(buildProps: Props): LeucoRuntime {
+  static build(buildProps: LeucoRuntimeProps): LeucoRuntime {
     const baseLog = buildProps.onLog ?? ((line: string) => process.stdout.write(`${line}\n`))
     const paths = new LeucoPaths({ home: buildProps.home })
-    const bus = new LeucoEventBus({ eventLogPath: paths.daemonEventLogPath() })
+    const eventLog =
+      buildProps.eventLog ?? new LeucoEventLog({ eventLogPath: paths.daemonEventLogPath() })
     // events.db stores full Slack message bodies; keep it as tight as
     // settings.json instead of inheriting the umask (typically 644).
     hardenEventLogPermissions(paths.daemonEventLogPath())
 
     const onLog: Logger = (line) => {
       baseLog(line)
-      bus.emit({ ts: Date.now(), type: "log", level: "info", line })
+      eventLog.append({ ts: Date.now(), type: "log", level: "info", line })
     }
 
     const projectStore = new LeucoProjectStore({ paths })
-    const projectStateStore = new LeucoProjectStateStore({ projectStore })
-    const projects = projectStore.list()
-
-    // One bearer token per project, generated lazily and held for the daemon
-    // lifetime: tenant A's codex child cannot present its token against
-    // tenant B's `/mcp/:project` route.
-    const mcpTokens = new Map<string, string>()
-    const mcpTokenForProject = (projectId: string): string => {
-      const existing = mcpTokens.get(projectId)
-      if (existing !== undefined) return existing
-      const fresh = randomBytes(32).toString("hex")
-      mcpTokens.set(projectId, fresh)
-      return fresh
-    }
-    const mcpPort = buildProps.port ?? DEFAULT_LEUCO_PORT
-
-    const buildTenantFn = (project: Project): LeucoTenant =>
-      buildTenant({
-        project,
-        paths,
-        env: buildProps.env,
-        codexBin: buildProps.codexBin,
-        onLog,
-        bus,
-        projectStore,
-        projectStateStore,
-        mcpToken: mcpTokenForProject(project.id),
-        mcpPort,
+    const projectStateStore = new LeucoProjectStateStore({ paths })
+    const globalSettings = new LeucoGlobalSettingsStore({ paths }).loadRuntimeSettings()
+    if (globalSettings instanceof Error) throw globalSettings
+    const runnableProjects = projectStore.listRunnable()
+    const projects = runnableProjects.projects
+    for (const issue of runnableProjects.issues) {
+      const reason = `project ${issue.project} is invalid and was skipped: ${issue.error}`
+      onLog(`[leuco] ${reason}`)
+      eventLog.append({
+        ts: Date.now(),
+        type: "supervisor.reconcile.failed",
+        reason,
+        project: issue.project,
       })
+    }
 
-    const tenants: LeucoTenant[] = []
+    const gatewayPort = buildProps.port ?? DEFAULT_LEUCO_PORT
+
+    const buildRuntimeFn =
+      buildProps.buildProjectRuntime ??
+      ((project: Project): LeucoProjectRuntime =>
+        buildProjectRuntime({
+          project,
+          paths,
+          env: buildProps.env,
+          codexBin: buildProps.codexBin,
+          onLog,
+          eventLog,
+          projectStore,
+          projectStateStore,
+          turnTimeoutMs: globalSettings.turnTimeoutMs,
+          turnIdleTimeoutMs: globalSettings.turnIdleTimeoutMs,
+          turnConcurrency: globalSettings.turnConcurrency,
+          turnQueueMaxItems: globalSettings.turnQueueMaxItems,
+          turnQueueMaxBytes: globalSettings.turnQueueMaxBytes,
+        }))
+
+    const runtimes: LeucoProjectRuntime[] = []
     for (const project of projects) {
       if (!project.enabled) continue
-      tenants.push(buildTenantFn(project))
+      try {
+        runtimes.push(buildRuntimeFn(project))
+      } catch (err) {
+        const reason = `runtime ${project.name} initial build failed: ${errorMessage(err)}`
+        onLog(`[leuco] ${reason}; deferring to reconcile supervisor`)
+        eventLog.append({
+          ts: Date.now(),
+          type: "supervisor.reconcile.failed",
+          reason,
+          project: project.name,
+        })
+      }
     }
 
-    const engine = new LeucoEngine({
-      tenants,
-      port: mcpPort,
+    const supervisor = new LeucoProjectSupervisor({
+      runtimes,
       onLog,
       projectStore,
-      buildTenant: buildTenantFn,
-      bus,
-      mcpTokenForProject: (projectId) => mcpTokens.get(projectId) ?? null,
+      buildProjectRuntime: buildRuntimeFn,
+      buildProjectConnector:
+        buildProps.buildProjectConnector ??
+        ((project, connectorName) =>
+          buildProjectConnector({
+            project,
+            connectorName,
+            projectStore,
+            projectStateStore,
+          })),
+      eventLog,
     })
+    const gatewayProps: LeucoGatewayServerProps = {
+      control: supervisor,
+      port: gatewayPort,
+      onLog,
+    }
+    const gateway = buildProps.buildGateway
+      ? buildProps.buildGateway(gatewayProps)
+      : new LeucoGatewayServer(gatewayProps)
 
     return new LeucoRuntime({
       projectStore,
-      engine,
-      paths,
-      env: buildProps.env,
-      codexBin: buildProps.codexBin,
+      supervisor,
+      gateway,
+      eventLog,
       onLog,
     })
   }
 
-  getEngine(): LeucoEngine {
-    return this.props.engine
+  getSupervisor(): LeucoProjectSupervisor {
+    return this.props.supervisor
   }
 
   getProjectStore(): LeucoProjectStore {
@@ -136,78 +194,138 @@ export class LeucoRuntime {
   }
 
   async start(): Promise<void> {
-    await this.props.engine.start()
+    if (this.lifecycle.hasStopped) throw new Error("LeucoRuntime cannot start after stop")
+    if (this.lifecycle.hasStarted) throw new Error("LeucoRuntime is already started")
+    this.lifecycle.hasStarted = true
+
+    try {
+      this.props.gateway.start()
+      await this.props.supervisor.start()
+      // A project whose synchronous composition failed above is absent from
+      // the initial runtime array. Reconcile immediately so the supervisor
+      // records its retry state.
+      await this.props.supervisor.reconcile()
+    } catch (error) {
+      await this.stop()
+      throw error
+    }
   }
 
-  async stop(): Promise<void> {
-    await this.props.engine.stop()
+  stop(): Promise<void> {
+    if (this.lifecycle.stopPromise !== null) return this.lifecycle.stopPromise
+
+    this.lifecycle.hasStopped = true
+    this.lifecycle.stopPromise = this.runStop()
+    return this.lifecycle.stopPromise
   }
 
   async reload(): Promise<void> {
-    await this.props.engine.reconcile()
+    await this.props.supervisor.reconcile()
+  }
+
+  private async runStop(): Promise<void> {
+    try {
+      await this.props.supervisor.stop()
+    } finally {
+      await this.stopGateway("shutdown")
+      this.props.eventLog.close()
+    }
+  }
+
+  private async stopGateway(context: string): Promise<void> {
+    try {
+      await this.props.gateway.stop()
+    } catch (error) {
+      this.props.onLog(`[leuco] ${context}: gateway stop failed: ${errorMessage(error)}`)
+    }
   }
 }
 
-type BuildTenantProps = {
+type BuildProjectConnectorProps = {
+  project: Project
+  connectorName: string
+  projectStore: LeucoProjectStore
+  projectStateStore: LeucoProjectStateStore
+}
+
+const buildProjectConnector = (props: BuildProjectConnectorProps): Connector => {
+  const connector = props.project.connectors.find(
+    (candidate) => candidate.name === props.connectorName,
+  )
+  if (connector === undefined) throw new Error(`connector not found: ${props.connectorName}`)
+
+  return LeucoConnectorHost.buildConnector({
+    project: { id: props.project.id, name: props.project.name },
+    connector,
+    projectStore: props.projectStore,
+    projectStateStore: props.projectStateStore,
+  })
+}
+
+type BuildProjectRuntimeProps = {
   project: Project
   paths: LeucoPaths
   env: NodeJS.ProcessEnv
   codexBin: string | undefined
   onLog: Logger
-  bus: LeucoEventBus
+  eventLog: LeucoEventLog
   projectStore: LeucoProjectStore
   projectStateStore: LeucoProjectStateStore
-  mcpToken: string
-  mcpPort: number
+  turnTimeoutMs: number
+  turnIdleTimeoutMs: number
+  turnConcurrency: number
+  turnQueueMaxItems: number
+  turnQueueMaxBytes: number
 }
 
-const buildTenant = (props: BuildTenantProps): LeucoTenant => {
-  const enabledChannels = props.project.channels.filter((ch) => ch.enabled)
-  const filteredProject: Project = { ...props.project, channels: enabledChannels }
+const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRuntime => {
+  const enabledConnectors = props.project.connectors.filter((connector) => connector.enabled)
+  const filteredProject: Project = { ...props.project, connectors: enabledConnectors }
 
-  const plugins = LeucoChannelHost.buildForProject({
+  const connectors = LeucoConnectorHost.buildForProject({
     project: { id: filteredProject.id, name: filteredProject.name },
-    channels: filteredProject.channels,
+    connectors: filteredProject.connectors,
     projectStore: props.projectStore,
     projectStateStore: props.projectStateStore,
   })
 
   const codexHome = ensureCodexHome(props.paths, props.project.id)
-  ensureTenantConfigToml(codexHome, {
+  ensureProjectCodexConfig(codexHome, {
     projectPath: props.project.path,
-    projectId: props.project.id,
-    projectName: props.project.name,
-    mcpEndpoint: { url: `http://127.0.0.1:${props.mcpPort}/mcp/${props.project.id}` },
     extraMcpServers: props.project.mcpServers,
   })
   ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
 
-  const childEnv: NodeJS.ProcessEnv = {
-    ...props.env,
-    CODEX_HOME: codexHome,
-    [LEUCO_MCP_TOKEN_ENV]: props.mcpToken,
-  }
+  const childEnv = buildCodexChildEnv({
+    env: props.env,
+    codexHome,
+    projectId: props.project.id,
+  })
 
   const codex = new LeucoCodexClient({
     bin: props.codexBin,
     cwd: props.project.path,
     env: childEnv,
-    onLog: props.onLog,
+    onLog: (line) => props.onLog(`[${props.project.name}] ${line}`),
     clientVersion: pkg.version,
     onAnyNotification: (method, params) => {
-      props.bus.emit({
+      const notification = toBoundedCodexNotification(method, params)
+      if (notification === null) return
+
+      props.eventLog.append({
         ts: Date.now(),
         type: "codex.notification",
         project: props.project.name,
-        method,
-        params,
+        method: notification.method,
+        params: notification.params,
       })
     },
   })
 
   const presets = LeucoPromptPresets.resolveAll(props.project.prompts)
+  const state = props.projectStateStore.load(props.project.id)
 
-  return new LeucoTenant({
+  return new LeucoProjectRuntime({
     projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
@@ -218,14 +336,21 @@ const buildTenant = (props: BuildTenantProps): LeucoTenant => {
       developerInstructions: props.project.developerInstructions ?? undefined,
     },
     codex,
-    plugins,
+    connectors,
     onLog: props.onLog,
-    bus: props.bus,
-    initialCodexThreadId: props.project.state.codexThreadId ?? undefined,
+    eventLog: props.eventLog,
+    conversationScope: props.project.conversationScope,
+    initialCodexThreadId: state.codexThreadId ?? undefined,
+    initialCodexThreadIds: state.codexThreadIds,
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
     presets,
-    configSignature: tenantConfigSignature(props.project),
+    configSignature: projectRuntimeSignature(props.project),
+    turnTimeoutMs: props.turnTimeoutMs,
+    turnIdleTimeoutMs: props.turnIdleTimeoutMs,
+    turnConcurrency: props.turnConcurrency,
+    turnQueueMaxItems: props.turnQueueMaxItems,
+    turnQueueMaxBytes: props.turnQueueMaxBytes,
   })
 }
 
@@ -245,46 +370,30 @@ const ensureCodexHome = (paths: LeucoPaths, projectId: string): string => {
   return dir
 }
 
-const ensureTenantConfigToml = (
+const ensureProjectCodexConfig = (
   codexHome: string,
-  tenant: {
+  runtime: {
     projectPath: string
-    projectId: string
-    projectName: string
-    mcpEndpoint: { url: string }
     extraMcpServers: Record<string, McpServer>
   },
 ): void => {
   const path = join(codexHome, "config.toml")
-  const autoApproveTools = [
-    "slack_call",
-    "slack_download_file",
-    "schedule_create",
-    "schedule_list",
-    "schedule_delete",
-  ]
   const lines = [
     `model = "gpt-5.6-terra"`,
     `model_reasoning_effort = "xhigh"`,
+    // Bound every tool source, including project-provided MCP servers that do
+    // not pass through Leuco's own response serializer.
+    `tool_output_token_limit = 20000`,
     "",
     `approval_policy = "never"`,
     `sandbox_mode = "danger-full-access"`,
     "",
-    `[projects.${tomlString(tenant.projectPath)}]`,
+    `[projects.${tomlString(runtime.projectPath)}]`,
     `trust_level = "trusted"`,
-    "",
-    `[mcp_servers.leuco]`,
-    `url = ${tomlString(tenant.mcpEndpoint.url)}`,
-    `bearer_token_env_var = "${LEUCO_MCP_TOKEN_ENV}"`,
     "",
   ]
 
-  for (const tool of autoApproveTools) {
-    lines.push(`[mcp_servers.leuco.tools.${tool}]`, `approval_mode = "approve"`, "")
-  }
-
-  for (const [name, server] of Object.entries(tenant.extraMcpServers)) {
-    if (name === "leuco") continue
+  for (const [name, server] of Object.entries(runtime.extraMcpServers)) {
     lines.push(
       `[mcp_servers.${name}]`,
       `command = ${tomlString(server.command)}`,
@@ -307,7 +416,6 @@ const ensureAuthSymlink = (codexHome: string, source: string): void => {
   if (!existsSync(source)) return
 
   const target = join(codexHome, "auth.json")
-
   if (isSymlink(target)) {
     if (currentSymlinkTarget(target) === source) return
     unlinkSync(target)
@@ -315,8 +423,8 @@ const ensureAuthSymlink = (codexHome: string, source: string): void => {
     return
   }
 
-  // A REGULAR auth.json means this tenant logged in separately on purpose —
-  // replacing it with the shared symlink would destroy those credentials.
+  // A regular file can be a deliberate runtime-specific login. Replacing it
+  // would destroy credentials merely because the runtime was rebuilt.
   if (existsSync(target)) return
 
   symlinkSync(source, target)
@@ -330,6 +438,10 @@ const isSymlink = (path: string): boolean => {
   }
 }
 
+const tomlStringArray = (values: string[]): string => {
+  return `[${values.map(tomlString).join(", ")}]`
+}
+
 const currentSymlinkTarget = (path: string): string | null => {
   try {
     if (!lstatSync(path).isSymbolicLink()) return null
@@ -337,8 +449,4 @@ const currentSymlinkTarget = (path: string): string | null => {
   } catch {
     return null
   }
-}
-
-const tomlStringArray = (values: string[]): string => {
-  return `[${values.map(tomlString).join(", ")}]`
 }
