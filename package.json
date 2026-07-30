@@ -53,6 +53,7 @@
     "check": "vp check",
     "dev": "bun run lib/index.ts",
     "package:check": "bun run build:types && publint && bun pm pack --dry-run",
+    "prepare": "bun run build:types",
     "prepack": "bun run build:types",
     "test": "vp test run && bun run test:bun",
     "test:bun": "bun test ./lib/events/leuco-event-log.bun-test.ts",
