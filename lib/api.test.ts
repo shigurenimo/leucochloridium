@@ -23,7 +23,6 @@ describe("public API", () => {
 
   it("exports the contracts required by embedders", () => {
     expectTypeOf<LeucoRuntimeProps>().toHaveProperty("env")
-    expectTypeOf<LeucoRuntimeProps>().toHaveProperty("codexHome")
     expectTypeOf<LeucoEventLogProps>().toHaveProperty("eventLogPath")
     expectTypeOf<Project>().toHaveProperty("path")
     expectTypeOf<Connector>().toHaveProperty("start")

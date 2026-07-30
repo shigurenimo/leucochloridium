@@ -2,13 +2,6 @@
 
 All notable changes to Leuco are documented here.
 
-## 0.17.5 - 2026-07-31
-
-### Added
-
-- Programmable APIの`LeucoRuntime.build()`で既存`codexHome`を指定し、PCのCodex認証・設定・skills・pluginsを継承できるように追加。
-- 共有`CODEX_HOME`利用時もproject固有設定をapp-serverの`-c`引数で安全に重ね、利用者の`config.toml`を書き換えない。
-
 ## 0.17.4 - 2026-07-30
 
 ### Fixed

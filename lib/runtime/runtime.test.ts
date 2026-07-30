@@ -95,28 +95,6 @@ describe("LeucoRuntime", () => {
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
   })
 
-  it("inherits a shared Codex home without rewriting its user config", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const sharedCodexHome = join(home, "shared-codex")
-    const sharedConfigPath = join(sharedCodexHome, "config.toml")
-    store.save(sampleProject())
-    mkdirSync(sharedCodexHome, { recursive: true })
-    writeFileSync(sharedConfigPath, 'notify = ["desktop"]\n')
-
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      codexHome: sharedCodexHome,
-      eventLog: new LeucoEventLog(),
-    })
-
-    expect(readFileSync(sharedConfigPath, "utf8")).toBe('notify = ["desktop"]\n')
-    expect(() => readFileSync(join(paths.projectHome(PROJECT_ID), "config.toml"))).toThrow()
-    expect(() => readFileSync(join(paths.projectHome(PROJECT_ID), "auth.json"))).toThrow()
-    await runtime.stop()
-  })
-
   it("starts healthy runtimes and supervises a project whose initial build failed", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"))

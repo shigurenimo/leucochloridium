@@ -29,7 +29,6 @@ import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { LeucoPromptPresets } from "@/prompts/presets"
 import { buildCodexChildEnv } from "@/runtime/build-codex-child-env"
-import { LeucoCodexConfig } from "@/runtime/leuco-codex-config"
 
 type Logger = (line: string) => void
 
@@ -49,8 +48,6 @@ export type LeucoRuntimeProps = {
   /** Loopback gateway port for daemon health, status, and thread control. */
   port?: number
   home?: string
-  /** Existing Codex home to inherit auth, config, skills, and plugins from. */
-  codexHome?: string
   codexBin?: string
   onLog?: Logger
   /** Dependency seam for runtime composition tests. */
@@ -125,7 +122,6 @@ export class LeucoRuntime {
           project,
           paths,
           env: buildProps.env,
-          sharedCodexHome: buildProps.codexHome,
           codexBin: buildProps.codexBin,
           onLog,
           eventLog,
@@ -270,7 +266,6 @@ type BuildProjectRuntimeProps = {
   project: Project
   paths: LeucoPaths
   env: NodeJS.ProcessEnv
-  sharedCodexHome: string | undefined
   codexBin: string | undefined
   onLog: Logger
   eventLog: LeucoEventLog
@@ -294,16 +289,12 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
     projectStateStore: props.projectStateStore,
   })
 
-  const projectCodexHome = ensureCodexHome(props.paths, props.project.id)
-  const codexHome = props.sharedCodexHome ?? projectCodexHome
-  const codexConfig = {
+  const codexHome = ensureCodexHome(props.paths, props.project.id)
+  ensureProjectCodexConfig(codexHome, {
     projectPath: props.project.path,
     extraMcpServers: props.project.mcpServers,
-  }
-  if (props.sharedCodexHome === undefined) {
-    ensureProjectCodexConfig(projectCodexHome, codexConfig)
-    ensureAuthSymlink(projectCodexHome, props.paths.codexAuthPath())
-  }
+  })
+  ensureAuthSymlink(codexHome, props.paths.codexAuthPath())
 
   const childEnv = buildCodexChildEnv({
     env: props.env,
@@ -313,8 +304,6 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
 
   const codex = new LeucoCodexClient({
     bin: props.codexBin,
-    args:
-      props.sharedCodexHome === undefined ? undefined : new LeucoCodexConfig(codexConfig).toArgs(),
     cwd: props.project.path,
     env: childEnv,
     onLog: (line) => props.onLog(`[${props.project.name}] ${line}`),
@@ -340,7 +329,7 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
     projectId: props.project.id,
     projectName: props.project.name,
     projectPath: props.project.path,
-    codexHome: projectCodexHome,
+    codexHome,
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     agentSpec: {
       model: props.project.model ?? undefined,
