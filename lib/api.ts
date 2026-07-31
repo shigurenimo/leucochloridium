@@ -40,4 +40,4 @@ export { leucoEventSchema } from "@/events/leuco-event-schema"
 export type { LeucoEvent } from "@/events/leuco-event-types"
 
 export { LeucoRuntime } from "@/runtime/runtime"
-export type { LeucoRuntimeProps } from "@/runtime/runtime"
+export type { LeucoProjectTurnProps, LeucoRuntimeProps } from "@/runtime/runtime"

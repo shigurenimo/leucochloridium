@@ -1,5 +1,5 @@
 import type { Project } from "@/config/config-schema"
-import type { Connector } from "@/connectors/connector"
+import type { Connector, RunTextTurnOptions } from "@/connectors/connector"
 import type {
   DaemonControl,
   DaemonProjectSummary,
@@ -32,6 +32,13 @@ type ProjectSlot = {
 type ProjectTarget = {
   project: Project
   signature: string
+}
+
+type ProjectTurnProps = {
+  projectId: string
+  threadKey: string
+  text: string
+  options?: RunTextTurnOptions
 }
 
 export type LeucoProjectSupervisorProps = {
@@ -230,6 +237,16 @@ export class LeucoProjectSupervisor implements DaemonControl {
       if (runtime.clearThread(threadKey)) return true
     }
     return false
+  }
+
+  runProjectTurn(turnProps: ProjectTurnProps): Promise<string | Error> {
+    const runtime = this.slots.get(turnProps.projectId)?.runtime
+
+    if (runtime === null || runtime === undefined) {
+      return Promise.resolve(new Error(`project runtime is not running: ${turnProps.projectId}`))
+    }
+
+    return runtime.runTextTurn(turnProps.threadKey, turnProps.text, turnProps.options)
   }
 
   private async runStart(): Promise<void> {

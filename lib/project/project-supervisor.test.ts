@@ -80,6 +80,52 @@ const makeProject = (name: string, enabled = true): Project => ({
 })
 
 describe("LeucoProjectSupervisor.start / stop", () => {
+  it("runs an external turn on the exact project runtime", async () => {
+    const turns: string[] = []
+    const alpha = buildProjectRuntime(
+      "alpha",
+      fakeCodex({
+        runTextTurn: async (_threadId, text) => {
+          turns.push(`alpha:${text}`)
+          return "alpha complete"
+        },
+      }),
+    )
+    const bravo = buildProjectRuntime(
+      "bravo",
+      fakeCodex({
+        runTextTurn: async (_threadId, text) => {
+          turns.push(`bravo:${text}`)
+          return "bravo complete"
+        },
+      }),
+    )
+    const supervisor = new LeucoProjectSupervisor({
+      buildProjectConnector: noConnectorBuild,
+      runtimes: [alpha, bravo],
+      projectStore: fakeStore(),
+      buildProjectRuntime: noBuild,
+      onLog: () => {},
+    })
+
+    await supervisor.start()
+    const response = await supervisor.runProjectTurn({
+      projectId: alpha.projectId,
+      threadKey: "external-notification",
+      text: "task completed",
+    })
+    const missing = await supervisor.runProjectTurn({
+      projectId: "00000000-0000-4000-8000-999999999999",
+      threadKey: "external-notification",
+      text: "task completed",
+    })
+
+    expect(response).toBe("alpha complete")
+    expect(turns).toEqual(["alpha:task completed"])
+    expect(missing).toBeInstanceOf(Error)
+    await supervisor.stop()
+  })
+
   it("starts and stops project runtimes in order", async () => {
     const calls: string[] = []
     const a = buildProjectRuntime(

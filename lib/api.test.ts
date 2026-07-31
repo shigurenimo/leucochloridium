@@ -8,7 +8,13 @@ import {
   leucoEventSchema,
   projectSchema,
 } from "@/api"
-import type { Connector, LeucoEventLogProps, LeucoRuntimeProps, Project } from "@/api"
+import type {
+  Connector,
+  LeucoEventLogProps,
+  LeucoProjectTurnProps,
+  LeucoRuntimeProps,
+  Project,
+} from "@/api"
 
 describe("public API", () => {
   it("exports only the stable composition, configuration, connector, and event-log values", () => {
@@ -24,6 +30,7 @@ describe("public API", () => {
   it("exports the contracts required by embedders", () => {
     expectTypeOf<LeucoRuntimeProps>().toHaveProperty("env")
     expectTypeOf<LeucoRuntimeProps>().toHaveProperty("codexAuthPath")
+    expectTypeOf<LeucoProjectTurnProps>().toHaveProperty("projectId")
     expectTypeOf<LeucoEventLogProps>().toHaveProperty("eventLogPath")
     expectTypeOf<Project>().toHaveProperty("path")
     expectTypeOf<Connector>().toHaveProperty("start")

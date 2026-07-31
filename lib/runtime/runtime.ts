@@ -10,7 +10,7 @@ import {
 import { join } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoConnectorHost } from "@/connectors/connector-host"
-import type { Connector } from "@/connectors/connector"
+import type { Connector, RunTextTurnOptions } from "@/connectors/connector"
 import type { McpServer, Project } from "@/config/config-schema"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { tomlString } from "@/engine/codex/toml-string"
@@ -59,6 +59,13 @@ export type LeucoRuntimeProps = {
   /** Optional override owned and closed by the runtime. */
   eventLog?: LeucoEventLog
   buildGateway?: (props: LeucoGatewayServerProps) => GatewayLifecycle
+}
+
+export type LeucoProjectTurnProps = {
+  projectId: string
+  threadKey: string
+  text: string
+  options?: RunTextTurnOptions
 }
 
 /**
@@ -224,6 +231,10 @@ export class LeucoRuntime {
 
   async reload(): Promise<void> {
     await this.props.supervisor.reconcile()
+  }
+
+  runProjectTurn(turnProps: LeucoProjectTurnProps): Promise<string | Error> {
+    return this.props.supervisor.runProjectTurn(turnProps)
   }
 
   private async runStop(): Promise<void> {
