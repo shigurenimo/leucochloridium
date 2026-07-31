@@ -398,6 +398,7 @@ const FORM_ENCODED_METHODS = new Set([
   "conversations.info",
   "conversations.list",
   "conversations.replies",
+  "files.completeUploadExternal",
   "files.getUploadURLExternal",
   "search.messages",
 ])

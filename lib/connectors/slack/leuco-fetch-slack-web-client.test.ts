@@ -259,6 +259,32 @@ describe("LeucoFetchSlackWebClient", () => {
     ])
   })
 
+  it.each([
+    [
+      "files.getUploadURLExternal",
+      { filename: "report.pdf", length: 123 },
+      { filename: "report.pdf", length: "123" },
+    ],
+    [
+      "files.completeUploadExternal",
+      { files: [{ id: "F1", title: "report" }], channel_id: "C1" },
+      { files: JSON.stringify([{ id: "F1", title: "report" }]), channel_id: "C1" },
+    ],
+  ])("posts %s as form-encoded data through apiCall", async (method, body, expected) => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
+    await client.apiCall(method, body)
+
+    const [url, init] = onlyFetchCall(fetchMock)
+    expect(url).toBe(`https://slack.com/api/${method}`)
+    expectFormBody(init, expected)
+  })
+
   it("retries once after a 429 honoring retry-after", async () => {
     const responses = [
       new Response("rate limited", { status: 429, headers: { "Retry-After": "0" } }),
