@@ -1,6 +1,6 @@
-import { readFile, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 import { HTTPException } from "hono/http-exception"
+import { readBoundedUploadFile } from "@/actions/slack/read-bounded-upload-file"
 import { resolveSlackTokens } from "@/actions/slack/slack-call"
 import { factory } from "@/cli/cli-factory"
 import { resolveProjectArgument } from "@/cli/utils/lookup-config"
@@ -34,9 +34,9 @@ export const slackUploadFileHandler = factory.createHandlers(async (c) => {
   if (channelId === null) throw new HTTPException(400, { message: "--channel is required" })
 
   const filePath = resolve(c.var.cwd, rawFilePath)
-  const fileStats = await stat(filePath)
-  if (!fileStats.isFile()) throw new HTTPException(400, { message: "--file must be a file" })
-  if (fileStats.size > MAX_UPLOAD_BYTES) {
+  const uploadFile = await readBoundedUploadFile({ path: filePath, maxBytes: MAX_UPLOAD_BYTES })
+  if (!uploadFile.isFile) throw new HTTPException(400, { message: "--file must be a file" })
+  if (uploadFile.exceedsLimit) {
     throw new HTTPException(400, { message: `--file exceeds ${MAX_UPLOAD_BYTES} bytes` })
   }
 
@@ -48,7 +48,7 @@ export const slackUploadFileHandler = factory.createHandlers(async (c) => {
   const filename = basename(filePath)
   const client = new LeucoFetchSlackWebClient({ botToken: tokens.botToken })
   const uploaded = await client.filesUpload({
-    content: await readFile(filePath),
+    content: uploadFile.content,
     filename,
     title: flagString(body.flags.title) ?? filename,
     channelId,

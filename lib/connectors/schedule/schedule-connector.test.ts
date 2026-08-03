@@ -419,6 +419,38 @@ describe("LeucoScheduleConnector failure containment", () => {
     expect(captured.turns).toHaveLength(1)
   })
 
+  it("retries a missed cron catch-up after a transient durable marker failure", async () => {
+    const entry = cronEntry({ runAt: "30 9 * * *" })
+    const store = makeStore([entry])
+    store.lastFiredAt[entry.id] = new Date(2026, 4, 5, 9, 30).getTime()
+    const markerFailures = { remaining: 1 }
+    const clock = { nowMs: new Date(2026, 4, 7, 12, 0).getTime() }
+    const guardedStore: ScheduleStorePort = {
+      listEntries: () => store.listEntries(),
+      removeEntry: (entryId) => store.removeEntry(entryId),
+      getLastFiredAt: (entryId) => store.getLastFiredAt(entryId),
+      markFired: (entryId, firedAt) => {
+        if (markerFailures.remaining > 0) {
+          markerFailures.remaining -= 1
+          throw new Error("disk unavailable")
+        }
+        store.markFired(entryId, firedAt)
+      },
+    }
+    const connector = buildConnector(guardedStore, () => new Date(clock.nowMs))
+    const context = makeCtx()
+
+    await connector.start(context.ctx)
+    await connector.waitForStartupTick()
+    expect(context.captured.turns).toEqual([])
+
+    clock.nowMs += 60_000
+    await connector.tickOnce()
+
+    expect(context.captured.turns).toHaveLength(1)
+    expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
+  })
+
   it("retains a failed one-shot and retries with exponential backoff until success", async () => {
     const entry = isoEntry()
     const store = makeStore([entry])

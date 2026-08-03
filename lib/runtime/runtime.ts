@@ -7,7 +7,7 @@ import {
   symlinkSync,
   unlinkSync,
 } from "node:fs"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import pkg from "../../package.json" with { type: "json" }
 import { LeucoConnectorHost } from "@/connectors/connector-host"
 import type { Connector, RunTextTurnOptions } from "@/connectors/connector"
@@ -428,13 +428,25 @@ const ensureProjectCodexConfig = (
 }
 
 const ensureAuthSymlink = (codexHome: string, source: string): void => {
-  if (!existsSync(source)) return
-
+  const absoluteSource = resolve(source)
   const target = join(codexHome, "auth.json")
+  const currentTarget = currentSymlinkTarget(target)
+  const currentAbsoluteTarget =
+    currentTarget === null ? null : resolve(dirname(target), currentTarget)
+
+  if (!existsSync(absoluteSource)) {
+    // Keep a link to the selected source so a later `codex login` can make it
+    // valid, but never retain credentials from a different source.
+    if (currentAbsoluteTarget !== null && currentAbsoluteTarget !== absoluteSource) {
+      unlinkSync(target)
+    }
+    return
+  }
+
   if (isSymlink(target)) {
-    if (currentSymlinkTarget(target) === source) return
+    if (currentAbsoluteTarget === absoluteSource) return
     unlinkSync(target)
-    symlinkSync(source, target)
+    symlinkSync(absoluteSource, target)
     return
   }
 
@@ -442,7 +454,7 @@ const ensureAuthSymlink = (codexHome: string, source: string): void => {
   // would destroy credentials merely because the runtime was rebuilt.
   if (existsSync(target)) return
 
-  symlinkSync(source, target)
+  symlinkSync(absoluteSource, target)
 }
 
 const isSymlink = (path: string): boolean => {

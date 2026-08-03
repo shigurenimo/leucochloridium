@@ -123,8 +123,42 @@ describe("findLatestSlackDirectMessage", () => {
         oldest: null,
         inclusive: null,
         limit: 50,
+        cursor: null,
       },
     ])
+  })
+
+  it("paginates thread replies before selecting the latest human message", async () => {
+    const root = message("100.0", { replyCount: 2 })
+    const client = new LeucoMemorySlackWebClient({
+      conversationsList: {
+        channels: [{ id: "D1", isIm: true }],
+        nextCursor: null,
+      },
+      conversationsHistory: { messages: [root] },
+      conversationsReplies: (args) =>
+        args.cursor === null
+          ? {
+              messages: [root, message("200.0", { threadTs: "100.0" })],
+              nextCursor: "page-2",
+            }
+          : {
+              messages: [message("300.0", { threadTs: "100.0" })],
+              nextCursor: null,
+            },
+    })
+
+    const result = await findLatestSlackDirectMessage({
+      client,
+      botUserId: "UBOT",
+      historyLimit: 2,
+    })
+
+    expect(result).toMatchObject({
+      conversationId: "D1",
+      message: { ts: "300.0", threadTs: "100.0" },
+    })
+    expect(client.calls.conversationsReplies.map((call) => call.cursor)).toEqual([null, "page-2"])
   })
 
   it("stops when Slack repeats a pagination cursor", async () => {

@@ -100,18 +100,28 @@ describe("LeucoFetchSlackWebClient", () => {
     expect(result.nextCursor).toBe("page-2")
   })
 
-  it("posts conversations.replies as form-encoded data through apiCall", async () => {
+  it("posts and normalizes cursor pagination for conversations.replies", async () => {
     const fetchMock = vi.fn(
       async (_url: string | URL | Request, _init?: RequestInit) =>
-        new Response(JSON.stringify({ ok: true, messages: [] }), { status: 200 }),
+        new Response(
+          JSON.stringify({
+            ok: true,
+            messages: [],
+            response_metadata: { next_cursor: "page-2" },
+          }),
+          { status: 200 },
+        ),
     )
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
-    await client.apiCall("conversations.replies", {
+    const replies = await client.conversationsReplies({
       channel: "D1",
       ts: "100.0",
+      oldest: null,
+      inclusive: null,
       limit: 100,
+      cursor: "page-1",
     })
 
     const [url, init] = onlyFetchCall(fetchMock)
@@ -120,7 +130,9 @@ describe("LeucoFetchSlackWebClient", () => {
       channel: "D1",
       ts: "100.0",
       limit: "100",
+      cursor: "page-1",
     })
+    expect(replies.nextCursor).toBe("page-2")
   })
 
   it("posts files.getUploadURLExternal as form-encoded data through apiCall", async () => {

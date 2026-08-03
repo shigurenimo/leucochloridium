@@ -61,7 +61,7 @@ This walkthrough covers the standard configuration using a bot user OAuth token 
 
 Open [Slack Apps](https://api.slack.com/apps), choose `Create New App`, then `From scratch`, and pick an app name and the workspace to install into.
 
-Under `OAuth & Permissions`, add the bot token scopes `app_mentions:read`, `channels:history`, `im:history`, `chat:write`, and `reactions:write`. If the bot should also receive every message in private channels, add `groups:history` as well. Slack documents each scope in its reference, for example [`app_mentions:read`](https://docs.slack.dev/reference/scopes/app_mentions.read/), [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/), and [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/).
+Under `OAuth & Permissions`, add the bot token scopes `app_mentions:read`, `channels:history`, `im:history`, `chat:write`, `files:write`, and `reactions:write`. If the bot should also receive every message in private channels, add `groups:history` as well. Slack documents each scope in its reference, for example [`app_mentions:read`](https://docs.slack.dev/reference/scopes/app_mentions.read/), [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/), [`files:write`](https://docs.slack.dev/reference/scopes/files.write/), and [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/).
 
 ### Subscribe to events
 
@@ -159,7 +159,7 @@ daemon自体が致命的エラーで終了した場合の自動再起動とロ�
 
 ## Using a user token
 
-Leuco also accepts a user token (`xoxp-...`). In that configuration, Slack API calls run as the token's owner rather than as a bot. Set the user token scopes `channels:history`, `im:history`, `im:read`, and `chat:write`, subscribe to `message.channels` and `message.im` as user events rather than bot events, and add `groups:history`, `mpim:history`, `message.groups`, or `message.mpim` as needed. The Socket Mode `xapp-...` token is required exactly as in the bot configuration.
+Leuco also accepts a user token (`xoxp-...`). In that configuration, Slack API calls run as the token's owner rather than as a bot. Set the user token scopes `channels:history`, `im:history`, `im:read`, `chat:write`, and `files:write`, subscribe to `message.channels` and `message.im` as user events rather than bot events, and add `groups:history`, `mpim:history`, `message.groups`, or `message.mpim` as needed. The Socket Mode `xapp-...` token is required exactly as in the bot configuration.
 
 For compatibility, the CLI stores a user token through the same `--bot-token` flag:
 

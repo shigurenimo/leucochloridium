@@ -282,17 +282,26 @@ export class LeucoScheduleConnector implements Connector {
 
     const walkedTo = this.catchUpWalkedTo.get(entry.id) ?? 0
     const currentMinuteStart = minuteEpoch * 60_000
-    this.catchUpWalkedTo.set(entry.id, currentMinuteStart - 60_000)
+    const walkedThrough = currentMinuteStart - 60_000
     const latest = latestScheduleCatchup({
       cron: parsed,
       lastFiredAt: Math.max(lastFiredAt, walkedTo),
       now: currentMinuteStart - 1,
       maxWindowMs: CATCHUP_MAX_LOOKBACK_MS,
     })
-    if (latest === null || this.isTickCancelled(tick)) return false
+    if (latest === null) {
+      this.catchUpWalkedTo.set(entry.id, walkedThrough)
+      return false
+    }
+    if (this.isTickCancelled(tick)) return false
 
+    const delivered = await this.fire(entry, tick, "cron")
+    const latestMinuteEpoch = Math.floor(latest / 60_000)
+    if (!this.wasCronFiredAtOrAfter(entry, latestMinuteEpoch)) return false
+
+    this.catchUpWalkedTo.set(entry.id, walkedThrough)
     this.lastFiredMinute.set(entry.id, minuteEpoch)
-    return await this.fire(entry, tick, "cron")
+    return delivered
   }
 
   private async fire(

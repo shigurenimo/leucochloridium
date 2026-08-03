@@ -79,11 +79,13 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
     oldest: string | null
     inclusive: boolean | null
     limit: number | null
+    cursor: string | null
   }): Promise<SlackHistorySlice> {
     const body: Record<string, unknown> = { channel: args.channel, ts: args.ts }
     if (args.oldest !== null) body.oldest = args.oldest
     if (args.inclusive !== null) body.inclusive = args.inclusive
     if (args.limit !== null) body.limit = args.limit
+    if (args.cursor !== null) body.cursor = args.cursor
 
     return await this.history("conversations.replies", body)
   }
@@ -209,7 +211,10 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
         },
       ]
     })
-    return { messages }
+    return {
+      messages,
+      nextCursor: parsed.data.response_metadata?.next_cursor?.trim() || null,
+    }
   }
 
   private async callOk(method: string, body: Record<string, unknown>): Promise<unknown> {
@@ -438,6 +443,12 @@ const historyMessageSchema = z
 const historySchema = z
   .object({
     messages: z.array(historyMessageSchema).default([]),
+    response_metadata: z
+      .object({
+        next_cursor: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough()
 

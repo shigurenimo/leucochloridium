@@ -27,6 +27,7 @@ export abstract class LeucoSlackWebClient {
     oldest: string | null
     inclusive: boolean | null
     limit: number | null
+    cursor: string | null
   }): Promise<SlackHistorySlice>
 
   abstract conversationsList(args: {
@@ -76,6 +77,7 @@ export type SlackHistoryMessage = {
 
 export type SlackHistorySlice = {
   messages: ReadonlyArray<SlackHistoryMessage>
+  nextCursor?: string | null
 }
 
 export type SlackConversationListEntry = {

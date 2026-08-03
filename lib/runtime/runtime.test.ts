@@ -1,4 +1,5 @@
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Project } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
@@ -117,6 +118,56 @@ describe("LeucoRuntime", () => {
     )
     expect(readlinkSync(join(paths.projectHome(PROJECT_ID), "auth.json"))).toBe(sharedAuthPath)
     await runtime.stop()
+  })
+
+  it("resolves a relative Codex auth path before linking it into a project runtime", async () => {
+    const paths = new LeucoPaths({ home })
+    const store = new LeucoProjectStore({ paths })
+    const sharedAuthPath = join(home, "relative-auth.json")
+    const relativeAuthPath = relative(process.cwd(), sharedAuthPath)
+    store.save(sampleProject())
+    writeFileSync(sharedAuthPath, "shared credentials")
+
+    const runtime = LeucoRuntime.build({
+      env: {},
+      home,
+      codexAuthPath: relativeAuthPath,
+      eventLog: new LeucoEventLog(),
+    })
+    const projectAuthPath = join(paths.projectHome(PROJECT_ID), "auth.json")
+
+    expect(readlinkSync(projectAuthPath)).toBe(resolve(relativeAuthPath))
+    expect(readFileSync(projectAuthPath, "utf8")).toBe("shared credentials")
+    await runtime.stop()
+  })
+
+  it("removes a stale auth link when the selected Codex auth source is missing", async () => {
+    const paths = new LeucoPaths({ home })
+    const store = new LeucoProjectStore({ paths })
+    const previousAuthPath = join(home, "previous-auth.json")
+    const missingAuthPath = join(home, "missing-auth.json")
+    store.save(sampleProject())
+    writeFileSync(previousAuthPath, "previous credentials")
+
+    const previousRuntime = LeucoRuntime.build({
+      env: {},
+      home,
+      codexAuthPath: previousAuthPath,
+      eventLog: new LeucoEventLog(),
+    })
+    await previousRuntime.stop()
+
+    const nextRuntime = LeucoRuntime.build({
+      env: {},
+      home,
+      codexAuthPath: missingAuthPath,
+      eventLog: new LeucoEventLog(),
+    })
+    const projectAuthPath = join(paths.projectHome(PROJECT_ID), "auth.json")
+
+    expect(existsSync(projectAuthPath)).toBe(false)
+    expect(() => lstatSync(projectAuthPath)).toThrow()
+    await nextRuntime.stop()
   })
 
   it("starts healthy runtimes and supervises a project whose initial build failed", async () => {

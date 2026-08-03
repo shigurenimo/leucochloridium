@@ -26,6 +26,7 @@ export type LeucoMemorySlackWebClientProps = {
       oldest: string | null
       inclusive: boolean | null
       limit: number | null
+      cursor: string | null
     }
   >
   conversationsList?: SlackMemoryResponder<
@@ -67,6 +68,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
       oldest: string | null
       inclusive: boolean | null
       limit: number | null
+      cursor: string | null
     }>
     conversationsList: Array<{ types: string; limit: number | null; cursor?: string | null }>
     conversationsHistory: Array<{
@@ -137,6 +139,7 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
     oldest: string | null
     inclusive: boolean | null
     limit: number | null
+    cursor: string | null
   }): Promise<SlackHistorySlice> {
     this.calls.conversationsReplies.push(args)
 
