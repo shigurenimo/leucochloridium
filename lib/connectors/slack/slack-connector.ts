@@ -74,7 +74,7 @@ export class LeucoSlackConnector implements Connector {
     // `start()` resolves auth.test (the event source is only started after),
     // but if that ordering ever changes note that a null botUserId does NOT
     // queue events — the processor skips them with "botUserId unknown".
-    this.processor = new LeucoSlackEventProcessor({ botUserId: null })
+    this.processor = new LeucoSlackEventProcessor({ botUserId: null, botId: null })
   }
 
   async start(ctx: ConnectorContext): Promise<void> {
@@ -134,10 +134,11 @@ export class LeucoSlackConnector implements Connector {
 
   private async startGeneration(ctx: ConnectorContext, generation: number): Promise<void> {
     ctx.onLog(`[${this.name}] resolving bot identity via auth.test`)
-    const botUserId = await this.fetchBotUserId(generation)
+    const botIdentity = await this.fetchBotIdentity(generation)
     this.ensureGenerationIsActive(generation)
+    const botUserId = botIdentity.userId
     this.botUserId = botUserId
-    this.processor.setBotUserId(botUserId)
+    this.processor.setBotIdentity(botUserId, botIdentity.botId)
 
     if (botUserId === null) {
       throw new Error(
@@ -151,13 +152,15 @@ export class LeucoSlackConnector implements Connector {
     ctx.onLog(`[${this.name}] ready — forwarding messages to agent (bot=<@${botUserId}>)`)
   }
 
-  private async fetchBotUserId(generation: number): Promise<string | null> {
+  private async fetchBotIdentity(
+    generation: number,
+  ): Promise<{ userId: string | null; botId: string | null }> {
     try {
       const result = await this.props.webClient.authTest()
-      return result.userId
+      return { userId: result.userId, botId: result.botId ?? null }
     } catch (err) {
       this.emitAuthFailure(err, generation)
-      return null
+      return { userId: null, botId: null }
     }
   }
 
@@ -394,7 +397,7 @@ export class LeucoSlackConnector implements Connector {
     this.adapter = null
     this.ctx = null
     this.botUserId = null
-    this.processor.setBotUserId(null)
+    this.processor.setBotIdentity(null, null)
     this.lastConnectionStatus = null
   }
 

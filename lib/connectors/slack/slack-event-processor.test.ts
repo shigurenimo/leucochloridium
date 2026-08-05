@@ -100,10 +100,18 @@ describe("LeucoSlackEventProcessor.processAppMention", () => {
     if (result.skip) expect(result.reason).toContain("self")
   })
 
-  it("skips app_mention carrying bot_id", () => {
+  it("forwards app_mention from another bot", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
     const result = proc.processAppMention(baseMention({ bot_id: "B1" }))
+    const event = expectMessage(result)
+    expect(event.user).toBe("U_USER")
+  })
+
+  it("skips app_mention from its own bot_id", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT", botId: "BSELF" })
+    const result = proc.processAppMention(baseMention({ user: undefined, bot_id: "BSELF" }))
     expect(result.skip).toBe(true)
+    if (result.skip) expect(result.reason).toContain("self")
   })
 
   it("skips app_mention when botUserId is unknown", () => {
@@ -170,14 +178,24 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
     if (result.skip) expect(result.reason).toContain("self")
   })
 
-  it("skips bot_id messages", () => {
+  it("forwards messages from another bot", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
     const result = proc.processMessage(baseMessage({ bot_id: "B1" }))
-    expect(result.skip).toBe(true)
+    const event = expectMessage(result)
+    expect(event.user).toBe("U_USER")
   })
 
-  it.each(["file_share", "thread_broadcast"])(
-    "forwards the user-authored %s subtype",
+  it("skips messages from its own bot_id even without a user field", () => {
+    const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT", botId: "BSELF" })
+    const result = proc.processMessage(
+      baseMessage({ user: undefined, subtype: "bot_message", bot_id: "BSELF" }),
+    )
+    expect(result.skip).toBe(true)
+    if (result.skip) expect(result.reason).toContain("self")
+  })
+
+  it.each(["bot_message", "file_share", "thread_broadcast"])(
+    "forwards the supported %s subtype",
     (subtype) => {
       const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
       const event = expectMessage(proc.processMessage(baseMessage({ subtype })))
@@ -186,8 +204,8 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
     },
   )
 
-  it.each(["bot_message", "message_changed", "channel_join"])(
-    "skips the non-user message subtype %s",
+  it.each(["message_changed", "channel_join"])(
+    "skips the unsupported message subtype %s",
     (subtype) => {
       const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
       const result = proc.processMessage(baseMessage({ subtype }))

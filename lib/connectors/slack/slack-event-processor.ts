@@ -11,6 +11,7 @@ import type {
 
 export type LeucoSlackEventProcessorProps = {
   botUserId: string | null
+  botId?: string | null
   /** Hard cap on the dedup map; events older than the TTL are evicted lazily. */
   dedupCapacity?: number
   /** TTL in ms. Slack redelivers within ~3s; 5 min is generous. */
@@ -25,7 +26,7 @@ export type ProcessResult = ProcessSkip | ProcessEmit
 
 const DEFAULT_DEDUP_CAPACITY = 10_000
 const DEFAULT_DEDUP_TTL_MS = 5 * 60 * 1000
-const FORWARDED_MESSAGE_SUBTYPES = new Set(["file_share", "thread_broadcast"])
+const FORWARDED_MESSAGE_SUBTYPES = new Set(["bot_message", "file_share", "thread_broadcast"])
 
 /**
  * Pure decision layer for Slack incoming events. Owns:
@@ -44,9 +45,11 @@ export class LeucoSlackEventProcessor {
   private readonly now: () => number
   private readonly seenKeys = new Map<string, number>()
   private botUserId: string | null
+  private botId: string | null
 
   constructor(props: LeucoSlackEventProcessorProps) {
     this.botUserId = props.botUserId
+    this.botId = props.botId ?? null
     this.dedupCapacity = props.dedupCapacity ?? DEFAULT_DEDUP_CAPACITY
     this.dedupTtlMs = props.dedupTtlMs ?? DEFAULT_DEDUP_TTL_MS
     this.now = props.now ?? Date.now
@@ -57,8 +60,9 @@ export class LeucoSlackEventProcessor {
    * mutator (rather than rebuilding the processor) so the dedup window
    * accumulated during the `app.start()` → `auth.test` race window survives.
    */
-  setBotUserId(botUserId: string | null): void {
+  setBotIdentity(botUserId: string | null, botId: string | null): void {
     this.botUserId = botUserId
+    this.botId = botId
   }
 
   processAppMention(event: unknown): ProcessResult {
@@ -68,13 +72,10 @@ export class LeucoSlackEventProcessor {
     }
     const data = parsed.data
 
-    // Same self/bot filter the `message` path enforces. Without this, an
-    // `app_mention` from the bot's own reply (or a bot-to-bot mention chain)
-    // would dispatch a turn — and because `message` events skip BEFORE
-    // calling `consume()`, the dedup key is still fresh when the matching
-    // `app_mention` arrives, so nothing prevents the loop downstream.
-    if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
+    if (this.botId !== null && data.bot_id === this.botId) {
+      return { skip: true, reason: "self app_mention bot_id" }
+    }
     if (data.user === this.botUserId) return { skip: true, reason: "self app_mention" }
 
     return this.dispatchMessage(data, "app_mention")
@@ -88,8 +89,10 @@ export class LeucoSlackEventProcessor {
     if (data.subtype !== undefined && !FORWARDED_MESSAGE_SUBTYPES.has(data.subtype)) {
       return { skip: true, reason: `subtype=${data.subtype}` }
     }
-    if (data.bot_id !== undefined) return { skip: true, reason: "bot_id present" }
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
+    if (this.botId !== null && data.bot_id === this.botId) {
+      return { skip: true, reason: "self message bot_id" }
+    }
     if (data.user === this.botUserId) return { skip: true, reason: "self message" }
 
     // DMs always reach the agent — a DM opening with someone else's mention

@@ -161,8 +161,11 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
   async authTest(): Promise<SlackAuthTest> {
     const raw = await this.callOk("auth.test", {})
     const parsed = authTestSchema.safeParse(raw)
-    if (!parsed.success) return { userId: null }
-    return { userId: parsed.data.user_id ?? null }
+    if (!parsed.success) return { userId: null, botId: null }
+    return {
+      userId: parsed.data.user_id ?? null,
+      botId: parsed.data.bot_id ?? null,
+    }
   }
 
   async filesUpload(args: SlackFileUpload): Promise<{ fileId: string }> {
@@ -411,6 +414,7 @@ const formValue = (value: unknown): string => {
 const authTestSchema = z
   .object({
     user_id: z.string().optional(),
+    bot_id: z.string().optional(),
   })
   .passthrough()
 

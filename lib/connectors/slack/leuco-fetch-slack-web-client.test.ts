@@ -8,6 +8,23 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = originalFetch
   })
 
+  it("returns both Slack user and bot identities from auth.test", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true, user_id: "UBOT", bot_id: "BSELF" }), {
+          status: 200,
+        }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
+
+    await expect(client.authTest()).resolves.toEqual({
+      userId: "UBOT",
+      botId: "BSELF",
+    })
+  })
+
   it("posts search.messages as form-encoded data", async () => {
     const fetchMock = vi.fn(
       async (_url: string | URL | Request, _init?: RequestInit) =>

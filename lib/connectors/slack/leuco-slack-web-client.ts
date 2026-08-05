@@ -59,6 +59,7 @@ export abstract class LeucoSlackWebClient {
 
 export type SlackAuthTest = {
   userId: string | null
+  botId?: string | null
 }
 
 export type SlackConversationInfo = {
