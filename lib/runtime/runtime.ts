@@ -28,6 +28,7 @@ import { LeucoPaths } from "@/paths/leuco-paths"
 import { LeucoProjectStateStore } from "@/projects/project-state-store"
 import { LeucoProjectStore } from "@/projects/project-store"
 import { LeucoPromptPresets } from "@/prompts/presets"
+import type { LeucoHostInstructions } from "@/prompts/host-instructions"
 import { buildCodexChildEnv } from "@/runtime/build-codex-child-env"
 
 type Logger = (line: string) => void
@@ -59,6 +60,8 @@ export type LeucoRuntimeProps = {
   /** Optional override owned and closed by the runtime. */
   eventLog?: LeucoEventLog
   buildGateway?: (props: LeucoGatewayServerProps) => GatewayLifecycle
+  /** Replaces standalone Leuco CLI guidance when embedded by another host. */
+  hostInstructions?: LeucoHostInstructions
 }
 
 export type LeucoProjectTurnProps = {
@@ -142,6 +145,7 @@ export class LeucoRuntime {
           turnConcurrency: globalSettings.turnConcurrency,
           turnQueueMaxItems: globalSettings.turnQueueMaxItems,
           turnQueueMaxBytes: globalSettings.turnQueueMaxBytes,
+          hostInstructions: buildProps.hostInstructions,
         }))
 
     const runtimes: LeucoProjectRuntime[] = []
@@ -291,6 +295,7 @@ type BuildProjectRuntimeProps = {
   turnConcurrency: number
   turnQueueMaxItems: number
   turnQueueMaxBytes: number
+  hostInstructions: LeucoHostInstructions | undefined
 }
 
 const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRuntime => {
@@ -360,6 +365,7 @@ const buildProjectRuntime = (props: BuildProjectRuntimeProps): LeucoProjectRunti
     projectStateStore: props.projectStateStore,
     useCommonInstructions: props.project.useCommonInstructions,
     presets,
+    hostInstructions: props.hostInstructions,
     configSignature: projectRuntimeSignature(props.project),
     turnTimeoutMs: props.turnTimeoutMs,
     turnIdleTimeoutMs: props.turnIdleTimeoutMs,

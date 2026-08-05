@@ -1,5 +1,6 @@
 import { join } from "node:path"
 import type { ConnectorIdentity } from "@/connectors/connector"
+import type { LeucoHostInstructions } from "@/prompts/host-instructions"
 
 type Props = {
   projectName: string
@@ -9,6 +10,7 @@ type Props = {
   identities: ConnectorIdentity[]
   presets: string[]
   perAgentInstructions: string | null
+  hostInstructions?: LeucoHostInstructions
   usePreamble?: boolean
 }
 
@@ -49,6 +51,10 @@ export class LeucoSystemPromptBuilder {
   }
 
   private headerSection(): string {
+    if (this.props.hostInstructions !== undefined) {
+      return this.props.hostInstructions.header.trim()
+    }
+
     const lines = [
       "# leuco built-in instructions",
       "",
@@ -100,13 +106,16 @@ export class LeucoSystemPromptBuilder {
       '`mentioned="false"` means the message was not directed to you. Do not acknowledge it, accept it as a task, or start work from it. Reply only when there is a clear independent reason to interject, and phrase the reply as an interjection rather than as acceptance.',
       "Never reply to your own user id.",
       "Before replying in a thread, inspect enough of its current history to understand the context and any unresolved requests.",
-      "Your final answer is internal Codex transport output and is never posted to Slack by Leuco. Every Slack write requires an explicit Leuco Slack command; never assume final text is visible to Slack users.",
-      "To reply or perform another Slack API call, run `leuco slack call <method> --connector <connector-config> --body '<json>'`. Do not pass `--project`; the injected project scope selects this project. The `--connector` value selects a stored Slack identity, while the JSON `channel` field is the Slack conversation id from the incoming event.",
-      "To upload a local file, run `leuco slack upload-file --connector <connector-config> --channel <id> --file <path> [--thread-ts <ts>] [--title <title>] [--comment <text>]`. Do not fall back to a link when the request requires a file attachment; report an actionable upload failure instead.",
+      "Your final answer is internal Codex transport output and is never posted to Slack by the gateway. Every Slack write requires an explicit host Slack command; never assume final text is visible to Slack users.",
+    )
+
+    const slackCommands = this.slackCommands()
+    if (slackCommands.length > 0) lines.push(slackCommands)
+
+    lines.push(
       "For `chat.postMessage`, set JSON `thread_ts` to the event's `thread_ts` when present, otherwise its `ts`.",
-      "To download a private Slack file, run `leuco connectors <connector-config> download-file --file <file-id> --out <path>`.",
       "When silence is intentional, do not run a Slack write command.",
-      "Slack CLI output is bounded. For history, search, and list methods, start with a small `limit` and follow cursors only as needed.",
+      "Host Slack command output is bounded. For history, search, and list methods, start with a small `limit` and follow cursors only as needed.",
       "The primary agent owns Slack writes. Delegated workers should return their findings to the primary agent instead of posting independently.",
     )
     return lines.join("\n")
@@ -131,11 +140,7 @@ export class LeucoSystemPromptBuilder {
       "",
       'When an entry fires, you receive a turn whose input is wrapped as `<schedule connector="..." entry="..." run-at="..."> … </schedule>` — treat the inner text as a fresh task you scheduled for yourself.',
       "",
-      "Use the project-scoped CLI to manage your own entries:",
-      "- Add: `leuco connectors <connector-config> schedules add --name <name> --run-at '<expression>' --prompt '<text>'`.",
-      "- List: `leuco connectors <connector-config> schedules list`.",
-      "- Remove: `leuco connectors <connector-config> schedules remove <id-or-name>`.",
-      "`--run-at` is either an ISO 8601 timestamp (one-shot, deleted after fire) or a 5-field cron expression (recurring). Always use one of the schedule connector-config names listed above and never spell out another project.",
+      this.scheduleCommands(),
       "",
       "A scheduled turn authorizes only the work described in its prompt. Do not send an external message unless that prompt explicitly asks for one.",
       "Before a scheduled Slack post, check the recent thread and pending one-shot schedules to avoid duplicate messages.",
@@ -145,6 +150,10 @@ export class LeucoSystemPromptBuilder {
   }
 
   private localCommandSection(): string {
+    if (this.props.hostInstructions !== undefined) {
+      return this.props.hostInstructions.localCommandHygiene.trim()
+    }
+
     return [
       "## Local command hygiene",
       "",
@@ -152,6 +161,32 @@ export class LeucoSystemPromptBuilder {
       "",
       "Do not run unbounded recursive searches over home directories, project caches, or generated plugin folders when a narrower path or tool query is available.",
       "Do not run machine-wide Leuco administration commands (`start`, `stop`, `restart`, `boot`, or `config`) from this project runtime unless the user explicitly asks you to administer the Leuco installation.",
+    ].join("\n")
+  }
+
+  private slackCommands(): string {
+    if (this.props.hostInstructions !== undefined) {
+      return this.props.hostInstructions.slackCommands.trim()
+    }
+
+    return [
+      "To reply or perform another Slack API call, run `leuco slack call <method> --connector <connector-config> --body '<json>'`. Do not pass `--project`; the injected project scope selects this project. The `--connector` value selects a stored Slack identity, while the JSON `channel` field is the Slack conversation id from the incoming event.",
+      "To upload a local file, run `leuco slack upload-file --connector <connector-config> --channel <id> --file <path> [--thread-ts <ts>] [--title <title>] [--comment <text>]`. Do not fall back to a link when the request requires a file attachment; report an actionable upload failure instead.",
+      "To download a private Slack file, run `leuco connectors <connector-config> download-file --file <file-id> --out <path>`.",
+    ].join("\n")
+  }
+
+  private scheduleCommands(): string {
+    if (this.props.hostInstructions !== undefined) {
+      return this.props.hostInstructions.scheduleCommands.trim()
+    }
+
+    return [
+      "Use the project-scoped CLI to manage your own entries:",
+      "- Add: `leuco connectors <connector-config> schedules add --name <name> --run-at '<expression>' --prompt '<text>'`.",
+      "- List: `leuco connectors <connector-config> schedules list`.",
+      "- Remove: `leuco connectors <connector-config> schedules remove <id-or-name>`.",
+      "`--run-at` is either an ISO 8601 timestamp (one-shot, deleted after fire) or a 5-field cron expression (recurring). Always use one of the schedule connector-config names listed above and never spell out another project.",
     ].join("\n")
   }
 }

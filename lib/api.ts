@@ -41,3 +41,4 @@ export type { LeucoEvent } from "@/events/leuco-event-types"
 
 export { LeucoRuntime } from "@/runtime/runtime"
 export type { LeucoProjectTurnProps, LeucoRuntimeProps } from "@/runtime/runtime"
+export type { LeucoHostInstructions } from "@/prompts/host-instructions"

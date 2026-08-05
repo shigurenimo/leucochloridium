@@ -3,6 +3,7 @@ import type { ConversationScope } from "@/config/config-schema"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
 import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 import { LeucoSystemPromptBuilder } from "@/prompts/system-prompt-builder"
+import type { LeucoHostInstructions } from "@/prompts/host-instructions"
 import { LeucoTurnTimeouts } from "@/engine/turn-timeouts"
 import type { LeucoTurnTimeoutClock } from "@/engine/turn-timeouts"
 import { errorMessage } from "@/error-message"
@@ -67,6 +68,7 @@ export type LeucoProjectRuntimeProps = {
   connectors: Connector[]
   useCommonInstructions?: boolean
   presets?: string[]
+  hostInstructions?: LeucoHostInstructions
   /** `projectRuntimeSignature(project)` at build time; reconcile compares it
    * against the freshly loaded project to decide whether to rebuild. */
   configSignature?: string
@@ -110,6 +112,7 @@ export class LeucoProjectRuntime {
   private readonly threads: ProjectThreadRegistry
   private readonly useCommonInstructions: boolean
   private readonly presets: string[]
+  private readonly hostInstructions: LeucoHostInstructions | null
   private readonly turnTimeoutMs: number
   private readonly turnIdleTimeoutMs: number
   private readonly turnQueue: ProjectTurnQueue
@@ -142,6 +145,7 @@ export class LeucoProjectRuntime {
     })
     this.useCommonInstructions = props.useCommonInstructions ?? true
     this.presets = props.presets ?? []
+    this.hostInstructions = props.hostInstructions ?? null
     this.turnTimeoutMs = props.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
     this.turnIdleTimeoutMs = props.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
     const turnConcurrency = props.turnConcurrency ?? DEFAULT_TURN_CONCURRENCY
@@ -623,6 +627,7 @@ export class LeucoProjectRuntime {
       timeZone: this.timeZone,
       identities: this.connectors.map((p) => p.getIdentity()),
       presets: this.presets,
+      hostInstructions: this.hostInstructions ?? undefined,
       perAgentInstructions: tail,
       usePreamble: this.useCommonInstructions,
     })

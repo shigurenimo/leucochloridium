@@ -121,6 +121,7 @@ Codex notification、runtime、supervisor eventを書く。
 - `LeucoProjectSupervisor` がproject slot、retry、pause、reconcileを所有する
 - Hono gatewayがhealth、status、thread、daemon controlをloopback portで受ける
 - `LeucoRuntime` がsupervisor、gateway、`eventLog` を兄弟として所有する
+- 埋め込みconsumerは`hostInstructions`でstandalone Leuco CLIのprompt部分だけを置換する。未指定時は従来のLeuco CLI指示を使い、Slackの宛先判定や明示書き込み境界など共通ルールは維持する
 
 `ProjectSlot` はruntime、config signature、retry、pauseを一つのMap entryで所有する。
 reconcileはpath、prompt、model、外部MCP、enabled connector、Slack tokenの変化を

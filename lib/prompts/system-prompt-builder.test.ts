@@ -84,8 +84,8 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).toContain("`leuco connectors <connector-config> download-file")
     expect(out).toContain("`thread_ts`")
     expect(out).toContain("final answer is internal Codex transport output")
-    expect(out).toContain("never posted to Slack by Leuco")
-    expect(out).toContain("Every Slack write requires an explicit Leuco Slack command")
+    expect(out).toContain("never posted to Slack by the gateway")
+    expect(out).toContain("Every Slack write requires an explicit host Slack command")
     expect(out).toContain("`leuco slack upload-file")
     expect(out).toContain("When silence is intentional, do not run a Slack write command")
     expect(out).toContain("The primary agent owns Slack writes")
@@ -125,12 +125,37 @@ describe("LeucoSystemPromptBuilder", () => {
     expect(out).not.toContain("slack_call")
     expect(out).toContain("`thread_ts`")
     expect(out).toContain("final answer is internal Codex transport output")
-    expect(out).toContain("never posted to Slack by Leuco")
-    expect(out).toContain("Every Slack write requires an explicit Leuco Slack command")
+    expect(out).toContain("never posted to Slack by the gateway")
+    expect(out).toContain("Every Slack write requires an explicit host Slack command")
     expect(out).toContain("`leuco slack upload-file")
     expect(out).toContain("--connector <connector-config>")
-    expect(out).toContain("Slack CLI output is bounded")
+    expect(out).toContain("Host Slack command output is bounded")
     expect(out).toContain("small `limit`")
+  })
+
+  it("lets an embedded host replace every local command instruction", () => {
+    const out = new LeucoSystemPromptBuilder({
+      ...baseProps,
+      identities: [
+        { name: "slack", type: "slack", botUserId: "U01ABC" },
+        { name: "cron", type: "schedule", botUserId: null },
+      ],
+      hostInstructions: {
+        header: "# Inta Backroom instructions\n\nUse Inta as the host.",
+        slackCommands:
+          "Run `inta backroom agents runtime slack call <method> --connector <connector-config> --body '<json>'`.",
+        scheduleCommands: "Ask the Inta operator to change schedules.",
+        localCommandHygiene: "## Inta command hygiene\n\nNever run the standalone gateway CLI.",
+      },
+    }).build()
+
+    expect(out).toContain("# Inta Backroom instructions")
+    expect(out).toContain("inta backroom agents runtime slack call")
+    expect(out).toContain("Ask the Inta operator to change schedules")
+    expect(out).toContain("## Inta command hygiene")
+    expect(out).not.toContain("`leuco slack")
+    expect(out).not.toContain("`leuco connectors")
+    expect(out).not.toContain("The local `leuco` CLI")
   })
 
   it("appends per-agent instructions after a separator", () => {

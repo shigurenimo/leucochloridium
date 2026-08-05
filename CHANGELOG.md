@@ -2,6 +2,12 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.17.6 - 2026-08-05
+
+### Added
+
+- 埋め込みconsumerが`LeucoRuntime.build()`の`hostInstructions`でstandalone Leuco CLI向けのprompt部分だけを置換できるように追加。Slackの宛先判定と明示書き込み境界は共通ルールとして維持。
+
 ## 0.17.5 - 2026-07-31
 
 ### Added
