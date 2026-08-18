@@ -13,7 +13,7 @@ import {
 } from "@/engine/codex/codex-schemas"
 import type { ThreadStartResult, TurnStartResult } from "@/engine/codex/codex-schemas"
 import { turnCompletedSchema } from "@/engine/codex/codex-schemas"
-import type { CodexTurnOptions } from "@/engine/codex/codex-client-port"
+import type { CodexTurnInterruptResult, CodexTurnOptions } from "@/engine/codex/codex-client-port"
 import type {
   ThreadResumeParams,
   ThreadStartParams,
@@ -50,6 +50,8 @@ export type LeucoCodexClientProps = {
   clientVersion?: string
   commandOutputLimitChars?: number
   threadRequestTimeoutMs?: number
+  turnInterruptRequestTimeoutMs?: number
+  turnInterruptCompletionTimeoutMs?: number
   protocolMaxFrameChars?: number
   protocolLogPreviewChars?: number
 }
@@ -70,6 +72,8 @@ export class LeucoCodexClient {
   private readonly clientVersion: string
   private readonly commandOutputLimitChars: number
   private readonly threadRequestTimeoutMs: number
+  private readonly turnInterruptRequestTimeoutMs: number
+  private readonly turnInterruptCompletionTimeoutMs: number
   private readonly protocolMaxFrameChars: number | undefined
   private readonly protocolLogPreviewChars: number | undefined
 
@@ -77,6 +81,7 @@ export class LeucoCodexClient {
   private protocol: LeucoCodexProtocol | null = null
   private notificationHandler: NotificationHandler | null = null
   private readonly turnHandlers = new Map<string, NotificationHandler>()
+  private readonly activeTurnIds = new Map<string, string>()
   private exitPromise: Promise<void> | null = null
   private transportFailurePromise: Promise<void> | null = null
   /**
@@ -98,6 +103,10 @@ export class LeucoCodexClient {
     this.clientVersion = props.clientVersion ?? "0.1.0"
     this.commandOutputLimitChars = props.commandOutputLimitChars ?? COMMAND_OUTPUT_LIMIT_CHARS
     this.threadRequestTimeoutMs = props.threadRequestTimeoutMs ?? THREAD_REQUEST_TIMEOUT_MS
+    this.turnInterruptRequestTimeoutMs =
+      props.turnInterruptRequestTimeoutMs ?? TURN_INTERRUPT_REQUEST_TIMEOUT_MS
+    this.turnInterruptCompletionTimeoutMs =
+      props.turnInterruptCompletionTimeoutMs ?? TURN_INTERRUPT_COMPLETION_TIMEOUT_MS
     this.protocolMaxFrameChars = props.protocolMaxFrameChars
     this.protocolLogPreviewChars = props.protocolLogPreviewChars
     if (props.onAnyNotification !== undefined) {
@@ -347,6 +356,24 @@ export class LeucoCodexClient {
     }
   }
 
+  async interruptTurn(threadId: string): Promise<CodexTurnInterruptResult> {
+    const protocol = this.protocol
+    if (!protocol) return new Error("codex client not started")
+    const turnId = this.activeTurnIds.get(threadId)
+    if (turnId === undefined) return { status: "not-active" }
+
+    try {
+      await withTimeout(
+        protocol.request("turn/interrupt", { threadId, turnId }),
+        this.turnInterruptRequestTimeoutMs,
+        `codex turn/interrupt timed out after ${this.turnInterruptRequestTimeoutMs / 1000}s`,
+      )
+      return { status: "requested", turnId }
+    } catch (err) {
+      return err instanceof Error ? err : new Error(errorMessage(err))
+    }
+  }
+
   /**
    * Send a single text-input turn and resolve when it completes. Returns the
    * concatenated assistant text — preferring `item/completed` agentMessage
@@ -390,6 +417,15 @@ export class LeucoCodexClient {
       const activeTurn: ActiveTurn = { id: null }
       const commandOutputState = { chars: 0 }
       const lifecycle = { isTornDown: false }
+      const interruptState: {
+        terminalError: Error | null
+        requestStarted: boolean
+        completionTimer: ReturnType<typeof setTimeout> | null
+      } = {
+        terminalError: null,
+        requestStarted: false,
+        completionTimer: null,
+      }
 
       if (this.protocol !== protocol) {
         reject(new Error("codex transport changed before turn collection started"))
@@ -411,7 +447,47 @@ export class LeucoCodexClient {
         if (this.turnHandlers.get(params.threadId) === handler) {
           this.turnHandlers.delete(params.threadId)
         }
+        if (activeTurn.id !== null && this.activeTurnIds.get(params.threadId) === activeTurn.id) {
+          this.activeTurnIds.delete(params.threadId)
+        }
+        if (interruptState.completionTimer !== null) {
+          clearTimeout(interruptState.completionTimer)
+          interruptState.completionTimer = null
+        }
         this.turnAborters.delete(aborter)
+      }
+
+      const requestInterrupt = (terminalError: Error): void => {
+        if (lifecycle.isTornDown || interruptState.requestStarted) return
+        interruptState.terminalError = terminalError
+        if (activeTurn.id === null) return
+        interruptState.requestStarted = true
+
+        void this.interruptTurn(params.threadId).then((result) => {
+          if (lifecycle.isTornDown) return
+          if (result instanceof Error || result.status === "not-active") {
+            const detail =
+              result instanceof Error
+                ? result.message
+                : `codex reported no active turn for ${params.threadId}`
+            teardown()
+            reject(turnInterruptFailure(terminalError, detail))
+            return
+          }
+
+          interruptState.completionTimer = setTimeout(() => {
+            if (lifecycle.isTornDown) return
+            teardown()
+            reject(
+              turnInterruptFailure(
+                terminalError,
+                `turn ${result.turnId} did not finish within ${
+                  this.turnInterruptCompletionTimeoutMs / 1000
+                }s after turn/interrupt`,
+              ),
+            )
+          }, this.turnInterruptCompletionTimeoutMs)
+        })
       }
 
       const processNotification = (method: string, raw: unknown, canBuffer: boolean): void => {
@@ -437,6 +513,7 @@ export class LeucoCodexClient {
           }
           const turnId = "turnId" in identity.data ? identity.data.turnId : identity.data.turn.id
           if (turnId !== activeTurn.id) return
+          if (interruptState.terminalError !== null) return
 
           commandOutputState.chars += parsed.data.delta.length
           if (commandOutputState.chars <= this.commandOutputLimitChars) return
@@ -445,11 +522,7 @@ export class LeucoCodexClient {
           const err = new Error(
             `codex command output exceeded ${this.commandOutputLimitChars} chars${item}`,
           )
-          teardown()
-          void this.stop().then(
-            () => reject(err),
-            () => reject(err),
-          )
+          requestInterrupt(err)
           return
         }
 
@@ -500,6 +573,10 @@ export class LeucoCodexClient {
           if (parsed.data.turn.id !== activeTurn.id) return
 
           teardown()
+          if (interruptState.terminalError !== null) {
+            reject(interruptState.terminalError)
+            return
+          }
           const turn = parsed.data.turn
           if (turn.status !== "completed") {
             const message =
@@ -549,6 +626,7 @@ export class LeucoCodexClient {
       // when codex never sends `turn/completed`. Without this `runTextTurn`
       // would hang until the project runtime's wall-clock timeout kicks in.
       void this.startTurn(params).then((result) => {
+        if (lifecycle.isTornDown) return
         if (result instanceof Error) {
           teardown()
           reject(result)
@@ -556,11 +634,15 @@ export class LeucoCodexClient {
         }
 
         activeTurn.id = result.turn.id
+        this.activeTurnIds.set(params.threadId, result.turn.id)
         signalActivity("turn/start")
         const buffered = bufferedNotifications.splice(0)
         for (const notification of buffered) {
           if (lifecycle.isTornDown) return
           processNotification(notification.method, notification.params, false)
+        }
+        if (interruptState.terminalError !== null) {
+          requestInterrupt(interruptState.terminalError)
         }
       })
     })
@@ -595,6 +677,9 @@ const getTurnErrorMessage = (error: unknown): string | null => {
   return typeof error.message === "string" ? error.message : null
 }
 
+const turnInterruptFailure = (terminalError: Error, detail: string): Error =>
+  new Error(`codex turn interrupt failed while handling "${terminalError.message}": ${detail}`)
+
 const INITIALIZE_TIMEOUT_MS = 30_000
 
 const COMMAND_OUTPUT_LIMIT_CHARS = 200_000
@@ -603,6 +688,13 @@ const COMMAND_OUTPUT_LIMIT_CHARS = 200_000
  * child must not park `drainTurns` forever with every later message piling
  * up behind it. */
 const THREAD_REQUEST_TIMEOUT_MS = 60_000
+
+/** Turn interruption is the isolation boundary for timeouts and oversized
+ * command output. If app-server cannot acknowledge the request or emit the
+ * terminal notification promptly, the project runtime falls back to replacing
+ * the unhealthy shared transport. */
+const TURN_INTERRUPT_REQUEST_TIMEOUT_MS = 5_000
+const TURN_INTERRUPT_COMPLETION_TIMEOUT_MS = 10_000
 
 const STOP_TERM_GRACE_MS = 5_000
 const STOP_KILL_GRACE_MS = 5_000

@@ -16,6 +16,7 @@ const fakeCodex = (overrides: Partial<CodexClientPort> = {}): CodexClientPort =>
   startThread: async () => ({ thread: { id: `thread-${Math.random()}` } }),
   resumeThread: async (params) => ({ thread: { id: params.threadId } }),
   runTextTurn: async (_id, text) => `echo:${text}`,
+  interruptTurn: async () => ({ status: "not-active" }),
   ...overrides,
 })
 
@@ -48,6 +49,7 @@ type BuildOverrides = {
   eventLog?: LeucoEventLog
   turnTimeoutMs?: number
   turnIdleTimeoutMs?: number
+  turnInterruptGraceMs?: number
   turnConcurrency?: number
   turnQueueMaxItems?: number
   turnQueueMaxBytes?: number
@@ -74,6 +76,7 @@ const buildRuntime = (overrides: BuildOverrides = {}) =>
     conversationScope: overrides.conversationScope,
     turnTimeoutMs: overrides.turnTimeoutMs,
     turnIdleTimeoutMs: overrides.turnIdleTimeoutMs,
+    turnInterruptGraceMs: overrides.turnInterruptGraceMs,
     turnConcurrency: overrides.turnConcurrency,
     turnQueueMaxItems: overrides.turnQueueMaxItems,
     turnQueueMaxBytes: overrides.turnQueueMaxBytes,
@@ -495,7 +498,7 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
     if (result instanceof Error) expect(result.message).toBe("turn failed")
   })
 
-  it("restarts codex after a command output budget error", async () => {
+  it("keeps codex running after an isolated command output budget error", async () => {
     let running = true
     const calls: string[] = []
     const runtime = buildRuntime({
@@ -519,7 +522,7 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
     if (result instanceof Error) {
       expect(result.message).toBe("codex command output exceeded 200000 chars")
     }
-    expect(calls).toEqual(["stop", "start"])
+    expect(calls).toEqual([])
   })
 
   it("restarts codex when a turn stops producing notifications", async () => {
@@ -883,6 +886,54 @@ describe("LeucoProjectRuntime.runTextTurn", () => {
 })
 
 describe("LeucoProjectRuntime turn timeouts", () => {
+  it("interrupts only the timed-out thread and lets a concurrent sibling finish", async () => {
+    vi.useFakeTimers()
+    try {
+      const stop = vi.fn(async () => undefined)
+      const start = vi.fn(async () => undefined)
+      const pendingTurns = new Map<string, (result: string | Error) => void>()
+      const interruptTurn = vi.fn<CodexClientPort["interruptTurn"]>(async (threadId) => {
+        const settle = pendingTurns.get(threadId)
+        if (settle === undefined) return { status: "not-active" }
+        settle(new Error(`codex turn turn-${threadId} interrupted`))
+        return { status: "requested", turnId: `turn-${threadId}` }
+      })
+      const runtime = buildRuntime({
+        conversationScope: "thread",
+        turnConcurrency: 2,
+        turnTimeoutMs: 1_000,
+        turnIdleTimeoutMs: 20,
+        codex: fakeCodex({
+          start,
+          stop,
+          interruptTurn,
+          runTextTurn: (threadId, text) =>
+            new Promise<string | Error>((resolve) => {
+              if (text === "stuck") {
+                pendingTurns.set(threadId, resolve)
+                return
+              }
+              setTimeout(() => resolve("sibling survived"), 10)
+            }),
+        }),
+      })
+
+      const stuck = runtime.runTextTurn("slack:A", "stuck")
+      const sibling = runtime.runTextTurn("slack:B", "normal")
+      await vi.advanceTimersByTimeAsync(20)
+
+      const [stuckResult, siblingResult] = await Promise.all([stuck, sibling])
+      expect(stuckResult).toBeInstanceOf(Error)
+      if (stuckResult instanceof Error) expect(stuckResult.message).toContain("idle timeout")
+      expect(siblingResult).toBe("sibling survived")
+      expect(interruptTurn).toHaveBeenCalledTimes(1)
+      expect(stop).not.toHaveBeenCalled()
+      expect(start).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("restarts Codex after the idle deadline passes without activity", async () => {
     vi.useFakeTimers()
     try {
@@ -1014,28 +1065,13 @@ describe("LeucoProjectRuntime turn timeouts", () => {
 })
 
 describe("LeucoProjectRuntime Codex child recovery", () => {
-  it("restarts after command output overflow without retrying or losing the thread", async () => {
+  it("keeps the shared child and live thread after an isolated command output overflow", async () => {
     const reason = "codex command output exceeded 200000 chars from call_12345"
     const logs: string[] = []
     const eventLog = new LeucoEventLog()
     const events = () => eventLog.query().map((entry) => entry.event)
-    let isRunning = true
-    const calls: string[] = []
-    let reportStopStarted: () => void = () => {}
-    const stopStarted = new Promise<void>((resolve) => {
-      reportStopStarted = resolve
-    })
-    const stopReleases: Array<() => void> = []
-    const stop = vi.fn(async () => {
-      calls.push("stop")
-      reportStopStarted()
-      await new Promise<void>((resolve) => stopReleases.push(resolve))
-      isRunning = false
-    })
-    const start = vi.fn(async () => {
-      calls.push("start")
-      isRunning = true
-    })
+    const stop = vi.fn(async () => undefined)
+    const start = vi.fn(async () => undefined)
     const startThread = vi.fn<CodexClientPort["startThread"]>(async () => ({
       thread: { id: "preserved-thread" },
     }))
@@ -1053,54 +1089,31 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
       codex: fakeCodex({
         start,
         stop,
-        isRunning: () => isRunning,
         startThread,
         resumeThread,
         runTextTurn,
       }),
     })
 
-    let isFirstSettled = false
-    const first = runtime.runTextTurn("thread", "first")
-    void first.then(() => {
-      isFirstSettled = true
-    })
-    await stopStarted
-
-    expect(isFirstSettled).toBe(false)
-    expect(calls).toEqual(["stop"])
-    expect(runTextTurn).toHaveBeenCalledTimes(1)
-    const releaseStop = stopReleases[0]
-    if (!releaseStop) throw new Error("Codex stop gate was not installed")
-    releaseStop()
-
-    const failed = await first
+    const failed = await runtime.runTextTurn("thread", "first")
     expect(failed).toEqual(new Error(reason))
-    expect(calls).toEqual(["stop", "start"])
+    expect(stop).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
     expect(runtime.listThreads()).toEqual([
       { threadKey: runtime.projectName, threadId: "preserved-thread" },
     ])
-    expect(events()).toContainEqual(
-      expect.objectContaining({
-        type: "codex.recovery",
-        project: "demo",
-        reason,
-        status: "succeeded",
-        error: null,
-      }),
-    )
-    expect(logs.some((line) => line.includes("recovering codex child"))).toBe(true)
-    expect(logs.some((line) => line.includes("codex recovery succeeded"))).toBe(true)
+    expect(events().some((event) => event.type === "codex.recovery")).toBe(false)
+    expect(logs.some((line) => line.includes("command output overflow isolated"))).toBe(true)
 
     await expect(runtime.runTextTurn("thread", "second")).resolves.toBe("ok")
     expect(runTextTurn).toHaveBeenCalledTimes(2)
     expect(startThread).toHaveBeenCalledTimes(1)
-    expect(resumeThread).toHaveBeenCalledTimes(1)
-    expect(resumeThread.mock.calls[0]?.[0].threadId).toBe("preserved-thread")
+    expect(resumeThread).not.toHaveBeenCalled()
   })
 
-  it("reports a failed overflow recovery while returning the original turn error", async () => {
-    const reason = "codex command output exceeded 200000 chars from call_failed"
+  it("restarts the child only when turn-level interruption fails", async () => {
+    const reason =
+      'codex turn interrupt failed while handling "codex command output exceeded 200000 chars from call_failed": interrupt rejected'
     const logs: string[] = []
     const eventLog = new LeucoEventLog()
     const events = () => eventLog.query().map((entry) => entry.event)
@@ -1134,7 +1147,7 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
     expect(logs.some((line) => line.includes("codex recovery failed"))).toBe(true)
   })
 
-  it("discards a thread only when the same overflow call repeats after recovery", async () => {
+  it("discards a thread only when the same overflow call repeats after isolation", async () => {
     const reason =
       "turn failed: codex command output exceeded 200000 chars from exec-b7c29f6c-a749-4ea8-974f-e7a60c60ec89"
     let isRunning = true
@@ -1173,7 +1186,7 @@ describe("LeucoProjectRuntime Codex child recovery", () => {
     expect(runtime.listThreads()).toEqual([])
 
     await expect(runtime.runTextTurn("thread", "third")).resolves.toBe("ok")
-    expect(resumeThread).toHaveBeenCalledTimes(2)
+    expect(resumeThread).toHaveBeenCalledTimes(1)
     expect(startThread).toHaveBeenCalledTimes(1)
   })
 })

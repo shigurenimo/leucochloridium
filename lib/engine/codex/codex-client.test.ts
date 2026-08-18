@@ -266,6 +266,51 @@ const fakeCodexAcksThenStreamsLargeCommandOutput = [
   "      }) + '\\n');",
   "      continue;",
   "    }",
+  "    if (msg.method === 'turn/interrupt' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: msg.params.threadId, turn: { id: msg.params.turnId, status: 'interrupted', error: null } } }) + '\\n');",
+  "      continue;",
+  "    }",
+  "  }",
+  "});",
+  "setInterval(() => {}, 1_000_000);",
+].join("\n")
+
+const fakeCodexInterruptsOnlyOverflowingTurn = [
+  "let buffer = '';",
+  "process.stdin.setEncoding('utf8');",
+  "const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');",
+  "process.stdin.on('data', (chunk) => {",
+  "  buffer += chunk;",
+  "  const lines = buffer.split('\\n');",
+  "  buffer = lines.pop();",
+  "  for (const line of lines) {",
+  "    if (line.length === 0) continue;",
+  "    let msg;",
+  "    try { msg = JSON.parse(line); } catch { continue; }",
+  "    if (msg.method === 'initialize' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      continue;",
+  "    }",
+  "    if (msg.method === 'turn/start' && msg.id != null) {",
+  "      const threadId = msg.params.threadId;",
+  "      const turnId = `turn-${threadId}`;",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId } } }) + '\\n');",
+  "      if (threadId === 'thread-overflow') {",
+  "        notify('item/commandExecution/outputDelta', { threadId, turnId, itemId: 'call_big', delta: 'abcdef' });",
+  "      } else {",
+  "        setTimeout(() => {",
+  "          notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', text: 'sibling survived' } });",
+  "          notify('turn/completed', { threadId, turn: { id: turnId, status: 'completed', error: null } });",
+  "        }, 25);",
+  "      }",
+  "      continue;",
+  "    }",
+  "    if (msg.method === 'turn/interrupt' && msg.id != null) {",
+  "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+  "      notify('turn/completed', { threadId: msg.params.threadId, turn: { id: msg.params.turnId, status: 'interrupted', error: null } });",
+  "      continue;",
+  "    }",
   "  }",
   "});",
   "setInterval(() => {}, 1_000_000);",
@@ -339,7 +384,7 @@ describe("LeucoCodexClient.runTextTurn", () => {
     expect(client.isRunning()).toBe(false)
   }, 5000)
 
-  it("aborts and stops the child when command output exceeds the turn budget", async () => {
+  it("interrupts only the turn when command output exceeds the turn budget", async () => {
     const client = new LeucoCodexClient({
       bin: "node",
       args: ["-e", fakeCodexAcksThenStreamsLargeCommandOutput],
@@ -354,10 +399,27 @@ describe("LeucoCodexClient.runTextTurn", () => {
     if (result instanceof Error) {
       expect(result.message).toBe("codex command output exceeded 5 chars from call_big")
     }
-    for (let i = 0; i < 20 && client.isRunning(); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    expect(client.isRunning()).toBe(false)
+    expect(client.isRunning()).toBe(true)
+    await client.stop()
+  }, 5000)
+
+  it("keeps a concurrent sibling turn alive when another turn exceeds output limits", async () => {
+    const client = new LeucoCodexClient({
+      bin: "node",
+      args: ["-e", fakeCodexInterruptsOnlyOverflowingTurn],
+      commandOutputLimitChars: 5,
+    })
+
+    await client.start()
+
+    const overflow = client.runTextTurn("thread-overflow", "large")
+    const sibling = client.runTextTurn("thread-sibling", "normal")
+
+    const [overflowResult, siblingResult] = await Promise.all([overflow, sibling])
+    expect(overflowResult).toEqual(new Error("codex command output exceeded 5 chars from call_big"))
+    expect(siblingResult).toBe("sibling survived")
+    expect(client.isRunning()).toBe(true)
+    await client.stop()
   }, 5000)
 
   it("routes interleaved notifications to concurrent turns by thread id", async () => {

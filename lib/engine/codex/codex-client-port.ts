@@ -6,6 +6,11 @@ export type CodexTurnOptions = {
   onActivity?: (method: string) => void
 }
 
+export type CodexTurnInterruptResult =
+  | { status: "requested"; turnId: string }
+  | { status: "not-active" }
+  | Error
+
 /**
  * Structural contract the engine relies on. `LeucoCodexClient` implements this
  * by shape; tests can substitute any matching object without touching the
@@ -25,4 +30,7 @@ export type CodexClientPort = {
     text: string,
     options?: string | CodexTurnOptions,
   ): Promise<string | Error>
+  /** Interrupt only the active turn for `threadId`, leaving the shared
+   * app-server and turns on other threads alive. */
+  interruptTurn(threadId: string): Promise<CodexTurnInterruptResult>
 }
