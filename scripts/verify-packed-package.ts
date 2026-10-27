@@ -7,9 +7,10 @@ const workspace = mkdtempSync(join(tmpdir(), "leuco-package-"))
 const packageDirectory = join(workspace, "package")
 const consumerDirectory = join(workspace, "consumer")
 
-function run(command: string[], cwd: string): string {
+function run(command: string[], cwd: string, env = process.env): string {
   const result = Bun.spawnSync(command, {
     cwd,
+    env,
     stderr: "pipe",
     stdout: "pipe",
   })
@@ -94,6 +95,26 @@ try {
     ],
     consumerDirectory,
   )
+  const installedCli = join(consumerDirectory, "node_modules/leuco/lib/index.ts")
+  const help = run([process.execPath, installedCli, "--help"], consumerDirectory)
+  if (!help.includes("one local Codex companion")) throw new Error("Packed CLI help is stale")
+  const fakeCodex = join(workspace, "fake-codex")
+  writeFileSync(
+    fakeCodex,
+    `#!/bin/sh\nexec '${process.execPath}' '${join(repositoryRoot, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
+    { mode: 0o700 },
+  )
+  const reply = run(
+    [process.execPath, installedCli, "run", "--codex-bin", fakeCodex, "--prompt", "hello"],
+    consumerDirectory,
+    {
+      ...process.env,
+      LEUCO_HOME: join(workspace, "leuco"),
+      CODEX_HOME: join(workspace, "codex"),
+      LEUCO_VERIFY_TRACE: join(workspace, "trace.jsonl"),
+    },
+  )
+  if (!reply.includes("verified reply")) throw new Error("Packed CLI could not complete a turn")
 } finally {
   rmSync(workspace, { force: true, recursive: true })
 }

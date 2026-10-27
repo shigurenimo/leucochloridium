@@ -2,6 +2,21 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.18.0 - Unreleased
+
+### 変更
+
+- 対応Bunを1.4.4以上へ変更し、Windowsの端末内資格情報保存を指定。
+- Slack tokenをOS資格情報ストアへ保存し、起動時に一度だけ読む形へ変更。login / logoutと非表示入力を追加し、設定は参照IDだけに変更。Slack操作はdaemonへ中継し、ファイルIOは呼び出し元に維持。
+
+- 一つのCodex app-serverを動かすCLIへ変更。project登録、supervisor、connector登録、旧boot管理とHTTP gatewayを廃止。
+- 通常のCODEX_HOMEをそのまま使用。Codex設定の生成、認証symlink、内蔵prompt presetを廃止。
+- 追加指示は明示的なSOULだけ。`--soul` / `--no-soul` で選択し、指示変更時は新しい会話を使う。
+- 会話キーごとの再開と一つの直列queue、任意のSlack接続一つ、flatな予定管理を提供。
+- Unix socketとtokenでローカル制御。失敗した依頼を再実行せず、次の依頼でCodex接続を復旧。
+- 公開APIはLeucoRuntimeと単一設定・状態の型に整理。旧APIとの互換性はない。
+- Zodと検証用ツールを修正版へ更新し、既存依存の脆弱性を解消。
+
 ## 0.17.6 - 2026-08-05
 
 ### Added

@@ -325,7 +325,7 @@ export class LeucoScheduleConnector implements Connector {
     tick.ctx.eventLog.append({
       ts: Date.now(),
       type: "schedule.fired",
-      project: tick.ctx.projectName,
+      runtime: tick.ctx.runtimeName,
       connector: this.name,
       entryId: entry.id,
       entryName: entry.name,

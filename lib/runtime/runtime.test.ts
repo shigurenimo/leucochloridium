@@ -1,398 +1,257 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
-import { tmpdir } from "node:os"
-import { join, relative, resolve } from "node:path"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { Project } from "@/config/config-schema"
-import type { CodexClientPort } from "@/engine/codex/codex-client-port"
-import { LeucoProjectRuntime } from "@/project/project-runtime"
-import { LeucoEventLog } from "@/events/leuco-event-log"
-import { LeucoPaths } from "@/paths/leuco-paths"
-import { LeucoProjectStore } from "@/projects/project-store"
-import { PromptPreset } from "@/prompts/presets"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import type { Connector } from "@/connectors/connector"
 import { LeucoRuntime } from "@/runtime/runtime"
+import { MemoryLeucoStore } from "@/storage/memory-leuco-store"
+import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
+import { LeucoEventLog } from "@/events/leuco-event-log"
 
-const PROJECT_ID = "00000000-0000-4000-8000-000000000000"
-
-const makeProject = (name: string, suffix: string): Project => ({
-  version: 3,
-  id: `00000000-0000-4000-8000-${suffix.padStart(12, "0").slice(0, 12)}`,
-  name,
-  path: `/tmp/${name}`,
-  enabled: true,
-  conversationScope: "project",
-  useCommonInstructions: true,
-  model: null,
-  developerInstructions: null,
-  prompts: [PromptPreset.CORE, PromptPreset.STYLE_WORK],
-  connectors: [],
-  mcpServers: {},
+const active: LeucoRuntime[] = []
+afterEach(async () => {
+  for (const runtime of active.splice(0)) await runtime.stop()
+  vi.useRealTimers()
 })
 
-const sampleProject = (): Project => makeProject("demo", "0")
+function create(
+  store = new MemoryLeucoStore(),
+  codex = new MemoryCodexClient(),
+  soul?: string | null,
+) {
+  const eventLog = new LeucoEventLog()
+  const runtime = LeucoRuntime.build({
+    cwd: "/work",
+    home: "/state",
+    env: {},
+    store,
+    codex,
+    eventLog,
+    connections: [],
+    ...(soul === undefined ? {} : { soul }),
+  })
+  active.push(runtime)
+  return { runtime, codex, store, eventLog }
+}
 
-const fakeCodex = (onStart: () => void): CodexClientPort => ({
-  start: async () => {
-    onStart()
-  },
-  stop: async () => undefined,
-  isRunning: () => true,
-  startThread: async () => ({ thread: { id: "thread" } }),
-  resumeThread: async (params) => ({ thread: { id: params.threadId } }),
-  runTextTurn: async (_threadId, text) => text,
-})
+async function flush(): Promise<void> {
+  for (const _ of Array.from({ length: 15 })) await Promise.resolve()
+}
 
-describe("LeucoRuntime", () => {
-  let home = ""
-
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "leuco-runtime-"))
-    mkdirSync("/tmp/demo", { recursive: true })
+describe("single companion runtime", () => {
+  it("starts a native Codex conversation without custom instructions or policy overrides", async () => {
+    const fixture = create()
+    await fixture.runtime.start()
+    expect(await fixture.runtime.runTextTurn("cli", "hello")).toBe("done")
+    expect(fixture.codex.starts).toEqual([{ cwd: "/work" }])
+    expect(fixture.store.loadSettings().soul).toBeNull()
+    expect(Object.keys(fixture.store.loadState().threads)).toEqual(["cli"])
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-    rmSync(home, { recursive: true, force: true })
+  it("appends the selected SOUL to existing native developer instructions", async () => {
+    const fixture = create(new MemoryLeucoStore(), new MemoryCodexClient(), "/SOUL.md")
+    fixture.codex.nativeInstructions = "native instructions"
+    fixture.store.instructions.set("/SOUL.md", "my soul")
+    await fixture.runtime.start()
+    await fixture.runtime.runTextTurn("cli", "hello")
+    expect(fixture.codex.starts[0]?.developerInstructions).toBe("native instructions\n\nmy soul")
+    expect(fixture.store.loadSettings().soul).toBeNull()
   })
 
-  it("forces gpt-5.6-terra with bounded tool output in generated runtime config", () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    store.save({
-      ...sampleProject(),
-      mcpServers: {
-        private_api: {
-          command: "private-api-mcp",
-          args: [],
-          env: { PRIVATE_API_TOKEN: "secret-value" },
-        },
-      },
-    })
-
-    const configPath = join(paths.projectHome(PROJECT_ID), "config.toml")
-    mkdirSync(paths.projectHome(PROJECT_ID), { recursive: true })
-    writeFileSync(configPath, "stale", { mode: 0o644 })
-
-    LeucoRuntime.build({ env: {}, home })
-
-    const configToml = readFileSync(configPath, "utf8")
-    expect(configToml).toContain('model = "gpt-5.6-terra"')
-    expect(configToml).toContain('model_reasoning_effort = "xhigh"')
-    expect(configToml).toContain("tool_output_token_limit = 20000")
-    expect(configToml).toContain('approval_policy = "never"')
-    expect(configToml).toContain('sandbox_mode = "danger-full-access"')
-    expect(configToml).not.toContain("[mcp_servers.leuco]")
-    expect(configToml).toContain("[mcp_servers.private_api]")
-    expect(configToml).toContain('PRIVATE_API_TOKEN = "secret-value"')
-    expect(statSync(configPath).mode & 0o777).toBe(0o600)
+  it("uses a saved soul unless explicitly disabled", async () => {
+    const fixture = create(new MemoryLeucoStore({ soul: "/SOUL.md" }))
+    fixture.store.instructions.set("/SOUL.md", "soul")
+    await fixture.runtime.start()
+    await fixture.runtime.runTextTurn("cli", "first")
+    await fixture.runtime.stop()
+    const plain = create(fixture.store, new MemoryCodexClient(), null)
+    await plain.runtime.start()
+    await plain.runtime.runTextTurn("cli", "second")
+    expect(plain.codex.resumes).toEqual([])
+    expect(plain.codex.starts).toEqual([{ cwd: "/work" }])
+    expect(fixture.store.loadSettings().soul).toBe("/SOUL.md")
   })
 
-  it("shares an explicitly selected Codex auth file into the project runtime", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const sharedCodexHome = join(home, "shared-codex")
-    const sharedAuthPath = join(sharedCodexHome, "auth.json")
-    store.save(sampleProject())
-    mkdirSync(sharedCodexHome, { recursive: true })
-    writeFileSync(sharedAuthPath, "shared credentials")
-
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      codexAuthPath: sharedAuthPath,
-      eventLog: new LeucoEventLog(),
-    })
-
-    expect(readFileSync(join(paths.projectHome(PROJECT_ID), "config.toml"), "utf8")).toContain(
-      'model = "gpt-5.6-terra"',
-    )
-    expect(readlinkSync(join(paths.projectHome(PROJECT_ID), "auth.json"))).toBe(sharedAuthPath)
-    await runtime.stop()
+  it("does not reuse a conversation after its soul contents change", async () => {
+    const store = new MemoryLeucoStore({ soul: "/SOUL.md" })
+    store.instructions.set("/SOUL.md", "one")
+    const first = create(store)
+    await first.runtime.start()
+    await first.runtime.runTextTurn("cli", "first")
+    await first.runtime.stop()
+    store.instructions.set("/SOUL.md", "two")
+    const second = create(store)
+    await second.runtime.start()
+    await second.runtime.runTextTurn("cli", "second")
+    expect(second.codex.resumes).toEqual([])
+    expect(second.codex.starts[0]?.developerInstructions).toBe("two")
   })
 
-  it("resolves a relative Codex auth path before linking it into a project runtime", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const sharedAuthPath = join(home, "relative-auth.json")
-    const relativeAuthPath = relative(process.cwd(), sharedAuthPath)
-    store.save(sampleProject())
-    writeFileSync(sharedAuthPath, "shared credentials")
-
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      codexAuthPath: relativeAuthPath,
-      eventLog: new LeucoEventLog(),
-    })
-    const projectAuthPath = join(paths.projectHome(PROJECT_ID), "auth.json")
-
-    expect(readlinkSync(projectAuthPath)).toBe(resolve(relativeAuthPath))
-    expect(readFileSync(projectAuthPath, "utf8")).toBe("shared credentials")
-    await runtime.stop()
+  it("resumes persisted conversations after restart and separates thread keys", async () => {
+    const fixture = create()
+    await fixture.runtime.start()
+    await fixture.runtime.runTextTurn("slack:C1:T1", "one")
+    await fixture.runtime.runTextTurn("slack:C1:T2", "two")
+    await fixture.runtime.runTextTurn("slack:C1:T1", "three")
+    expect(fixture.codex.starts).toHaveLength(2)
+    expect(fixture.codex.turns.map((turn) => turn.threadId)).toEqual([
+      "thread-1",
+      "thread-2",
+      "thread-1",
+    ])
+    await fixture.runtime.stop()
+    const next = create(fixture.store)
+    await next.runtime.start()
+    await next.runtime.runTextTurn("slack:C1:T2", "continue")
+    expect(next.codex.starts).toHaveLength(0)
+    expect(next.codex.resumes).toEqual([{ threadId: "thread-2", cwd: "/work" }])
   })
 
-  it("removes a stale auth link when the selected Codex auth source is missing", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const previousAuthPath = join(home, "previous-auth.json")
-    const missingAuthPath = join(home, "missing-auth.json")
-    store.save(sampleProject())
-    writeFileSync(previousAuthPath, "previous credentials")
-
-    const previousRuntime = LeucoRuntime.build({
-      env: {},
-      home,
-      codexAuthPath: previousAuthPath,
-      eventLog: new LeucoEventLog(),
-    })
-    await previousRuntime.stop()
-
-    const nextRuntime = LeucoRuntime.build({
-      env: {},
-      home,
-      codexAuthPath: missingAuthPath,
-      eventLog: new LeucoEventLog(),
-    })
-    const projectAuthPath = join(paths.projectHome(PROJECT_ID), "auth.json")
-
-    expect(existsSync(projectAuthPath)).toBe(false)
-    expect(() => lstatSync(projectAuthPath)).toThrow()
-    await nextRuntime.stop()
+  it("serializes all work for the single companion", async () => {
+    const fixture = create()
+    fixture.codex.hold = true
+    await fixture.runtime.start()
+    const first = fixture.runtime.runTextTurn("one", "first")
+    const second = fixture.runtime.runTextTurn("two", "second")
+    await flush()
+    expect(fixture.codex.turns).toHaveLength(1)
+    fixture.codex.complete("first reply")
+    expect(await first).toBe("first reply")
+    await flush()
+    expect(fixture.codex.turns).toHaveLength(2)
+    fixture.codex.complete("second reply")
+    expect(await second).toBe("second reply")
   })
 
-  it("starts healthy runtimes and supervises a project whose initial build failed", async () => {
+  it("recovers for the next request without replaying a failed turn", async () => {
+    const fixture = create()
+    await fixture.runtime.start()
+    fixture.codex.reply = new Error("process exited")
+    expect(await fixture.runtime.runTextTurn("cli", "charge once")).toBeInstanceOf(Error)
+    fixture.codex.reply = "recovered"
+    expect(await fixture.runtime.runTextTurn("cli", "new request")).toBe("recovered")
+    expect(fixture.codex.startCount).toBe(2)
+    expect(fixture.codex.turns.map((turn) => turn.text)).toEqual(["charge once", "new request"])
+  })
+
+  it("starts a fresh thread for a missing saved conversation", async () => {
+    const fixture = create()
+    await fixture.runtime.start()
+    await fixture.runtime.runTextTurn("cli", "first")
+    await fixture.runtime.stop()
+    const next = create(fixture.store)
+    next.codex.resumeOutcome = "missing"
+    await next.runtime.start()
+    expect(await next.runtime.runTextTurn("cli", "next")).toBe("done")
+    expect(next.codex.starts).toHaveLength(1)
+  })
+
+  it("does not replace stored history for an arbitrary resume failure", async () => {
+    const fixture = create()
+    await fixture.runtime.start()
+    await fixture.runtime.runTextTurn("cli", "first")
+    await fixture.runtime.stop()
+    const next = create(fixture.store)
+    next.codex.resumeOutcome = new Error("permission denied")
+    await next.runtime.start()
+    expect(await next.runtime.runTextTurn("cli", "next")).toBeInstanceOf(Error)
+    expect(next.codex.starts).toHaveLength(0)
+  })
+
+  it("enforces the idle deadline and remains usable afterward", async () => {
     vi.useFakeTimers()
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"))
-
-    const store = new LeucoProjectStore({ paths: new LeucoPaths({ home }) })
-    store.save(makeProject("healthy", "1"))
-    store.save(makeProject("broken", "2"))
-
-    const gatewayStop = vi.fn(async () => undefined)
-    const gatewayServe = vi.fn(() => ({ stop: gatewayStop }))
-    vi.stubGlobal("Bun", { serve: gatewayServe })
-
-    let healthyStarts = 0
-    let brokenStarts = 0
-    let brokenBuildAttempts = 0
-    const logs: string[] = []
-    const eventLog = new LeucoEventLog()
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      port: 7331,
-      onLog: (line) => logs.push(line),
-      eventLog,
-      buildProjectRuntime: (project) => {
-        if (project.name === "broken") {
-          brokenBuildAttempts++
-          if (brokenBuildAttempts < 3) throw new Error("broken composition")
-        }
-
-        return new LeucoProjectRuntime({
-          projectId: project.id,
-          projectName: project.name,
-          projectPath: project.path,
-          codex: fakeCodex(() => {
-            if (project.name === "healthy") healthyStarts++
-            if (project.name === "broken") brokenStarts++
-          }),
-          connectors: [],
-          onLog: () => {},
-        })
-      },
-    })
-
-    try {
-      await runtime.start()
-
-      expect(gatewayServe).toHaveBeenCalledTimes(1)
-      expect(healthyStarts).toBe(1)
-      expect(brokenBuildAttempts).toBe(2)
-      expect(brokenStarts).toBe(0)
-      expect(logs.some((line) => line.includes("broken initial build failed"))).toBe(true)
-      expect(
-        eventLog
-          .query({ type: "supervisor.reconcile.failed", project: "broken" })
-          .map((entry) => entry.event)
-          .filter((event) => event.type === "supervisor.reconcile.failed")
-          .map((event) => event.attempt),
-      ).toEqual([undefined, 1])
-      expect(
-        runtime
-          .getSupervisor()
-          .listProjects()
-          .map((project) => project.isRunning),
-      ).toEqual([true, false])
-
-      await vi.advanceTimersByTimeAsync(29_999)
-      await runtime.reload()
-      expect(brokenBuildAttempts).toBe(2)
-
-      await vi.advanceTimersByTimeAsync(1)
-      await runtime.reload()
-      expect(brokenBuildAttempts).toBe(3)
-      expect(brokenStarts).toBe(1)
-      expect(
-        runtime
-          .getSupervisor()
-          .listProjects()
-          .map((project) => project.isRunning),
-      ).toEqual([true, true])
-    } finally {
-      await runtime.stop()
-    }
-
-    expect(gatewayStop).toHaveBeenCalledTimes(1)
+    const fixture = create(new MemoryLeucoStore({ idleTimeoutMs: 20, turnTimeoutMs: 100 }))
+    fixture.codex.hold = true
+    await fixture.runtime.start()
+    const reply = fixture.runtime.runTextTurn("cli", "stuck")
+    await flush()
+    await vi.advanceTimersByTimeAsync(21)
+    expect(String(await reply)).toContain("idle timeout")
+    fixture.codex.hold = false
+    expect(await fixture.runtime.runTextTurn("cli", "next")).toBe("done")
   })
 
-  it("builds valid runtimes when another project entry is malformed", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const healthy = makeProject("healthy", "5")
-    store.save(healthy)
-    writeFileSync(
-      paths.settingsPath(),
-      JSON.stringify({
-        keepAwake: true,
-        projects: [healthy, { ...makeProject("broken", "6"), id: "not-a-uuid" }],
-      }),
+  it("enforces a hard deadline while creating a thread and ignores its late result", async () => {
+    vi.useFakeTimers()
+    const fixture = create(new MemoryLeucoStore({ idleTimeoutMs: 100, turnTimeoutMs: 20 }))
+    const late = Promise.withResolvers<{ thread: { id: string } }>()
+    fixture.codex.startThread = () => late.promise
+    await fixture.runtime.start()
+    const reply = fixture.runtime.runTextTurn("cli", "slow start")
+    await vi.advanceTimersByTimeAsync(21)
+    expect(String(await reply)).toContain("hard deadline")
+    late.resolve({ thread: { id: "late" } })
+    await flush()
+    expect(fixture.codex.turns).toHaveLength(0)
+    expect(fixture.store.loadState().threads).toEqual({})
+  })
+
+  it("rejects oversized input and settles active and queued work on stop", async () => {
+    const fixture = create()
+    fixture.codex.hold = true
+    await fixture.runtime.start()
+    expect(await fixture.runtime.runTextTurn("cli", "x".repeat(256 * 1024 + 1))).toBeInstanceOf(
+      Error,
     )
-    const built: string[] = []
-    const logs: string[] = []
+    const first = fixture.runtime.runTextTurn("cli", "active")
+    const queued = fixture.runtime.runTextTurn("cli", "queued")
+    await flush()
+    await fixture.runtime.stop()
+    expect(await first).toBeInstanceOf(Error)
+    expect(await queued).toBeInstanceOf(Error)
+    expect(fixture.codex.turns).toHaveLength(1)
+    expect(await fixture.runtime.runTextTurn("cli", "later")).toBeInstanceOf(Error)
+    await expect(fixture.runtime.start()).rejects.toThrow("only start once")
+  })
 
+  it("closes Codex when the requested soul cannot be read", async () => {
+    const fixture = create(new MemoryLeucoStore(), new MemoryCodexClient(), "/missing")
+    await expect(fixture.runtime.start()).rejects.toThrow("not found")
+    expect(fixture.codex.isRunning()).toBe(false)
+  })
+
+  it("closes an unsuccessfully started child", async () => {
+    const fixture = create()
+    fixture.codex.startError = new Error("initialize failed")
+    await expect(fixture.runtime.start()).rejects.toThrow("initialize failed")
+    expect(fixture.codex.stopCount).toBe(1)
+  })
+  it("stops connections that finish starting after shutdown", async () => {
+    const starting = Promise.withResolvers<void>()
+    const connection: Connector = {
+      name: "slack",
+      start: vi.fn(() => starting.promise),
+      stop: vi.fn(async () => {}),
+      getIdentity: () => ({ name: "slack", type: "slack", botUserId: null }),
+    }
     const runtime = LeucoRuntime.build({
+      store: new MemoryLeucoStore(),
+      codex: new MemoryCodexClient(),
+      connections: [connection],
       env: {},
-      home,
-      port: 7331,
-      onLog: (line) => logs.push(line),
-      eventLog: new LeucoEventLog(),
-      buildProjectRuntime: (project) => {
-        built.push(project.name)
-        return new LeucoProjectRuntime({
-          projectId: project.id,
-          projectName: project.name,
-          projectPath: project.path,
-          codex: fakeCodex(() => undefined),
-          connectors: [],
-          onLog: () => {},
-        })
-      },
     })
+    active.push(runtime)
+    const started = runtime.start()
+    await flush()
+    expect(connection.start).toHaveBeenCalledOnce()
+    await runtime.stop()
+    starting.resolve()
+    await expect(started).rejects.toThrow("stopped during startup")
+    expect(connection.stop).toHaveBeenCalledTimes(2)
+  })
 
-    expect(built).toEqual(["healthy"])
+  it("bounds the waiting queue and settles every queued request on stop", async () => {
+    const fixture = create()
+    fixture.codex.hold = true
+    await fixture.runtime.start()
+    const running = fixture.runtime.runTextTurn("cli", "running")
+    await flush()
+    const waiting = Array.from({ length: 64 }, (_, index) =>
+      fixture.runtime.runTextTurn(`queue-${index}`, "pending"),
+    )
+    expect(String(await fixture.runtime.runTextTurn("overflow", "pending"))).toContain(
+      "queue is full",
+    )
+    await fixture.runtime.stop()
     expect(
-      runtime
-        .getSupervisor()
-        .listProjects()
-        .map((project) => project.name),
-    ).toEqual(["healthy"])
-    expect(logs.some((line) => line.includes("project broken is invalid and was skipped"))).toBe(
-      true,
-    )
-    expect(JSON.parse(readFileSync(paths.settingsPath(), "utf8")).projects).toHaveLength(2)
-    await runtime.stop()
-  })
-
-  it("preserves a runtime-specific auth file instead of replacing it with a symlink", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const project = makeProject("runtime-auth", "3")
-    store.save(project)
-
-    mkdirSync(paths.projectHome(project.id), { recursive: true })
-    mkdirSync(join(home, ".codex"), { recursive: true })
-    writeFileSync(paths.codexAuthPath(), "shared credentials")
-    const projectAuthPath = join(paths.projectHome(project.id), "auth.json")
-    writeFileSync(projectAuthPath, "runtime credentials")
-
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      port: 7331,
-      eventLog: new LeucoEventLog(),
-    })
-
-    expect(lstatSync(projectAuthPath).isSymbolicLink()).toBe(false)
-    expect(readFileSync(projectAuthPath, "utf8")).toBe("runtime credentials")
-    await runtime.stop()
-  })
-
-  it("writes MCP strings and inline-table values without raw TOML control characters", async () => {
-    const paths = new LeucoPaths({ home })
-    const store = new LeucoProjectStore({ paths })
-    const project: Project = {
-      ...makeProject("toml", "4"),
-      mcpServers: {
-        extra: {
-          command: "line\nbreak",
-          args: ["tab\tvalue"],
-          env: { SAFE_KEY: "value\r\nnext" },
-        },
-      },
-    }
-    store.save(project)
-
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      port: 7331,
-      eventLog: new LeucoEventLog(),
-    })
-    const config = readFileSync(join(paths.projectHome(project.id), "config.toml"), "utf8")
-
-    expect(config).toContain("tool_output_token_limit = 20000")
-    expect(config).toContain('command = "line\\nbreak"')
-    expect(config).toContain('args = ["tab\\tvalue"]')
-    expect(config).toContain('env = { SAFE_KEY = "value\\r\\nnext" }')
-    await runtime.stop()
-  })
-
-  it("rejects start after stop instead of entering a half-started state", async () => {
-    const gatewayStart = vi.fn()
-    const gatewayStop = vi.fn(async () => undefined)
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      eventLog: new LeucoEventLog(),
-      buildGateway: () => ({ start: gatewayStart, stop: gatewayStop }),
-    })
-
-    await runtime.start()
-    await runtime.stop()
-    await expect(runtime.start()).rejects.toThrow("LeucoRuntime cannot start after stop")
-
-    expect(gatewayStart).toHaveBeenCalledTimes(1)
-    expect(gatewayStop).toHaveBeenCalledTimes(1)
-  })
-
-  it("shares one shutdown across concurrent stop calls", async () => {
-    const gatewayStopGate = Promise.withResolvers<void>()
-    const gatewayStop = vi.fn(async () => gatewayStopGate.promise)
-    const runtime = LeucoRuntime.build({
-      env: {},
-      home,
-      eventLog: new LeucoEventLog(),
-      buildGateway: () => ({ start: vi.fn(), stop: gatewayStop }),
-    })
-    await runtime.start()
-
-    const first = runtime.stop()
-    const second = runtime.stop()
-
-    expect(second).toBe(first)
-    gatewayStopGate.resolve()
-    await Promise.all([first, second])
-    expect(gatewayStop).toHaveBeenCalledTimes(1)
+      (await Promise.all([running, ...waiting])).every((reply) => reply instanceof Error),
+    ).toBe(true)
   })
 })

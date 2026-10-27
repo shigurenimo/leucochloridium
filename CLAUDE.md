@@ -1,322 +1,38 @@
 # CLAUDE.md
 
-`leuco` は Codex `app-server` を Slack Bot として動かすセルフホスト型gateway。
-一マシン一daemonが全projectを監督し、daemon、CLI、libraryは
-`lib/runtime/runtime.ts` の `LeucoRuntime` を合成rootとする。
+Leucoは一匹のCodexを常駐させるBun専用CLI。使い方は [README.md](README.md)、アクセス境界は [SECURITY.md](SECURITY.md)。
 
-ユーザー向けの導入・Slack設定・運用は `README.md`。このファイルはAIが
-現行コードを誤読しないための開発者向け地図に徹する。
+## 現行モデル
 
-## 現行ドメインモデル
+`LeucoRuntime` が唯一の合成root。Codex app-serverを一つ、直列queueを一つ持つ。会話キーごとにCodex threadを対応付ける。Slack接続一つとscheduleは任意の入力経路で、ユーザー向けproject / connector登録は廃止した。
 
-```text
-Leuco daemon
-├─ LeucoProjectSupervisor
-└─ ProjectSlot × N
-   └─ LeucoProjectRuntime
-      ├─ Codex app-server child × 1
-      ├─ ProjectThreadRegistry
-      ├─ ProjectTurnQueue
-      └─ Connector × N
-         ├─ slack
-         └─ schedule
-```
+Codex子は親の環境変数を引き継ぐ。`CODEX_HOME` を書き換えず、設定や認証のコピー・symlinkを作らない。標準では追加のdeveloper instructionsなし。選択されたSOULだけをCodex設定のdeveloper instructionsへ追加する。権限・sandboxの上書きは禁止。
 
-- `Project` が設定と実行の唯一のユーザー向け単位。有効なproject一つから
-  `LeucoProjectRuntime` 一つとCodex子プロセス一つを作る。
-- `conversationScope: project` が既定で、project内のSlackとscheduleは一つの
-  Codex threadと直列queueを共有する。`thread` ではconnectorが渡す
-  `threadKey` ごとにthreadと直列queueを分け、異なるkeyは上限付きで並行する。
-- `Connector` はprojectに接続する統合機能。現行型は `slack` と `schedule`。
-  Slackのchannel、DM、threadは登録対象ではなく、受信eventの `channel` 属性に乗る。
-- 現行schemaにLeuco独自の `Agent` entityや `agents` 配列はない。
-  `.codex/agents/` はCodex subagent、macOS `LaunchAgent` はdaemon自動起動、
-  `leuco projects <p> path agents` は `AGENTS.md` のpathを指す。
+## ソース
 
-## スタック
+- `lib/cli/` は引数parse、flat command、設定とSlack操作。
+- `lib/config/` はversion 4の単一設定schema。
+- `lib/secrets/` はOS資格情報ストアのabstract / Bun / Memory実装。平文fallbackなし。
+- `lib/storage/` は設定と状態のabstract store、Node / Memory実装。更新はlock内fresh loadとatomic write。
+- `lib/daemon/` はlease、Unix socket、認証付きローカル制御、前面・背景起動。
+- `lib/runtime/` は配線、直列queue、会話再開、SOUL、timeout、終了処理。
+- `lib/engine/` はCodex stdio JSON-RPCとturnの収集。
+- `lib/connectors/` は内部のSlack / schedule入力。複数agentの管理ではない。
+- `lib/actions/slack/` はtokenを保持するdaemon内のSlack API操作。ファイルの読み書きは呼び出し元CLIで行う。
+- `lib/events/` はLeucoイベントとSQLite保守。
+- `lib/event-log/` はFunnelとsourceを共有する汎用event log。このディレクトリ変更時は両製品のsource同期が必要。LeucoにFunnelのpackage依存はない。
+- `scripts/verify-single-companion.ts` は実CLIと偽Codexの統合検証。
 
-Bun 1.3以上、TypeScript、ESM。GatewayはHono、CLIはprocess内専用の
-`CliRouter`。CLI argvをURLやHTTP requestへ変換せず、command pathとbodyへparseして
-直接dispatchする。wire値はZodでparseし、型は `z.infer` から作る。
+## 不変条件
 
-Slack受信は `@interactive-inc/flume` のSocket Mode source、送信はraw `fetch`。
-`@slack/bolt` と `@slack/web-api` には依存しない。Codex `app-server` は
-stdio JSON-RPCでspawnする。Leuco内蔵MCPはなく、追加のSlack操作とschedule、
-file操作はproject scope付きのローカル `leuco` CLIへ一本化する。project設定の
-`mcpServers` は利用者がCodexへ追加する外部stdio MCPだけを表す。
+- `~/.codex` は通常のCodex資産。Leuco独自configを生成しない。
+- 指示や実行contextが変わった場合は新しいthreadにし、古いSOULを再開しない。
+- 失敗した依頼を自動で再実行しない。任意のresume失敗で対応表を消さない。
+- 全入力は一つのqueueで直列実行する。停止時は待機依頼も完了させる。
+- Slack final answerは内部出力。本文の送信は明示的な `leuco slack call`。ack reactionは独立した設定可能な動作。
+- 設定には資格情報の参照IDだけを保存する。tokenはOSストアから起動時に一度だけ読み、Codexへ渡さない。設定と状態は0600、ホームは0700。
+- `settings.json` は設定、`state.json` は会話対応表と予定実行時刻。古いsnapshotの上書きをしない。
 
-汎用event logは `lib/event-log/` に置く。Funnelにも同じsourceをコピーして
-各libraryが所有し、LeucoからFunnelへの製品依存は持たない。Funnel側の旧logger名は
-compatibility wrapperとして残す。コピー元を変更するときは両directoryを同期し、
-`diff -ru` で一致を確認する。
+## 検証
 
-## ディレクトリ
-
-```text
-lib/
-├─ index.ts                 CLI entry、env読み込み、cwd短縮、in-process dispatch
-├─ api.ts                   安定したpackage root export
-├─ runtime/runtime.ts       唯一の合成root
-├─ project/                 runtime、supervisor、thread registry、turn queue
-├─ connectors/              connector host、Slack、schedule
-├─ control/                 loopback daemon control clientとcontract
-├─ cli/                     command router、route、argv parser
-├─ actions/slack/           Slack API、file、DM診断
-├─ config/                  Project、Connector、Schedule、外部MCPのZod schema
-├─ projects/                project設定store、runtime state、legacy state migration
-├─ global-settings/         機械全体のscalar設定
-├─ engine/                  Codex clientとturn timeout
-├─ daemon/                  pid、log、background process lifecycle
-├─ boot/                    macOS LaunchAgent
-├─ event-log/               汎用event log、memory store、SQLite store
-├─ events/                  Leuco event schema、query、保守
-├─ gateway/                 health、status、thread、control用loopback HTTP
-├─ fs/                      atomic writeとfile lock
-├─ paths/leuco-paths.ts     `~/.leuco/` pathの唯一の組み立て元
-└─ env/                     CLI env schemaとdotenv reader
-```
-
-## リクエストの流れ
-
-Slack受信から通常返信までの経路。
-
-```text
-Flume Socket Mode source
-  → SlackConnector
-  → SlackEventProcessor
-  → LeucoProjectRuntime.runTextTurn
-  → conversation scopeに対応するProjectTurnQueue
-  → LeucoCodexClient
-  → codex app-server
-  → final answer（内部transport出力。Slackへは送らない）
-
-Codex
-  → 明示的な `leuco slack call`
-  → Slack action
-  → Slack Web API
-```
-
-Slackへの書き込みは、Codexが明示的に実行したproject scope付き
-`leuco slack call` だけが行う。`runTextTurn` のfinal answerは内部ログ・診断用であり、
-SlackConnectorが本文として自動投稿してはならない。これは情報境界の不変条件で、
-通常返信、追加メッセージ、reaction、fileのすべてに適用する。回帰テストでは、
-メンション有無にかかわらず非空final answerから `chat.postMessage` が呼ばれないことを
-固定する。失敗時の定型文も合成しない。
-
-scheduleも `ConnectorContext.runTextTurn` へ合流する。project scopeでは共通thread、
-thread scopeではschedule entryの `threadKey` に対応するthreadを使う。
-`LeucoEventLog` は並行して `events.db` へSlack、turn、schedule、
-Codex notification、runtime、supervisor eventを書く。
-
-## 合成rootとライフサイクル
-
-`LeucoRuntime.build({ env })` が唯一のwiring point。
-
-- `~/.leuco/settings.json` のprojectsとglobal settingsを読む
-- projectごとのstateを `~/.leuco/projects/<id>/state.json` から読む
-- enabled projectから `LeucoProjectRuntime` をbuildする
-- enabled connectorだけをruntimeへ組み込む
-- projectごとに独立した `CODEX_HOME` とCodex子プロセスを作る
-- Codex子へprojectの `LEUCO_PROJECT_ID` を渡す
-- `LeucoProjectSupervisor` がproject slot、retry、pause、reconcileを所有する
-- Hono gatewayがhealth、status、thread、daemon controlをloopback portで受ける
-- `LeucoRuntime` がsupervisor、gateway、`eventLog` を兄弟として所有する
-- 埋め込みconsumerは`hostInstructions`でstandalone Leuco CLIのprompt部分だけを置換する。未指定時は従来のLeuco CLI指示を使い、Slackの宛先判定や明示書き込み境界など共通ルールは維持する
-
-`ProjectSlot` はruntime、config signature、retry、pauseを一つのMap entryで所有する。
-reconcileはpath、prompt、model、外部MCP、enabled connector、Slack tokenの変化を
-signatureで検出し、変わったprojectだけを再構築する。schedule entryはconnectorが
-tickごとに再読み込みするためsignatureから除外する。connector restartは
-project全体を再構築せず、対象connectorだけをstop、startする。
-
-CLIが設定を変更するときは、必要な範囲だけdaemon control APIでprojectをpauseし、
-atomicな設定変更後にresumeまたはreconcileする。projectの `enabled` は永続設定であり、
-一時停止の代用品にしない。
-
-## 保存と書き込み
-
-`~/.leuco/settings.json` は人が管理する永続設定だけを保存する。
-
-- scalar global settings
-- projectの構成
-- connectorの構成とSlack token
-- prompt、model、外部MCP設定
-
-`~/.leuco/projects/<id>/state.json` は実行時stateだけを保存する。
-
-- project scopeのCodex thread ID
-- thread scopeのCodex thread ID map
-- scheduleごとの最終発火時刻
-
-schema version 3がcanonicalで、project fieldは `connectors`。version 2の
-`channels` とsettings内のruntime stateはread boundaryで移行し、次の管理操作で
-canonical形式を保存する。compatibility fieldを現行domain modelへ持ち込まない。
-
-Slack tokenを含むsettingsは0600。CLIとdaemonが同じファイルを
-read-modify-writeするため、project変更は必ず `updateProject()` を使う。
-`updateProject()` は `withFileLock` 内でfresh load、transform、atomic saveする。
-古いsnapshotを `save()` で書き戻してはならない。state更新は
-`LeucoProjectStateStore` に限定する。
-
-各projectの `.codex/` はconfigとCodex memoryを分離する。`auth.json` だけは
-`~/.codex/auth.json` へsymlinkし、ログインを共有する。regular fileがある場合は
-そのprojectの意図的な別ログインとみなして上書きしない。埋め込みAPIは
-`codexAuthPath` で認証元だけ変更でき、project別 `CODEX_HOME` の挙動は変えない。
-
-`events.db` はSlack本文を含むため本体、WAL、SHMを0600へ寄せる。
-projectの `config.toml` は外部MCP環境変数を含み得るため0600。
-
-## Codex compatibility hackの方針
-
-Codex内部実装への依存は少数のcompatibility seamへ閉じ込める。現行の意図的な
-hackは次の三つ。
-
-- `lib/runtime/runtime.ts` の `ensureAuthSymlink()` がprojectの
-  `CODEX_HOME/auth.json` を `~/.codex/auth.json` へsymlinkする。これは
-  login共有のためのfilesystem-level hackであり、security boundaryではない。
-- `lib/engine/codex/codex-schemas.ts` が、Codex `app-server` の一部error responseで
-  `jsonrpc` fieldが欠ける挙動を許容する。
-- `lib/engine/codex/is-codex-history-corruption-error.ts` が、復旧可能な履歴破損を
-  narrowなerror textで判定する。
-
-新しいintegrationはCodex CLI、app-server protocol、環境変数、公開設定を優先する。
-内部file layout、undocumented field、error textへ依存するworkaroundを安易に増やさない。
-必要になった場合は次をすべて満たす。
-
-- 一つのadapterまたはhelperへ局所化し、domain modelやconsumerへ漏らさない
-- 依存するCodex挙動と必要な理由を隣接commentに書く
-- 正常系、Codex側の変化、壊れたstateのtestを置く
-- `leuco doctor` またはactionable errorで故障を発見できるようにする
-- この一覧へ追加し、不要になった時点でcompatibility codeごと削除する
-
-project別 `CODEX_HOME` はconfig、memory、sessionの整理上の分離であり、
-同一OS userと `danger-full-access` の間にsecurity isolationを作るものではない。
-
-## CLI route
-
-`lib/cli/utils/parse-cli-invocation.ts` がargvをcommand pathとJSON bodyへ変換し、
-`CliRouter.dispatch()` が `lib/cli/routes/` のhandlerをprocess内で直接呼ぶ。
-実network、URL、`Request`、`fetch` は経由しない。flagは `--key value` と
-`--key=value` を受ける。
-
-ドット区切りのファイル名がcommand segmentに対応する。
-
-```text
-projects.$project.connectors.$connector.start.ts
-  → /projects/:project/connectors/:connector/start
-```
-
-新しいrouteを追加するときは次を行う。
-
-- `lib/cli/routes/<name>.ts` にhandlerをexportする
-- 必要なら隣にhelp routeを置く
-- `lib/cli/routes/index.ts` に `.command()` で登録する
-- parserのleafやflag規則を更新する
-- group help、route、argv parseのtestを追加する
-
-help textはplain ASCII、2space indent、隣のhelpと同じ書式にする。
-
-引数なしの `leuco` はdaemon停止中ならbackground start、起動済みならstatus表示。
-登録済みprojectのpathとcwdが完全一致する場合だけ `leuco connectors ...` を
-`leuco projects <p> connectors ...` へ展開する。Codex子では
-`LEUCO_PROJECT_ID` に対応するprojectをcwdより優先し、cwd変更後も同じ短縮形を
-固定projectへ展開する。projectを解決するrouteは明示されたproject IDがscopeと
-一致しなければ403で拒否する。
-
-`.env.local` と `.env` を読むのはforegroundの `leuco run` だけ。その他のCLIや
-`leuco start` では、呼び出しcwdの無関係なsecretをdaemonへ固定しないため読まない。
-
-## 公開API
-
-package rootは安定した最小面だけを公開する。
-
-- `LeucoRuntime`
-- Project、Connector、Schedule、外部MCPのcontract
-- EventLog、store contract、memory実装、SQLite実装
-
-daemon、gateway、CLI、store、具体connector、test fakeはinternal。新しいexportは
-既存consumerへ長期互換性を約束できる場合だけ追加する。
-
-## portsとテスト
-
-IO境界はportを通し、テストで実networkや実child processへ依存しない。
-新規実装の詳細は `.claude/rules/ts.md` のabstract class、Node実装、
-Memory実装のルールに従う。
-
-現行の主な境界は次のとおり。
-
-- `CodexClientPort` と `LeucoCodexClient`
-- `LeucoSlackWebClient` とFetch、Memory実装
-- `LeucoSlackEventSource` とFlume、Memory実装
-- `Connector` とSlack、Schedule実装
-- `LaunchctlPort` とprocess実装
-- `EventLogStore`、`EventLogRelay` とMemory、SQLite実装
-- `DaemonControl` と `DaemonControlClient`
-
-IOの重いclassはevent正規化をprocessor、wire framingをprotocol、
-Hono app組み立てをpure factoryへ分離する。testはsourceの隣の `.test.ts`、
-Bun専用testは `.bun-test.ts` とする。
-
-## 開発コマンド
-
-```bash
-bun install
-bun run lib/index.ts -h
-bun run lib/index.ts run
-```
-
-formatterとlinterは次。`vp check` にtypecheckとtestは含まれない。
-
-```bash
-vp check
-```
-
-typecheckとtestは個別に実行する。
-
-```bash
-bunx tsc -b
-vp test run
-bun test ./lib/events/leuco-event-log.bun-test.ts
-```
-
-完全検査は次。
-
-```bash
-bun run verify
-```
-
-## 規約
-
-`.claude/rules/` がsource of truth。ここに規約を複製しない。コードやMarkdownを
-書く前に対応するruleを必ず読む。
-
-- TypeScriptは `.claude/rules/ts.md`
-- Reactが対象なら `.claude/rules/ts.react.md`
-- Markdownは `.claude/rules/md.md`
-- commitは `.claude/rules/git.md`
-- software skill選択は `.claude/rules/software-skills.md`
-
-## ハマりどころ
-
-- Codex `app-server` は `initialize` requestと `initialized` notificationが必須。
-  initializeは30秒でtimeoutし、失敗時は子プロセスを破棄する。
-- CodexのJSON-RPC errorが `jsonrpc` fieldを欠くことがある。
-  `lib/engine/codex/codex-protocol.ts` のwire扱いを参照する。
-- `codex.stop()` はSIGTERM後5秒待ち、終了しなければSIGKILLへ昇格する。
-  stream turnのaborterも必ずsettleさせる。
-- project scopeではproject一つのturn queueを直列化する。thread scopeでは
-  `threadKey` ごとに直列化し、異なるkeyを設定上限まで並行する。
-- wall-clock timeout、idle timeout、command output上限超過、Codex process exitは
-  そのprojectのCodex子だけを置き換える。失敗turnは副作用重複を避けるためreplayしない。
-- projectの `config.toml` は `approval_policy = "never"` と
-  `sandbox_mode = "danger-full-access"` を強制する。daemonには承認promptへ
-  答えるterminalがなく、macOS seatbeltのnetwork制限が無音で失敗するため。
-- Codex子へは `LEUCO_PROJECT_ID` を注入する。`leuco connectors ...` と
-  `--project` を省いた `leuco slack ...` はそのprojectを使い、別projectを
-  明示した操作は拒否する。
-- Slack connectorはstart時に `auth.test` でbot user IDを確定する。
-  失敗またはuser ID欠落はfail-fastする。
-- reaction eventはtelemetryにだけ流し、Codex turnを起動しない。
-- Slack token変更後は対象connectorのrestartでよい。project全体を再構築しない。
-- `LEUCO_CWD` はenv schemaに残るがruntimeのcwd overrideには使わない。
-  cwd変更は `leuco projects <p> cwd <path>` を使う。
+`bun run verify` を使う。unitはMemory境界、実プロセス・FSの確認はscripts内のintegration verifierで行う。実Slack・Codex推論をテスト中に呼ばない。公開APIの破壊的変更ではREADME、同梱CLI skill、packageの型も更新する。

@@ -1,16 +1,14 @@
-type Props = {
-  env: NodeJS.ProcessEnv
-  codexHome: string
-  projectId: string
-}
+type Props = { env: NodeJS.ProcessEnv; home: string }
 
-/**
- * Give every project runtime Codex child an immutable-by-convention project identity.
- * The local Leuco CLI uses it to infer the current project and reject an
- * explicitly different project before any operation runs.
- */
-export const buildCodexChildEnv = (props: Props): NodeJS.ProcessEnv => ({
-  ...props.env,
-  CODEX_HOME: props.codexHome,
-  LEUCO_PROJECT_ID: props.projectId,
-})
+export function buildCodexChildEnv(props: Props): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...props.env, LEUCO_HOME: props.home }
+  for (const name of [
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "LEUCO_SLACK_BOT_TOKEN",
+    "LEUCO_SLACK_APP_TOKEN",
+  ])
+    delete env[name]
+  delete env.LEUCO_PROJECT_ID
+  return env
+}

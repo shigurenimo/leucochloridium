@@ -225,7 +225,13 @@ describe("LeucoFetchSlackWebClient", () => {
     expect(String(uploadCall[0])).toBe("https://files.slack.com/upload/test")
     expect(uploadCall[1]?.body).toBeInstanceOf(FormData)
     expect(String(completeCall[0])).toBe("https://slack.com/api/files.completeUploadExternal")
-    expect(JSON.parse(String(completeCall[1]?.body))).toEqual({
+    const completeBody = new URLSearchParams(String(completeCall[1]?.body))
+    expect({
+      files: JSON.parse(completeBody.get("files")!),
+      channel_id: completeBody.get("channel_id"),
+      thread_ts: completeBody.get("thread_ts"),
+      initial_comment: completeBody.get("initial_comment"),
+    }).toEqual({
       files: [{ id: "F1", title: "Banner" }],
       channel_id: "C1",
       thread_ts: "100.0",

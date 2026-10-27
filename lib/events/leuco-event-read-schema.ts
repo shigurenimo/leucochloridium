@@ -4,6 +4,8 @@ import { leucoEventSchema } from "@/events/leuco-event-schema"
 const legacyEnvelopeSchema = z
   .object({
     type: z.string(),
+    runtime: z.string().optional(),
+    project: z.string().optional(),
     channel: z.string().optional(),
     connector: z.string().optional(),
     reason: z.string().optional(),
@@ -29,6 +31,7 @@ export const leucoEventReadSchema = z.preprocess((value) => {
   return {
     ...event,
     type,
+    runtime: event.runtime ?? event.project,
     ...(connector === undefined ? {} : { connector }),
     ...(reason === undefined ? {} : { reason }),
   }

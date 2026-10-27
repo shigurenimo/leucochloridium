@@ -31,7 +31,7 @@ const makeCtx = (): { ctx: ConnectorContext; captured: Captured } => {
       return ""
     },
     eventLog: captured.eventLog,
-    projectName: "demo",
+    runtimeName: "demo",
   }
   return { ctx, captured }
 }

@@ -26,10 +26,11 @@ export type LeucoEventLogProps = {
 }
 
 export class LeucoEventLog {
-  private readonly store: MemoryEventLog<LeucoEvent> | SqliteEventLog<LeucoEvent, ["project"]>
+  private readonly store: MemoryEventLog<LeucoEvent> | SqliteEventLog<LeucoEvent, ["runtime"]>
   private readonly eventLog: EventLog<LeucoEvent>
   private readonly now: () => number
   private isClosed = false
+  private redactionSecrets: string[] = []
 
   constructor(props: LeucoEventLogProps = {}) {
     const maxRows = props.maxRows ?? DEFAULT_EVENT_LOG_MAX_ROWS
@@ -55,10 +56,25 @@ export class LeucoEventLog {
     })
   }
 
+  setRedactionSecrets(secrets: string[]): void {
+    this.redactionSecrets = secrets.filter(Boolean)
+  }
+
+  redactText(text: string): string {
+    return this.redactionSecrets.reduce(
+      (redacted, secret) => redacted.split(secret).join("[redacted]"),
+      text,
+    )
+  }
+
   append(event: LeucoEvent): void {
     if (this.isClosed) return
 
-    const outcome = this.eventLog.append(compactLeucoEvent(event))
+    const safe: LeucoEvent =
+      this.redactionSecrets.length === 0
+        ? event
+        : leucoEventSchema.parse(JSON.parse(this.redactText(JSON.stringify(event))))
+    const outcome = this.eventLog.append(compactLeucoEvent(safe))
     if (!(outcome instanceof Error)) return
 
     process.stderr.write(`[leuco] event persist failed: ${outcome.message}\n`)
@@ -78,7 +94,7 @@ export class LeucoEventLog {
       this.store.query({
         ...(query.sinceSeq !== undefined ? { sinceSeq: query.sinceSeq } : {}),
         ...(type === null ? {} : { type }),
-        ...(query.project !== undefined ? { where: { project: query.project } } : {}),
+        ...(query.runtime !== undefined ? { where: { runtime: query.runtime } } : {}),
         ...(query.limit !== undefined ? { limit: query.limit } : {}),
         ...(query.order !== undefined ? { order: query.order } : {}),
       }),
@@ -98,6 +114,7 @@ export class LeucoEventLog {
     if (this.isClosed) return
 
     this.isClosed = true
+    this.redactionSecrets = []
     this.eventLog.close()
   }
 }
@@ -111,13 +128,13 @@ type SqliteStoreProps = {
   targetBytes: number
 }
 
-function buildSqliteStore(props: SqliteStoreProps): SqliteEventLog<LeucoEvent, ["project"]> {
+function buildSqliteStore(props: SqliteStoreProps): SqliteEventLog<LeucoEvent, ["runtime"]> {
   maintainLeucoEventLog(props)
 
-  return new SqliteEventLog<LeucoEvent, ["project"]>({
+  return new SqliteEventLog<LeucoEvent, ["runtime"]>({
     path: props.path,
-    indexes: ["project"],
-    extractIndexes: projectIndexOf,
+    indexes: ["runtime"],
+    extractIndexes: runtimeIndexOf,
     now: props.now,
     maxRows: props.maxRows,
     maxAgeMs: props.maxAgeMs,
@@ -126,8 +143,8 @@ function buildSqliteStore(props: SqliteStoreProps): SqliteEventLog<LeucoEvent, [
   })
 }
 
-function projectIndexOf(event: LeucoEvent): { project: string | null } {
-  if (!("project" in event)) return { project: null }
+function runtimeIndexOf(event: LeucoEvent): { runtime: string | null } {
+  if (!("runtime" in event)) return { runtime: null }
 
-  return { project: typeof event.project === "string" ? event.project : null }
+  return { runtime: typeof event.runtime === "string" ? event.runtime : null }
 }

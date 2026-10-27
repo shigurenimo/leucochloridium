@@ -1,22 +1,12 @@
 import type { LeucoEventLog } from "@/events/leuco-event-log"
 
 /** Runtime services exposed to a connector. */
-export type TurnPriority = "normal" | "high"
-
-export type RunTextTurnOptions = {
-  priority?: TurnPriority
-}
-
 export type ConnectorContext = {
   cwd: string
   onLog: (line: string) => void
-  runTextTurn: (
-    threadKey: string,
-    text: string,
-    options?: RunTextTurnOptions,
-  ) => Promise<string | Error>
+  runTextTurn: (threadKey: string, text: string) => Promise<string | Error>
   eventLog: LeucoEventLog
-  projectName: string
+  runtimeName: string
 }
 
 export type ConnectorIdentity = {

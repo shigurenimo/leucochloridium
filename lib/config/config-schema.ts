@@ -1,189 +1,47 @@
 import { isAbsolute } from "node:path"
 import { z } from "zod"
-import { DEFAULT_PROMPT_PRESET_NAMES, PROMPT_PRESET_NAMES, PromptPreset } from "@/prompts/presets"
 
-const NAME_PATTERN = /^[a-z][a-z0-9_-]*$/
-
-const safeName = z.string().min(1).regex(NAME_PATTERN, "must match ^[a-z][a-z0-9_-]*$")
-
-const ackIconsSchema = z
-  .object({
-    progress: z.string().default("hourglass_flowing_sand"),
-    success: z.string().default("white_check_mark"),
-    error: z.string().default("x"),
-  })
-  .default({
-    progress: "hourglass_flowing_sand",
-    success: "white_check_mark",
-    error: "x",
-  })
-
-const slackConnectorSchema = z.object({
-  id: z.uuid(),
-  name: safeName,
-  type: z.literal("slack"),
-  enabled: z.boolean().default(true),
-  botToken: z.string().default(""),
-  appToken: z.string().default(""),
-  /**
-   * When the bot adds the in-progress / done / error reactions to the
-   * incoming message:
-   *   - "off": never (codex is fully responsible for any visible feedback)
-   *   - "mention": only when the bot is @-mentioned
-   *   - "always": every accepted message event
-   * Reaction events themselves never trigger ack — they are silent regardless.
-   */
-  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
-  /** Override the emoji names used by the ack reactions. Slack reaction names without `:`. */
-  ackIcons: ackIconsSchema,
-})
-
-/**
- * One scheduled prompt. `runAt` is either an ISO 8601 timestamp (one-shot)
- * or a 5-field cron expression (recurring) — discriminated at parse time by
- * whether the string contains whitespace. One-shot entries are removed from
- * settings.json after they fire; cron entries persist and re-fire forever.
- */
-const scheduleEntrySchema = z.object({
-  id: z.uuid(),
-  name: safeName,
+export const scheduleEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().regex(/^[a-z][a-z0-9_-]*$/),
   runAt: z.string().min(1),
   prompt: z.string().min(1),
   enabled: z.boolean().default(true),
 })
 
-const scheduleConnectorSchema = z.object({
-  id: z.uuid(),
-  name: safeName,
-  type: z.literal("schedule"),
-  enabled: z.boolean().default(true),
-  entries: z.array(scheduleEntrySchema).default([]),
+const slackSchema = z.strictObject({
+  credential: z.uuid(),
+  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
 })
 
-const connectorSchema = z.discriminatedUnion("type", [
-  slackConnectorSchema,
-  scheduleConnectorSchema,
-])
-
-const DEFAULT_PROMPTS = [...DEFAULT_PROMPT_PRESET_NAMES]
-
-const appendUniquePrompt = (out: unknown[], prompt: string): void => {
-  if (!out.includes(prompt)) out.push(prompt)
-}
-
-const LEGACY_PROMPT_PRESETS: Readonly<Record<string, string>> = {
-  COMMUNICATION: PromptPreset.STYLE_WORK,
-  WORK_COMMUNICATION: PromptPreset.STYLE_WORK,
-  HUMAN_COMMUNICATION: PromptPreset.STYLE_HUMAN,
-  COMMUNICATION_SLACK: PromptPreset.STYLE_SLACK,
-}
-
-const migratePromptPresets = (value: unknown): unknown => {
-  if (!Array.isArray(value)) return value
-
-  const migrated: unknown[] = []
-  for (const prompt of value) {
-    if (prompt === "friendly") {
-      for (const defaultPrompt of DEFAULT_PROMPTS) appendUniquePrompt(migrated, defaultPrompt)
-      continue
+export const settingsSchema = z
+  .strictObject({
+    version: z.literal(4).default(4),
+    cwd: z.string().refine(isAbsolute, "cwd must be absolute").nullable().default(null),
+    soul: z.string().refine(isAbsolute, "soul must be absolute").nullable().default(null),
+    model: z.string().min(1).nullable().default(null),
+    slack: slackSchema.nullable().default(null),
+    schedules: z.array(scheduleEntrySchema).default([]),
+    turnTimeoutMs: z.number().int().positive().default(600_000),
+    idleTimeoutMs: z.number().int().positive().default(120_000),
+  })
+  .superRefine((settings, context) => {
+    const names = new Set<string>()
+    const ids = new Set<string>()
+    for (const entry of settings.schedules) {
+      if (names.has(entry.name) || ids.has(entry.id)) {
+        context.addIssue({ code: "custom", message: "schedule names and IDs must be unique" })
+      }
+      names.add(entry.name)
+      ids.add(entry.id)
     }
-    if (typeof prompt === "string") {
-      appendUniquePrompt(migrated, LEGACY_PROMPT_PRESETS[prompt] ?? prompt)
-      continue
-    }
-    migrated.push(prompt)
-  }
-  return migrated
-}
+  })
 
-/**
- * One external stdio MCP server to attach to this project's Codex child.
- * Leuco stays agnostic about what the server does and only forwards
- * `command`/`args`/`env` into the project runtime's CODEX_HOME `config.toml` as a
- * `[mcp_servers.<key>]` block. Per-project `env` lets callers scope a shared
- * MCP binary to a specific identity without Leuco modeling that identity.
- */
-const mcpServerSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()).default([]),
-  // Keys become bare TOML keys in the project runtime's config.toml inline `env`
-  // table — an unconstrained key (spaces, `=`, newlines) would corrupt the
-  // file and silently break the project runtime's codex start.
-  env: z
-    .record(
-      z
-        .string()
-        .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an env var name ([A-Za-z_][A-Za-z0-9_]*)"),
-      z.string(),
-    )
-    .default({}),
+export const stateSchema = z.object({
+  threads: z.record(z.string(), z.object({ id: z.string(), context: z.string() })).default({}),
+  scheduleLastFiredAt: z.record(z.string(), z.number()).default({}),
 })
 
-/** Schema version accepted by this binary's unified project settings. */
-const CURRENT_SCHEMA_VERSION = 3
-
-const currentProjectSchema = z.object({
-  version: z.literal(CURRENT_SCHEMA_VERSION),
-  /**
-   * Stable per-project identifier. The on-disk directory at
-   * `~/.leuco/projects/<id>/` is keyed by this id, not by `name`, so renames
-   * are a single field write and same-name projects (different repos with
-   * matching basenames) can coexist. UUIDs are generated by `projects add`
-   * and `projects add`.
-   */
-  id: z.uuid(),
-  name: safeName,
-  // Project path must be absolute. It becomes codex's `cwd` and is also
-  // written into the project runtime's `config.toml` as `[projects.<path>]
-  // trust_level = "trusted"` — granting "trusted" to a relative path would
-  // be path-dependent and surprising. CLI handlers already `resolve()` user
-  // input; this guard catches hand-edited settings.json.
-  path: z.string().min(1).refine(isAbsolute, "must be an absolute path"),
-  enabled: z.boolean().default(true),
-  /**
-   * "project" keeps one shared Codex conversation across every connector.
-   * "thread" maps each connector-provided threadKey to its own Codex thread.
-   */
-  conversationScope: z.enum(["project", "thread"]).default("project"),
-  useCommonInstructions: z.boolean().default(true),
-  /** Optional codex model override passed to `thread/start`. null = codex default. */
-  model: z.string().min(1).nullable().default(null),
-  /** Optional per-project instructions appended after the preamble and presets. */
-  developerInstructions: z.string().min(1).nullable().default(null),
-  prompts: z
-    .preprocess(migratePromptPresets, z.array(z.enum(PROMPT_PRESET_NAMES)))
-    .default(DEFAULT_PROMPTS),
-  connectors: z.array(connectorSchema).default([]),
-  mcpServers: z.record(safeName, mcpServerSchema).default({}),
-})
-
-/**
- * Version 2 called connectors "channels". Accept it at the read boundary and
- * emit only the version 3 shape; the next administrative write completes the
- * migration without a separate command or compatibility field in the model.
- */
-const migrateProject = (value: unknown): unknown => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return value
-
-  const record = Object.fromEntries(Object.entries(value))
-  if (record.version !== 2) return value
-  const legacyConnectors = record.channels
-  delete record.channels
-  return {
-    ...record,
-    version: CURRENT_SCHEMA_VERSION,
-    connectors: record.connectors ?? legacyConnectors ?? [],
-  }
-}
-
-export const projectSchema = z.preprocess(migrateProject, currentProjectSchema)
-
-export { CURRENT_SCHEMA_VERSION }
-
-export type ConnectorConfig = z.infer<typeof connectorSchema>
-export type SlackConnectorConfig = z.infer<typeof slackConnectorSchema>
-export type ScheduleConnectorConfig = z.infer<typeof scheduleConnectorSchema>
+export type LeucoSettings = z.infer<typeof settingsSchema>
+export type LeucoState = z.infer<typeof stateSchema>
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>
-export type McpServer = z.infer<typeof mcpServerSchema>
-export type ConversationScope = Project["conversationScope"]
-export type Project = z.infer<typeof projectSchema>

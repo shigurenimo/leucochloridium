@@ -284,6 +284,26 @@ export class LeucoCodexClient {
     }
   }
 
+  async getDeveloperInstructions(): Promise<string> {
+    if (!this.protocol) throw new Error("codex client not started")
+    const response = await withTimeout(
+      this.protocol.request("config/read", { includeLayers: false }),
+      this.threadRequestTimeoutMs,
+      "codex config/read timed out",
+    )
+    if (typeof response !== "object" || response === null || !("config" in response)) {
+      throw new Error("codex config/read returned no config")
+    }
+    const config = response.config
+    if (typeof config !== "object" || config === null || !("developer_instructions" in config))
+      return ""
+    if (config.developer_instructions === null || config.developer_instructions === undefined)
+      return ""
+    if (typeof config.developer_instructions !== "string")
+      throw new Error("Invalid Codex developer instructions")
+    return config.developer_instructions
+  }
+
   async startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error> {
     const protocol = this.protocol
     const child = this.child

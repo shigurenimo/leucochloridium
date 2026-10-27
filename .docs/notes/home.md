@@ -1,5 +1,7 @@
 # テナントの codex home 分離
 
+この文書は過去の設計記録。0.18ではproject管理と内蔵MCP gatewayを廃止し、通常のCODEX_HOMEを共有する設計へ変更した。現行仕様は [README](../../README.md) を参照。
+
 leuco はテナントごとに `~/.leuco/projects/<id>/.codex/` を作り、`CODEX_HOME` をそこに向けている。複雑に見えるが、これは codex の config 構造に由来する不可避の選択。
 
 ## なぜ home を分けるのか

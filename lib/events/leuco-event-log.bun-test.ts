@@ -47,29 +47,29 @@ describe("LeucoEventLog", () => {
   test("reads pre-0.17 event names and connector fields", () => {
     const path = join(dir, "events.db")
     const legacyLog = new SqliteEventLog<
-      | { ts: number; type: "tenant.started"; project: string }
+      | { ts: number; type: "tenant.started"; runtime: string }
       | {
           ts: number
           type: "slack.error"
-          project: string
+          runtime: string
           channel: string
           level: "error"
           action: string
           message: string
           error: null
         },
-      ["project"]
+      ["runtime"]
     >({
       path,
-      indexes: ["project"],
-      extractIndexes: (event) => ({ project: event.project }),
+      indexes: ["runtime"],
+      extractIndexes: (event) => ({ runtime: event.runtime }),
     })
     legacyLog.insert({
       ts: 1700000000000,
       event: {
         ts: 1700000000000,
         type: "tenant.started",
-        project: "demo",
+        runtime: "demo",
       },
     })
     legacyLog.insert({
@@ -77,7 +77,7 @@ describe("LeucoEventLog", () => {
       event: {
         ts: 1700000000001,
         type: "slack.error",
-        project: "demo",
+        runtime: "demo",
         channel: "slack",
         level: "error",
         action: "turn.failed",
@@ -96,7 +96,7 @@ describe("LeucoEventLog", () => {
       expect.objectContaining({
         event: expect.objectContaining({
           type: "runtime.started",
-          project: "demo",
+          runtime: "demo",
         }),
       }),
     ])
@@ -115,14 +115,14 @@ describe("LeucoEventLog", () => {
     const path = join(dir, "events.db")
     const eventLog = new LeucoEventLog({ eventLogPath: path })
 
-    eventLog.append({ ts: Date.now(), type: "runtime.started", project: "alpha" })
-    eventLog.append({ ts: Date.now(), type: "runtime.started", project: "beta" })
+    eventLog.append({ ts: Date.now(), type: "runtime.started", runtime: "alpha" })
+    eventLog.append({ ts: Date.now(), type: "runtime.started", runtime: "beta" })
     eventLog.append({ ts: Date.now(), type: "log", level: "info", line: "no project" })
 
-    const alphaOnly = eventLog.query({ project: "alpha" })
+    const alphaOnly = eventLog.query({ runtime: "alpha" })
 
     expect(alphaOnly).toHaveLength(1)
-    expect(alphaOnly[0]!.event).toMatchObject({ type: "runtime.started", project: "alpha" })
+    expect(alphaOnly[0]!.event).toMatchObject({ type: "runtime.started", runtime: "alpha" })
 
     eventLog.close()
   })
@@ -169,14 +169,14 @@ describe("LeucoEventLog", () => {
     eventLog.append({
       ts: Date.now(),
       type: "turn.complete",
-      project: "demo",
+      runtime: "demo",
       threadKey: "thread",
       reply: large,
     })
     eventLog.append({
       ts: Date.now(),
       type: "codex.notification",
-      project: "demo",
+      runtime: "demo",
       method: "item/commandExecution/outputDelta",
       params: { delta: large },
     })

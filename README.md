@@ -1,471 +1,160 @@
 # Leuco
 
-Leuco is a self-hosted gateway that runs the Codex `app-server` as a Slack bot. A single daemon on your machine supervises any number of projects, and each enabled project gets its own dedicated Codex process. You mention the bot in Slack, Codex works inside your repository, and the reply comes back to the same conversation.
+普段のCodexを、一匹の常駐アシスタントとして使う小さなCLI。Bun 1.4.4以上と、ログイン済みの `codex` CLIが必要。
 
-Leuco runs on Bun only.
-
-## How Leuco is organized
-
-プロジェクトは、Codexを動かすリポジトリと実行設定をまとめる単位です。有効なプロジェクトごとに、1つのCodex `app-server`、設定された会話範囲に応じたCodex thread、connectorを持つproject runtimeが作られます。project runtimeを直接作成・管理する必要はありません。
-
-```text
-Leuco daemon
-├─ project A
-│  └─ project runtime
-│     ├─ Codex app-server × 1
-│     ├─ Codex thread × 1..n
-│     ├─ slack connector
-│     └─ schedule connector
-└─ project B
-   └─ project runtime
-      └─ Codex app-server × 1
+```sh
+bun add -g leuco
+leuco start --cwd ~/work
+leuco ask "このディレクトリの構成を教えて"
+leuco stop
 ```
 
-`connector` is a Leuco integration attached to a project and comes in two kinds: `slack` and `schedule`. It is distinct from a Slack channel such as `#general`; Slack channels, DMs, and threads are ordinary conversations and are not registered individually in Leuco.
+前面で動かす場合は `leuco run`。一回だけ依頼する場合は次のように使う。
 
-会話範囲の既定値は`project`で、Slackの会話やscheduleを含むプロジェクト全体が1つのCodex threadを共有します。`thread`へ切り替えると、connectorが渡す`threadKey`ごとに履歴が分離され、異なるthreadKeyは並行処理されます。切り替えても両方の履歴IDは保持されるため、元の範囲へ戻せます。
-
-```bash
-leuco projects <project> session scope
-leuco projects <project> session scope thread
-leuco projects <project> session scope project
+```sh
+leuco run --cwd ~/work --prompt "READMEを確認して"
 ```
 
-Current Leuco has no user-facing `agent` entity. Codex subagents, the macOS LaunchAgent, and the `agents[]` array found in old configuration files are all unrelated concepts.
+## Codexとの共有
 
-## Requirements
+`codex app-server` を一つ起動する。`CODEX_HOME` は環境変数をそのまま引き継ぎ、未指定ならCodex標準の `~/.codex` を使う。認証のコピー、symlink、専用 `config.toml` の生成はしない。
 
-You need [Bun](https://bun.sh) 1.3 or later, the [Codex CLI](https://github.com/openai/codex), and permission to install an app into your Slack workspace. Automatic startup at login uses `launchctl` and is macOS only.
+Codexの設定、利用可能なスキル、メモリ、MCPを含む通常のCodex環境を利用する。メモリをいつ参照するか、どのスキルやツールが使えるかはCodex側の設定・バージョンによる。デスクトップアプリ専用のブラウザ操作やコネクタを自動的に引き継ぐものではない。
 
-## Installation
+承認・サンドボックス設定もCodexに任せる。Leucoが `danger-full-access` を強制することはない。対話的な承認UIはないため、承認要求を必要とする操作は実行できない。Codexの設定と実行権限を確認して使う。
 
-```bash
-bun i -g leuco
-leuco --version
-codex login
+## 任意の追加指示
+
+標準ではLeuco独自のシステムプロンプトを追加しない。人格や振る舞いを追加したい場合だけファイルを指定する。
+
+```sh
+leuco start --soul ./SOUL.md
+leuco start --no-soul
 ```
 
-To run from a checkout of this repository instead:
+`--soul` はCodex設定のdeveloper instructionsを残してファイル本文を追加する。`--no-soul` は保存済みの指定も今回だけ無効にする。Codex本来の指示や `AGENTS.md` は無効化しない。SOULを標準で自動探索しない。
 
-```bash
-bun install
-bun link
-leuco --version
+常用する設定は保存できる。
+
+```sh
+leuco config set cwd '"/absolute/path/to/work"'
+leuco config set soul '"/absolute/path/to/SOUL.md"'
+leuco config set soul null
+leuco config show
 ```
 
-## Setting up the Slack app
+設定変更後は `leuco stop` と `leuco start` で再起動する。SOUL、作業ディレクトリ、モデル、Codexホーム、Codexのdeveloper instructionsが変わった場合は新しい会話を開始し、前の指示を再開しない。SOULファイルの読み直しも起動時。
 
-This walkthrough covers the standard configuration using a bot user OAuth token (`xoxb-...`). If you would rather have the bot act as a real Slack user, see the user token section below.
+## 会話と状態
 
-### Create the app
+Leucoが管理するアシスタントは一匹だけ。全依頼を直列に実行し、`--thread` のキーごとにCodexの会話を分ける。標準キーは `cli`。同じキーは再起動後も再開する。Codex内部のsubagent機能はCodex設定に従う。
 
-Open [Slack Apps](https://api.slack.com/apps), choose `Create New App`, then `From scratch`, and pick an app name and the workspace to install into.
-
-Under `OAuth & Permissions`, add the bot token scopes `app_mentions:read`, `channels:history`, `im:history`, `chat:write`, `files:write`, and `reactions:write`. If the bot should also receive every message in private channels, add `groups:history` as well. Slack documents each scope in its reference, for example [`app_mentions:read`](https://docs.slack.dev/reference/scopes/app_mentions.read/), [`chat:write`](https://docs.slack.dev/reference/scopes/chat.write/), [`files:write`](https://docs.slack.dev/reference/scopes/files.write/), and [`groups:history`](https://docs.slack.dev/reference/scopes/groups.history/).
-
-### Subscribe to events
-
-Under `Event Subscriptions`, enable events and subscribe to the bot events `app_mention`, `message.channels`, and `message.im`. Add `message.groups` if you need every message in private channels, `message.mpim` together with the `mpim:history` scope for group DMs, and `reaction_added` if you want the bot to observe reactions.
-
-### Enable Socket Mode
-
-Leuco connects to Slack over Socket Mode, so no public HTTP endpoint is required. Enable it under `Socket Mode`, then create an app-level token with the `connections:write` scope from `Basic Information` → `App-Level Tokens`, and keep the generated `xapp-...` token. Slack's [Socket Mode guide](https://docs.slack.dev/apis/events-api/using-socket-mode/) and the [`connections:write` reference](https://docs.slack.dev/reference/scopes/connections.write/) have the details.
-
-### Install the app
-
-Install the app into your workspace from `Install App` and keep the bot user OAuth token (`xoxb-...`). Whenever Slack asks you to reinstall after a scope or event change, do it — the old token keeps working with the old permissions otherwise.
-
-## Registering a project
-
-Run these from the root of the repository you want the bot to work in. The project name defaults to the directory name.
-
-```bash
-cd /path/to/your-repo
-leuco projects add .
-leuco connectors add slack
+```sh
+leuco ask "続けて" --thread notes
+leuco session list
+leuco stop
+leuco session reset notes
 ```
 
-The short form `leuco connectors ...` only works from the root of a registered repository. From anywhere else, use the full form:
+`session reset` はLeucoの対応表を消す。Codexに保存された履歴自体は消さない。失敗した依頼は自動再実行せず、次の依頼時にCodex接続を復旧する。
 
-```bash
-leuco projects <project-name> connectors add slack
-```
-
-`leuco projects` and `leuco connectors` show what is registered so far.
-
-## Saving the Slack tokens
-
-Tokens are read from standard input so they never end up in your shell history or process list. On macOS, copy the `xoxb-...` token to the clipboard and run:
-
-```bash
-pbpaste | leuco connectors slack set-tokens --bot-token -
-```
-
-Then copy the `xapp-...` token and run:
-
-```bash
-pbpaste | leuco connectors slack set-tokens --app-token -
-```
-
-Without `pbpaste`, run each command with `-`, paste the token, press Enter, then Ctrl-D.
-
-Here `slack` is the connector name, not a fixed keyword. If you created it with `connectors add slack --name work`, use `work` instead.
-
-Check the result with `leuco connectors`. The connection is ready when it reports `tokensSet: true`:
-
-```yaml
-connectors:
-  - name: slack
-    type: slack
-    enabled: true
-    tokensSet: true
-```
-
-Tokens are stored per connection in `~/.leuco/settings.json`. No runtime environment variables are needed for Slack.
-
-## Running the bot
-
-Start in the foreground the first time so you can read the logs directly:
-
-```bash
-leuco run
-```
-
-Once `ready` and the Slack connection lines appear, invite the bot to a channel and mention it:
-
-```text
-/invite @your-bot
-@your-bot hello
-```
-
-For DMs, open a direct message with the app and write to it.
-
-When everything works, stop the foreground process with Ctrl-C and switch to the background daemon:
-
-```bash
-leuco start
-leuco status
-```
-
-Running plain `leuco` with no arguments starts the daemon if it is stopped and prints the status if it is already running. To start automatically at login on macOS:
-
-```bash
-leuco boot install
-leuco boot
-```
-
-macOSではLaunchAgentの導入を推奨します。導入しなくても`leuco start`は使えますが、
-daemon自体が致命的エラーで終了した場合の自動再起動とログイン時起動は行われません。
-
-## Using a user token
-
-Leuco also accepts a user token (`xoxp-...`). In that configuration, Slack API calls run as the token's owner rather than as a bot. Set the user token scopes `channels:history`, `im:history`, `im:read`, `chat:write`, and `files:write`, subscribe to `message.channels` and `message.im` as user events rather than bot events, and add `groups:history`, `mpim:history`, `message.groups`, or `message.mpim` as needed. The Socket Mode `xapp-...` token is required exactly as in the bot configuration.
-
-For compatibility, the CLI stores a user token through the same `--bot-token` flag:
-
-```bash
-pbpaste | leuco connectors slack set-tokens --bot-token -
-```
-
-## Everyday commands
-
-The daemon lifecycle is managed with the top-level commands:
-
-```text
-leuco                         start if stopped, show status if running
-leuco run                     run in the foreground
-leuco start                   start in the background
-leuco stop                    stop
-leuco restart                 stop, then start
-leuco status                  show daemon and project state as YAML
-leuco logs -f                 follow the daemon log
-leuco doctor                  diagnose settings, Codex, Slack, leftover processes
-```
-
-Projects are managed under `leuco projects`:
-
-```text
-leuco projects                            list registered projects
-leuco projects add [<path>]               register an existing repository
-leuco projects <p> start                  enable the project
-leuco projects <p> stop                   disable the project
-leuco projects <p> restart                rebuild the project runtime
-leuco projects <p> rename <new>           rename the project
-leuco projects <p> cwd <path>             change only Codex's cwd, moving no files
-leuco projects <p> session                show the stored Codex thread state
-leuco projects <p> session reset          discard stored Codex thread IDs and restart
-leuco projects <p> path [key]             print project-related paths
-leuco projects <p> remove [--cascade]     unregister
-```
-
-Connectors are managed under each project. From the root of a registered repository, `leuco projects <p>` can be omitted and the same commands are available as `leuco connectors ...`:
-
-```text
-leuco projects <p> connectors                         list connections
-leuco projects <p> connectors add slack               add a Slack connection
-leuco projects <p> connectors add schedule            add a schedule connection
-leuco projects <p> connectors <c> start               enable
-leuco projects <p> connectors <c> stop                disable
-leuco projects <p> connectors <c> restart             restart only this connector
-leuco projects <p> connectors <c> rename <new>        rename the connection
-leuco projects <p> connectors <c> set-tokens          update Slack tokens
-leuco projects <p> connectors <c> remove              remove the connection
-```
-
-## Schedules
-
-schedule接続はtimerからpromptを投入します。project scopeではproject共通thread、
-thread scopeではschedule entryごとのthreadを使います。
-
-```bash
-leuco projects <p> connectors <c> schedules list
-leuco projects <p> connectors <c> schedules add \
-  --name one-shot-check \
-  --run-at '2026-07-16T09:00:00+09:00' \
-  --prompt 'Check the status and report to Slack'
-leuco projects <p> connectors <c> schedules remove one-shot-check
-```
-
-`--run-at` accepts either a five-field cron expression or an ISO 8601 timestamp. An ISO 8601 entry fires once and is removed afterwards; a cron entry persists and keeps firing. Schedule changes are picked up within sixty seconds and never require a project runtime restart.
-
-## Calling Slack directly
-
-The CLI can call the Slack Web API and download files on a project's behalf:
-
-```bash
-leuco slack call chat.postMessage \
-  --project <p> \
-  --body '{"channel":"C0123","text":"hello"}'
-
-leuco slack upload-file \
-  --project <p> \
-  --connector slack \
-  --channel C0123 \
-  --thread-ts 100.0 \
-  --file ./banner.png \
-  --title "banner.png"
-
-leuco projects <p> connectors <c> download-file \
-  --file F0123 \
-  --out ./download.bin
-```
-
-Leuco内で動くCodexも同じCLIを使います。Codex子プロセスではprojectが
-`LEUCO_PROJECT_ID` で固定されるため、Slack操作では `--project` を省略し、
-scheduleとfile操作では短い `leuco connectors ...` 形式を使います。
-
-## How it works
-
-Incoming Slack traffic follows one path:
-
-```text
-Slack Socket Mode
-  → slack connector
-  → event validation, dedup, self-bot filtering
-  → the project runtime
-  → the Codex thread selected by conversation scope
-  → Codex final answer（内部transport出力）
-
-Codex
-  → leuco slack call
-  → Slack Web API
-```
-
-有効なprojectごとにCodex `app-server`を一つだけstdio JSON-RPCで起動します。
-既定のproject scopeでは全入力を一つのthreadへ直列化します。thread scopeでは
-`threadKey`ごとに履歴とqueueを分け、同じkey内の順序を保ちながら異なるkeyを
-設定上限まで並行実行します。Slack messageは構造化入力としてCodexへ渡され、
-返信するかどうかはbuilt-in promptとCodexが決めます。
-
-final answerはSlackへ自動投稿されません。通常返信を含むすべてのSlack書き込みは、
-Codexがproject scope付きの`leuco slack call`を明示的に実行した場合だけ行われます。
-エラー時の定型文は合成しません。
-
-A single turn has a wall-clock timeout of ten minutes. A second watchdog treats two minutes without any Codex notification as a stalled turn; normal long-running work stays alive while notifications continue. A timeout, command-output overflow, or Codex process exit replaces only that project's Codex child and preserves the stored thread for the next turn. Failed turns are not replayed automatically because repeating a partially completed write could duplicate Slack messages or filesystem changes.
-
-Each project gets its own `CODEX_HOME`, separating configuration and Codex memory per project; only the Codex login is shared, through a symlink to `~/.codex/auth.json`.
-
-### Codex認証共有の注意
-
-このsymlinkは、Codexのログインをprojectごとに繰り返さずに済ませるための、意図的で
-局所的なcompatibility hackです。Leucoは現在のCodexが認証を
-`~/.codex/auth.json` に保存する実装へ依存しているため、Codex側の保存場所や方式が
-変わればログイン共有は動かなくなる可能性があります。`leuco doctor` はmissingまたは
-danglingなリンクを検出します。
-
-これはsecurity boundaryではありません。すべてのCodex子は同じOS userで動き、
-Leucoの既定設定ではfilesystemへ直接アクセスできます。projectごとの `.codex/` は
-config、memory、sessionを整理・分離するためのもので、認証だけを共有します。
-project側の `auth.json` がregular fileなら、個別ログインの意図があるものとして
-Leucoは上書きしません。
-
-認証に関するfilesystem workaroundはこのsymlinkへ限定します。新しいCodex統合では
-可能な限りCLI、app-server protocol、環境変数、公開設定を使い、Codex内部fileの参照や
-error text依存を増やさない方針です。
-
-各Codex子にはそのprojectのUUIDを `LEUCO_PROJECT_ID` として渡します。
-`leuco connectors ...` はshellのcwdを変更しても固定projectへ展開され、
-projectを省略した `leuco slack ...` も同じprojectを使います。別projectを
-明示したCLI操作は実行前に拒否されます。Leuco操作用の内蔵MCP serverはありません。
-project設定に追加された外部MCP serverは別機能としてCodex設定へ引き続き渡されます。
-
-## Where data lives
+`LEUCO_HOME` の標準値は `~/.leuco`。
 
 ```text
 ~/.leuco/
-├─ settings.json
-│  └─ machine-wide settings, projects, connector configuration, Slack tokens
-├─ daemon/
-│  ├─ pid
-│  ├─ log
-│  └─ events.db
-└─ projects/
-   └─ <project-uuid>/
-      ├─ state.json
-      │  └─ Codex thread IDs and schedule runtime state
-      └─ .codex/
-         ├─ auth.json -> ~/.codex/auth.json
-         └─ config.toml
+├─ settings.json   作業場所、SOUL、モデル、Slack資格情報の参照IDと予定
+├─ state.json      会話の対応表、予定の最終実行時刻
+├─ daemon.json     起動中のプロセス識別情報
+├─ control.sock    同一ユーザー向けのローカル操作用ソケット
+├─ daemon.log
+└─ events.db       本文を含むイベント履歴
 ```
 
-`settings.json`, `events.db`, and each project runtime's `config.toml` contain secrets or Slack message bodies, so Leuco restricts them to file mode 0600.
+`projects` 登録、connector登録、HTTP管理ポート、専用Codexホームはない。状態ファイルと設定は0600、ホームは0700で作成する。
 
-## Configuration
+## Slackを使う場合
 
-`LEUCO_CODEX_BIN` sets the path to the Codex executable and defaults to `codex`. `LEUCO_PORT` sets the port of the loopback daemon gateway for health, status, and thread control, and defaults to 7331.
+Slackは任意。一つのworkspaceのSocket Mode接続を設定できる。Slack AppでSocket Modeを有効にし、app tokenに `connections:write`、bot tokenに利用する会話のread/history、`chat:write`、必要なら `reactions:write`、`files:read` / `files:write` を付与する。イベント購読は用途に応じて `app_mention`、`message.im`、`message.channels`、`message.groups` を設定し、botを対象channelへ招待する。
 
-`.env.local` and `.env` are read from the current directory only by `leuco run`. Other commands, including `leuco start`, deliberately ignore them so that secrets from an unrelated working directory never leak into the daemon environment. Variables already present in the process environment take precedence over both files.
+初回は対話的な端末でトークンを登録する。入力内容は画面に表示しない。
 
-`leuco config` prints the machine-wide settings as YAML. On macOS, `keepAwake` defaults to `true` and runs `caffeinate` alongside the daemon:
-
-```bash
-leuco config
-leuco config set keepAwake false
-leuco config set turnIdleTimeoutMs 120000
-leuco config set turnTimeoutMs 600000
-leuco config set turnConcurrency 4
-leuco config set turnQueueMaxItems 64
-leuco config set turnQueueMaxBytes 262144
+```sh
+leuco slack login
+leuco start
 ```
 
-`turnIdleTimeoutMs`はCodexから通知がない状態の上限、`turnTimeoutMs`は1ターン全体の上限です。先に上限へ達した場合は停止したCodex childを置き換えます。`turnConcurrency`はスレッド別モードで同時実行できる異なる会話の上限です。`turnQueueMaxItems`と`turnQueueMaxBytes`は待機中の処理量を制限し、過負荷時はメモリを増やし続けず記録付きで拒否します。変更後はLeucoを再起動してください。
+Bun標準の `Bun.secrets` で、macOSはKeychain、Windowsは資格情報マネージャー、Linuxはlibsecretへ保存する。設定ファイルにはランダムな参照IDと `ackMode` だけを保存し、トークンの平文保存や環境変数へのコピーはしない。Windowsは端末内の保存を指定する。
 
-## Troubleshooting
+起動時に一度だけ資格情報を読み、Slack通信を行うロイコのメモリで保持する。Codex子プロセスの指示・引数へトークンを渡さず、既知のSlackトークン環境変数も引き継がない。OSのストアが利用できない、ロックされている、資格情報が見つからない場合は起動を止める。平文保存へのフォールバックはない。
 
-Start with the built-in diagnostics:
+通常の起動でロイコ独自のパスワード入力はない。OSが初回アクセスの承認やロック解除を求める場合は、その確認が必要。保存した本人のOSアカウントで起動する。LinuxではSecret Serviceの稼働が必要。
 
-```bash
-leuco doctor
+再登録・削除はdaemonを止めて行う。設定変更後のトークンは次回起動時に読み直す。
+
+```sh
+leuco stop
+leuco slack login
+# 保存した資格情報を削除してSlackを無効にする場合
+leuco slack logout
+```
+
+`config show` にトークンは含まれない。`config set slack` に平文トークンは渡せない。
+
+Slack threadごとに会話を分ける。受信した本文に宛先と返信方法を添える。Codexのfinal answerは内部出力で、Slack本文として自動投稿しない。返信はCodexが明示的に実行するCLI操作で送る。進行状況のreactionは `ackMode` で `off` / `mention` / `always` を選ぶ。
+
+```sh
+leuco slack call chat.postMessage --body '{"channel":"C123","thread_ts":"123.456","text":"こんにちは"}'
+leuco slack upload-file --channel C123 --file ./report.pdf
+leuco slack download-file --file F123 --out ./download.pdf
+```
+
+Slack操作は起動中のdaemonへ依頼し、daemonが保持したトークンで通信する。upload元の読み取りとdownload先への書き込みは呼び出し元のCLIで実行し、daemonにファイルパスの読み書きを代行させない。
+
+`leuco` をCodex子プロセスの `PATH` から実行できるようにしておく。Slackの本文は外部入力であり、共有Codex環境へのアクセス権限を持つ。詳細は [SECURITY.md](SECURITY.md)。
+
+## 予定
+
+```sh
+leuco schedules add --name morning --run-at '0 9 * * *' --prompt '今日の予定を確認して'
+leuco schedules list
+leuco schedules remove morning
+```
+
+cronはホストのローカル時刻、単発はタイムゾーン付きISO日時を使う。予定は毎分再読込され、設定変更の再起動は不要。予定ごとに会話を分け、CLIやSlackと同じ直列queueで実行する。予定は常駐中のみ動き、結果は内部履歴に残る。通知先が必要なら依頼に明記する。
+
+## 運用
+
+```sh
 leuco status
-leuco events --preset errors
-leuco logs -f
+leuco logs --limit 100
+leuco events --limit 100
+leuco doctor
+leuco --help
 ```
 
-### botToken is empty
+同じ `LEUCO_HOME` で二重起動できない。`start` はバックグラウンド起動、`run` は前面起動。OS起動時の自動起動はOSのサービス管理で設定する。旧 `boot` コマンドは廃止。
 
-A Slack connection exists but no `xoxb-...` or `xoxp-...` token has been saved. Save one and check again:
+## ライブラリと開発
 
-```bash
-pbpaste | leuco connectors slack set-tokens --bot-token -
-leuco connectors
-```
-
-### appToken is empty
-
-A Slack connection exists but no `xapp-...` token has been saved:
-
-```bash
-pbpaste | leuco connectors slack set-tokens --app-token -
-leuco connectors
-```
-
-If you changed tokens while the daemon was running, restart the connection:
-
-```bash
-leuco connectors slack restart
-```
-
-### auth.test fails
-
-Make sure the value passed to `--bot-token` really is an `xoxb-...` or `xoxp-...` token, that the app was reinstalled into the workspace after any scope change, and that the token belongs to the right workspace. `leuco doctor` and `leuco logs -f` show the underlying Slack API error.
-
-### The bot ignores mentions
-
-Check that the `app_mention` event and the `app_mentions:read` scope are configured, that the bot has been invited to the Slack channel with `/invite @your-bot`, and that the `xapp-...` token carries `connections:write`. `leuco logs -f` shows whether the Socket Mode connection is up. In private channels, `groups:history` and `message.groups` are also required.
-
-### The bot ignores DMs
-
-Check the `message.im` event and the `im:history` scope. With a user token, `message.im` must be subscribed as a user event, not a bot event. Diagnose the newest human DM visible to the project's Slack token directly:
-
-```bash
-leuco slack dm --project <p>
-```
-
-Pass a conversation ID to inspect a specific DM instead:
-
-```bash
-leuco slack dm D0123ABC --project <p>
-```
-
-The output includes daemon and Slack connection state plus Socket Mode, Codex turn, and reply status. A result of `socket_event_missing` means the message exists in Slack history but never reached Leuco over Socket Mode. For `xoxp-...` user tokens, add `message.im` under **Subscribe to events on behalf of users**, grant `im:history`, and reinstall the Slack app.
-
-## Event log
-
-Leuco writes structured events to `~/.leuco/daemon/events.db`:
-
-```bash
-leuco events
-leuco events --type turn.complete
-leuco events --project <p> --limit 50
-leuco events --preset turns
-leuco events --preset errors
-leuco events --preset lifecycle
-leuco events --preset schedule
-leuco events --preset recovery
-leuco events --json
-```
-
-`leuco logs -f` follows the daemon's text log; `leuco events` reads the structured SQLite events.
-Turn events include queue depth, queue wait, batch size, execution duration, and error details. Recovery events include the trigger, outcome, duration, and restart error when one occurs.
-
-## Using Leuco as a library
+Bun専用。公開入口は `LeucoRuntime` と設定・状態の型。旧ProjectやSupervisor APIは廃止。
 
 ```ts
 import { LeucoRuntime } from "leuco"
 
-const runtime = LeucoRuntime.build({ env: process.env })
+const runtime = LeucoRuntime.build({ cwd: "/absolute/path/to/work" })
 await runtime.start()
+try {
+  const reply = await runtime.runTextTurn("cli", "こんにちは")
+  if (reply instanceof Error) throw reply
+  console.log(reply)
+} finally {
+  await runtime.stop()
+}
 ```
 
-Custom data homes can still share the machine's existing Codex login:
-
-```ts
-import { homedir } from "node:os"
-import { join } from "node:path"
-import { LeucoRuntime } from "leuco"
-
-const runtime = LeucoRuntime.build({
-  env: process.env,
-  home: join(homedir(), ".inta", "backroom"),
-  codexAuthPath: join(homedir(), ".codex", "auth.json"),
-})
-await runtime.start()
-```
-
-Only the auth source changes. Each project's `CODEX_HOME`, configuration, memory, and runtime behavior remain isolated exactly as in the standalone CLI.
-
-The package root intentionally exposes only the stable composition root (`LeucoRuntime`), project and connector contracts, and the structured event-log contract. Daemon, gateway, CLI, stores, concrete connectors, and test fakes remain internal. Since Leuco itself is Bun-only, importing from a non-Bun runtime fails.
-
-Run the complete local verification before publishing:
-
-```bash
+```sh
+bun install
 bun run verify
-bun run test:coverage
-bun audit
 ```
 
-The package is also packed and imported from an isolated consumer in CI on every push and pull request.
-
-## License
-
-MIT
+`verify` はformat/lint、型検査、単体・SQLiteテスト、偽Codexとの実CLI統合検証、package検証を実行する。実Codexの推論や実Slackへの投稿は行わない。OSストアの実機確認は `bun run scripts/verify-os-credentials.ts` でダミー値の保存・取得・削除を行う。通常のverifyではOSストアを変更しない。

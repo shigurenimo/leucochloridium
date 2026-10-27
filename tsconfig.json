@@ -21,7 +21,8 @@
     "noPropertyAccessFromIndexSignature": false,
     "paths": {
       "@/*": ["./lib/*"]
-    }
+    },
+    "types": ["bun"]
   },
   "include": ["lib/**/*.ts", "lib/**/*.tsx"]
 }

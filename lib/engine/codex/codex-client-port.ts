@@ -15,6 +15,7 @@ export type CodexClientPort = {
   start(): Promise<void>
   stop(): Promise<void>
   isRunning(): boolean
+  getDeveloperInstructions?(): Promise<string>
   startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error>
   /** Resolves to `null` when the thread is not present in codex's sqlite
    * (caller should fall back to `startThread`), or to `Error` for any other

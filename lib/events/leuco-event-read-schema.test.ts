@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest"
 import { leucoEventReadSchema } from "@/events/leuco-event-read-schema"
 
 describe("leucoEventReadSchema", () => {
+  it("reads actual pre-migration project envelopes", () => {
+    expect(
+      leucoEventReadSchema.parse({ ts: 1, type: "runtime.started", project: "old" }),
+    ).toMatchObject({ runtime: "old" })
+  })
   it("maps legacy Slack channel fields to connectors", () => {
     const parsed = leucoEventReadSchema.parse({
       ts: 1700000000000,
       type: "slack.error",
-      project: "demo",
+      runtime: "demo",
       channel: "slack",
       level: "error",
       action: "turn.failed",
@@ -17,7 +22,7 @@ describe("leucoEventReadSchema", () => {
     expect(parsed).toEqual({
       ts: 1700000000000,
       type: "slack.error",
-      project: "demo",
+      runtime: "demo",
       connector: "slack",
       level: "error",
       action: "turn.failed",
@@ -33,7 +38,7 @@ describe("leucoEventReadSchema", () => {
     const parsed = leucoEventReadSchema.parse({
       ts: 1700000000000,
       type,
-      project: "demo",
+      runtime: "demo",
     })
 
     expect(parsed.type).toBe(expected)
@@ -49,7 +54,7 @@ describe("leucoEventReadSchema", () => {
     const rejected = leucoEventReadSchema.parse({
       ts: 1700000000000,
       type: "turn.rejected",
-      project: "demo",
+      runtime: "demo",
       threadKey: "thread",
       reason: "tenant_stopped",
       queueDepth: 0,

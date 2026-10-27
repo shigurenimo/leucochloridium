@@ -27,10 +27,10 @@ type Props = {
  * destination. The rename protects against a crash mid-write; the fsync
  * protects against power loss, where the rename's metadata could otherwise
  * hit disk before the temp file's data blocks — leaving an empty or torn
- * settings.json (all projects + Slack tokens).
+ * settings.json (configuration and credential references).
  *
  * Used wherever a partial write would lose data, including settings.json
- * (project configuration and tokens) and per-project state.json. Same-directory
+ * (configuration and credential references) and state.json. Same-directory
  * temp files are important because `rename` is only atomic within a filesystem.
  */
 export const atomicWriteJson = (props: Props): string => {
@@ -40,7 +40,7 @@ export const atomicWriteJson = (props: Props): string => {
   const tempPath = `${props.path}.${process.pid}.${randomUUID()}.tmp`
   try {
     // Create with the restrictive mode so the temp file never exists with
-    // world-readable bits before the chmod — settings.json holds Slack tokens.
+    // world-readable bits before the chmod — configuration and state are private.
     // The explicit chmodSync still runs to override umask, which can clear bits
     // off the open() mode.
     const fd = openSync(tempPath, "wx", props.mode)

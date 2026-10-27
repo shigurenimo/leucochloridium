@@ -1,12 +1,12 @@
 {
   "name": "leuco",
-  "version": "0.17.6",
-  "description": "Self-hosted multi-project gateway that runs the Codex app-server as a Slack bot. Bun-only.",
+  "version": "0.18.0",
+  "description": "One local Codex companion CLI with optional Slack and schedules. Reuses your normal CODEX_HOME. Bun-only.",
   "keywords": [
     "bot",
     "bun",
+    "cli",
     "codex",
-    "gateway",
     "slack"
   ],
   "homepage": "https://github.com/shigurenimo/leucochloridium#readme",
@@ -60,29 +60,27 @@
     "test:coverage": "vp test run --coverage",
     "test:package": "bun run scripts/verify-packed-package.ts",
     "typecheck": "tsc -b --pretty false",
-    "verify": "bun run check && bun run typecheck && bun run test && bun run package:check && bun run test:package"
+    "verify": "bun run check && bun run typecheck && bun run test && bun run test:cli && bun run package:check && bun run test:package",
+    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts"
   },
   "dependencies": {
     "@interactive-inc/flume": "0.10.1",
-    "hono": "^4.12.32",
-    "yaml": "^2.9.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14",
-    "@vitest/coverage-v8": "4.1.10",
+    "@types/bun": "^1.4.4",
+    "@vitest/coverage-v8": "5.0.5",
     "publint": "0.3.22",
     "typescript": "7.0.2",
-    "vite-plus": "0.2.6",
-    "vitest": "^4.1.10"
+    "vite-plus": "1.4.0",
+    "vitest": "5.0.5"
   },
   "overrides": {
     "@hono/node-server": "2.0.12",
     "body-parser": "2.3.0",
-    "fast-uri": "4.1.1",
-    "postcss": "8.5.23"
+    "fast-uri": "4.1.1"
   },
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.4.4"
   }
 }

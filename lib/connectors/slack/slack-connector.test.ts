@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { LeucoMemorySlackEventSource } from "@/connectors/slack/leuco-memory-slack-event-source"
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
 import { LeucoSlackConnector } from "@/connectors/slack/slack-connector"
-import type { ConnectorContext, RunTextTurnOptions } from "@/connectors/connector"
+import type { ConnectorContext } from "@/connectors/connector"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
@@ -11,14 +11,13 @@ const makeCtx = (
 ): {
   ctx: ConnectorContext
   logs: string[]
-  turns: Array<{ threadKey: string; text: string; priority: RunTextTurnOptions["priority"] }>
+  turns: Array<{ threadKey: string; text: string }>
   events: () => LeucoEvent[]
 } => {
   const logs: string[] = []
   const turns: Array<{
     threadKey: string
     text: string
-    priority: RunTextTurnOptions["priority"]
   }> = []
   const eventLog = new LeucoEventLog()
   return {
@@ -27,11 +26,11 @@ const makeCtx = (
     events: () => eventLog.query().map((entry) => entry.event),
     ctx: {
       cwd: "/tmp/project",
-      projectName: "demo",
+      runtimeName: "demo",
       eventLog,
       onLog: (line) => logs.push(line),
-      runTextTurn: async (threadKey, text, options) => {
-        turns.push({ threadKey, text, priority: options?.priority })
+      runTextTurn: async (threadKey, text) => {
+        turns.push({ threadKey, text })
         return turnReply
       },
     },
@@ -70,7 +69,6 @@ describe("LeucoSlackConnector", () => {
     await connector.stop()
 
     expect(turns).toHaveLength(1)
-    expect(turns[0]?.priority).toBe("high")
     expect(webClient.calls.reactionsAdd).toEqual([
       { channel: "D1", timestamp: ts, name: "hourglass_flowing_sand" },
       { channel: "D1", timestamp: ts, name: "white_check_mark" },
@@ -362,8 +360,8 @@ describe("LeucoSlackConnector", () => {
     const firstHarness = makeCtx()
     const turnStarted = Promise.withResolvers<void>()
     const turnGate = Promise.withResolvers<string | Error>()
-    firstHarness.ctx.runTextTurn = async (threadKey, text, options) => {
-      firstHarness.turns.push({ threadKey, text, priority: options?.priority })
+    firstHarness.ctx.runTextTurn = async (threadKey, text) => {
+      firstHarness.turns.push({ threadKey, text })
       turnStarted.resolve()
       return turnGate.promise
     }

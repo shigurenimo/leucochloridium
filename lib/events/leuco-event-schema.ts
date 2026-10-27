@@ -14,13 +14,13 @@ const logEventSchema = z.object({
 const runtimeStartedSchema = z.object({
   ...baseTs,
   type: z.literal("runtime.started"),
-  project: z.string(),
+  runtime: z.string(),
 })
 
 const runtimeStoppedSchema = z.object({
   ...baseTs,
   type: z.literal("runtime.stopped"),
-  project: z.string(),
+  runtime: z.string(),
 })
 
 const supervisorReconcileSchema = z.object({
@@ -36,7 +36,7 @@ const supervisorReconcileFailedSchema = z.object({
   reason: z.string(),
   // Project-scoped failures carry retry metadata; store-wide reconcile
   // failures retain the compact `{ reason }` shape.
-  project: z.string().optional(),
+  runtime: z.string().optional(),
   attempt: z.number().int().positive().optional(),
   retryAt: z.number().optional(),
 })
@@ -44,7 +44,7 @@ const supervisorReconcileFailedSchema = z.object({
 const slackEventEnvelopeSchema = z.object({
   ...baseTs,
   type: z.literal("slack.event"),
-  project: z.string(),
+  runtime: z.string(),
   connector: z.string(),
   event: slackEventSchema,
 })
@@ -52,7 +52,7 @@ const slackEventEnvelopeSchema = z.object({
 const slackConnectionSchema = z.object({
   ...baseTs,
   type: z.literal("slack.connection"),
-  project: z.string(),
+  runtime: z.string(),
   connector: z.string(),
   status: leucoSlackSourceStatusSchema,
 })
@@ -60,7 +60,7 @@ const slackConnectionSchema = z.object({
 const slackErrorSchema = z.object({
   ...baseTs,
   type: z.literal("slack.error"),
-  project: z.string(),
+  runtime: z.string(),
   connector: z.string(),
   level: z.enum(["warn", "error"]),
   action: z.string(),
@@ -71,7 +71,7 @@ const slackErrorSchema = z.object({
 const turnStartSchema = z.object({
   ...baseTs,
   type: z.literal("turn.start"),
-  project: z.string(),
+  runtime: z.string(),
   threadKey: z.string(),
   input: z.string(),
   inputChars: z.number().int().nonnegative().optional(),
@@ -83,7 +83,7 @@ const turnStartSchema = z.object({
 const turnQueuedSchema = z.object({
   ...baseTs,
   type: z.literal("turn.queued"),
-  project: z.string(),
+  runtime: z.string(),
   threadKey: z.string(),
   queueDepth: z.number().int().positive(),
   queueBytes: z.number().int().nonnegative().optional(),
@@ -92,7 +92,7 @@ const turnQueuedSchema = z.object({
 const turnRejectedSchema = z.object({
   ...baseTs,
   type: z.literal("turn.rejected"),
-  project: z.string(),
+  runtime: z.string(),
   threadKey: z.string(),
   reason: z.enum(["runtime_stopped", "queue_count_limit", "queue_bytes_limit"]),
   queueDepth: z.number().int().nonnegative(),
@@ -105,7 +105,7 @@ const turnRejectedSchema = z.object({
 const turnCompleteSchema = z.object({
   ...baseTs,
   type: z.literal("turn.complete"),
-  project: z.string(),
+  runtime: z.string(),
   threadKey: z.string(),
   reply: z.string(),
   replyChars: z.number().int().nonnegative().optional(),
@@ -117,7 +117,7 @@ const turnCompleteSchema = z.object({
 const turnErrorSchema = z.object({
   ...baseTs,
   type: z.literal("turn.error"),
-  project: z.string(),
+  runtime: z.string(),
   threadKey: z.string(),
   error: z.string(),
   durationMs: z.number().nonnegative().optional(),
@@ -127,7 +127,7 @@ const turnErrorSchema = z.object({
 const codexRecoverySchema = z.object({
   ...baseTs,
   type: z.literal("codex.recovery"),
-  project: z.string(),
+  runtime: z.string(),
   reason: z.string(),
   status: z.enum(["succeeded", "failed"]),
   durationMs: z.number().nonnegative(),
@@ -137,7 +137,7 @@ const codexRecoverySchema = z.object({
 const codexNotificationSchema = z.object({
   ...baseTs,
   type: z.literal("codex.notification"),
-  project: z.string(),
+  runtime: z.string(),
   method: z.string(),
   params: z.unknown(),
 })
@@ -145,7 +145,7 @@ const codexNotificationSchema = z.object({
 const scheduleFiredSchema = z.object({
   ...baseTs,
   type: z.literal("schedule.fired"),
-  project: z.string(),
+  runtime: z.string(),
   connector: z.string(),
   entryId: z.string(),
   entryName: z.string(),
