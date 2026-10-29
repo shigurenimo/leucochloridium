@@ -1,11 +1,12 @@
+import { osCredentialError } from "@/secrets/os-credential-error"
 import { CredentialStore } from "@/secrets/credential-store"
 
 export class BunCredentialStore extends CredentialStore {
   async get(name: string): Promise<string | null> {
     try {
       return await Bun.secrets.get({ service: "leuco", name })
-    } catch {
-      throw new Error("Cannot read OS credentials. Unlock or enable your OS credential store.")
+    } catch (error) {
+      throw osCredentialError("read", error)
     }
   }
   async set(name: string, value: string): Promise<void> {
@@ -19,15 +20,15 @@ export class BunCredentialStore extends CredentialStore {
         persist: "local",
         allowUnrestrictedAccess: false,
       })
-    } catch {
-      throw new Error("Cannot save OS credentials. Unlock or enable your OS credential store.")
+    } catch (error) {
+      throw osCredentialError("save", error)
     }
   }
   async delete(name: string): Promise<void> {
     try {
       await Bun.secrets.delete({ service: "leuco", name })
-    } catch {
-      throw new Error("Cannot delete OS credentials. Unlock or enable your OS credential store.")
+    } catch (error) {
+      throw osCredentialError("delete", error)
     }
   }
 }

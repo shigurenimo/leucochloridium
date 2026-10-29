@@ -1,3 +1,4 @@
+import { constants } from "node:fs"
 import { open } from "node:fs/promises"
 import {
   toBoundedUploadBytes,
@@ -14,7 +15,7 @@ export type BoundedUploadFile = BoundedUploadBytes & {
 }
 
 export const readBoundedUploadFile = async (props: Props): Promise<BoundedUploadFile> => {
-  const fileHandle = await open(props.path, "r")
+  const fileHandle = await open(props.path, constants.O_RDONLY | constants.O_NONBLOCK)
 
   try {
     const fileStats = await fileHandle.stat()

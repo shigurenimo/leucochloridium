@@ -14,8 +14,10 @@ for await (const line of createInterface({ input: process.stdin })) {
   const request = JSON.parse(line)
   appendFileSync(process.env.LEUCO_VERIFY_TRACE!, `${JSON.stringify(request)}\n`)
   if (request.id === undefined) continue
-  if (request.method === "initialize") send({ id: request.id, result: {} })
-  else if (request.method === "config/read")
+  if (request.method === "initialize") {
+    await Bun.sleep(Number(process.env.LEUCO_VERIFY_INIT_DELAY_MS ?? 0))
+    send({ id: request.id, result: {} })
+  } else if (request.method === "config/read")
     send({ id: request.id, result: { config: { developer_instructions: "native instruction" } } })
   else if (request.method === "thread/start")
     send({ id: request.id, result: { thread: { id: `thread-${process.pid}-${++state.threads}` } } })

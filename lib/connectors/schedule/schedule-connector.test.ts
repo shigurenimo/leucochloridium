@@ -451,53 +451,30 @@ describe("LeucoScheduleConnector failure containment", () => {
     expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
   })
 
-  it("retains a failed one-shot and retries with exponential backoff until success", async () => {
+  it("records failed one-shot work once and only cleans up on later ticks", async () => {
     const entry = isoEntry()
     const store = makeStore([entry])
     const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
-    const connector = new LeucoScheduleConnector({
-      name: "cron",
-      store,
-      now: () => new Date(clock.nowMs),
-      setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
-      clearIntervalFn: () => {},
-    })
-    const results = [new Error("codex down"), new Error("still down"), "ok"]
+    const connector = buildConnector(store, () => new Date(clock.nowMs))
     const { ctx, captured } = makeCtx()
     ctx.runTextTurn = async (threadKey, text) => {
       captured.turns.push({ threadKey, text })
-      return results[captured.turns.length - 1] ?? "ok"
+      expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
+      return new Error("External write result unknown")
     }
-
     await connector.start(ctx)
     await connector.waitForStartupTick()
     expect(captured.turns).toHaveLength(1)
-    expect(store.entries).toEqual([entry])
-
-    clock.nowMs += 59_000
+    clock.nowMs += 60_000
     await connector.tickOnce()
     expect(captured.turns).toHaveLength(1)
-
-    clock.nowMs += 1_000
-    await connector.tickOnce()
-    expect(captured.turns).toHaveLength(2)
-    expect(store.entries).toEqual([entry])
-
-    clock.nowMs += 119_000
-    await connector.tickOnce()
-    expect(captured.turns).toHaveLength(2)
-
-    clock.nowMs += 1_000
-    await connector.tickOnce()
-    expect(captured.turns).toHaveLength(3)
-    expect(store.lastFiredAt[entry.id]).toBe(clock.nowMs)
     expect(store.entries).toEqual([])
-    expect(captured.logs.some((line) => line.includes("turn failed: codex down"))).toBe(true)
-    expect(captured.logs.some((line) => line.includes("turn retry #1 in 60s"))).toBe(true)
-    expect(captured.logs.some((line) => line.includes("turn retry #2 in 120s"))).toBe(true)
+    expect(
+      captured.logs.some((line) => line.includes("turn failed: External write result unknown")),
+    ).toBe(true)
   })
 
-  it("caps one-shot retry delay at thirty minutes", async () => {
+  it("caps cleanup retry delay without repeating the accepted one-shot", async () => {
     const entry = isoEntry()
     const store = makeStore([entry])
     const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
@@ -511,9 +488,12 @@ describe("LeucoScheduleConnector failure containment", () => {
     const { ctx, captured } = makeCtx()
     ctx.runTextTurn = async (threadKey, text) => {
       captured.turns.push({ threadKey, text })
-      return new Error("codex down")
+      return "done"
     }
 
+    store.removeEntry = () => {
+      throw new Error("settings busy")
+    }
     await connector.start(ctx)
     await connector.waitForStartupTick()
     const delays = [60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000, 1_800_000]
@@ -522,8 +502,8 @@ describe("LeucoScheduleConnector failure containment", () => {
       await connector.tickOnce()
     }
 
-    const retryLogs = captured.logs.filter((line) => line.includes("turn retry"))
-    expect(captured.turns).toHaveLength(8)
+    const retryLogs = captured.logs.filter((line) => line.includes("cleanup retry"))
+    expect(captured.turns).toHaveLength(1)
     expect(retryLogs).toEqual([
       expect.stringContaining("retry #1 in 60s"),
       expect.stringContaining("retry #2 in 120s"),
@@ -601,7 +581,7 @@ describe("LeucoScheduleConnector failure containment", () => {
     expect(restarted.captured.turns).toEqual([])
     expect(store.entries).toEqual([])
     expect(
-      restarted.captured.logs.some((line) => line.includes("already delivered; retrying cleanup")),
+      restarted.captured.logs.some((line) => line.includes("already attempted; retrying cleanup")),
     ).toBe(true)
   })
 

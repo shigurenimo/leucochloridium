@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, rmSync } from "node:fs"
+import { readRegularText } from "@/fs/read-regular-text"
+import { CliError } from "@/cli/cli-error"
+import { existsSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
@@ -14,7 +16,7 @@ export type DaemonLease = z.infer<typeof daemonLeaseSchema>
 export function readDaemonLease(home: string): DaemonLease | null {
   const path = join(home, "daemon.json")
   if (!existsSync(path)) return null
-  return daemonLeaseSchema.parse(JSON.parse(readFileSync(path, "utf8")))
+  return daemonLeaseSchema.parse(JSON.parse(readRegularText(path)))
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -31,7 +33,7 @@ export function acquireDaemonLease(home: string): DaemonLease {
   return withFileLock({ lockPath: join(home, "lifecycle.lock") }, () => {
     const previous = readDaemonLease(home)
     if (previous !== null && isProcessAlive(previous.pid))
-      throw new Error("Leuco is already running or starting; use leuco status")
+      throw new CliError("STATE_CONFLICT", "Leuco is already running or starting; use leuco status")
     const lease = { pid: process.pid, token: randomUUID() }
     atomicWriteJson({ path: join(home, "daemon.json"), data: lease, mode: 0o600 })
     rmSync(join(home, "control.sock"), { force: true })

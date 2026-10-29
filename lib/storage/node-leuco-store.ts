@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync, chmodSync, mkdirSync } from "node:fs"
+import { readRegularText } from "@/fs/read-regular-text"
+import { existsSync, chmodSync, mkdirSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { settingsSchema, stateSchema } from "@/config/config-schema"
 import type { LeucoSettings, LeucoState } from "@/config/config-schema"
@@ -18,7 +19,7 @@ export class NodeLeucoStore extends LeucoStore {
   loadSettings(): LeucoSettings {
     const path = join(this.home, "settings.json")
     if (!existsSync(path)) return settingsSchema.parse({})
-    const document: unknown = JSON.parse(readFileSync(path, "utf8"))
+    const document: unknown = JSON.parse(readRegularText(path))
     return settingsSchema.parse(document)
   }
 
@@ -36,7 +37,7 @@ export class NodeLeucoStore extends LeucoStore {
   loadState(): LeucoState {
     const path = join(this.home, "state.json")
     if (!existsSync(path)) return stateSchema.parse({})
-    return stateSchema.parse(JSON.parse(readFileSync(path, "utf8")))
+    return stateSchema.parse(JSON.parse(readRegularText(path)))
   }
 
   updateState(transform: (state: LeucoState) => LeucoState): void {
@@ -51,8 +52,7 @@ export class NodeLeucoStore extends LeucoStore {
   }
 
   readInstructions(path: string): string {
-    if (statSync(path).size > 256 * 1024) throw new Error("Instructions file exceeds 256 KiB")
-    return readFileSync(path, "utf8")
+    return readRegularText(path, 256 * 1024)
   }
 
   ensureHome(): void {

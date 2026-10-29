@@ -1,7 +1,11 @@
+import type { LeucoEventQuery } from "@/events/leuco-event-query"
+import { daemonErrorResponse } from "@/daemon/daemon-error-response"
+import { launchSchema } from "@/maintenance/maintenance-schema"
+import type { LaunchConfiguration } from "@/maintenance/maintenance-schema"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { validateCommand } from "@/cli/validate-command"
 import type { CliArguments } from "@/cli/parse-arguments"
-import { errorMessage } from "@/error-message"
 
 const turnSchema = z.object({
   key: z.string().min(1).max(512).default("cli"),
@@ -12,11 +16,22 @@ const turnSchema = z.object({
 })
 type Props = {
   token: string
+  getVolatileEvents?: (query: LeucoEventQuery) => unknown
+  reportError?: (error: unknown, requestId: string) => string
   cwd: string
+  getMaintenance?: () => unknown
+  restart?: (overrides: Partial<LaunchConfiguration>, requestId: string) => unknown
+  getRuntimeStatus?: () => unknown
   isReady: () => boolean
-  runTextTurn: (key: string, text: string) => Promise<string | Error>
-  runSlackCommand?: (parsed: CliArguments, upload?: Uint8Array) => Promise<unknown>
-  stop: () => void
+  runTextTurn: (key: string, text: string, requestId?: string) => Promise<string | Error>
+  runSlackCommand?: (
+    parsed: CliArguments,
+    upload?: Uint8Array,
+    requestId?: string,
+  ) => Promise<unknown>
+  stop: (requestId: string) => void
+  awaitStop?: () => Promise<void>
+  ownsProcess?: boolean
 }
 
 export function handleDaemonRequest(props: Props): (request: Request) => Promise<Response> {
@@ -24,16 +39,56 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
     if (request.headers.get("authorization") !== `Bearer ${props.token}`)
       return Response.json({ error: "Unauthorized" }, { status: 401 })
     const path = new URL(request.url).pathname
+    const requestId = z.uuid().safeParse(request.headers.get("x-leuco-request-id")).success
+      ? request.headers.get("x-leuco-request-id")!
+      : randomUUID()
     if (request.method === "GET" && path === "/status")
       return Response.json({
         running: true,
         ready: props.isReady(),
         pid: process.pid,
         cwd: props.cwd,
+        ...(props.getMaintenance ? { maintenance: props.getMaintenance() } : {}),
+        ...(props.getRuntimeStatus ? { runtime: props.getRuntimeStatus() } : {}),
       })
+    if (request.method === "GET" && path === "/events") {
+      const query = new URL(request.url).searchParams
+      const filters = z
+        .object({
+          limit: z.coerce.number().int().min(1).max(10000).default(100),
+          sinceTs: z.coerce.number().nonnegative().optional(),
+          type: z.string().optional(),
+          requestId: z.string().max(512).optional(),
+        })
+        .parse(Object.fromEntries(query))
+      if (!props.getVolatileEvents) throw new Error("Volatile history is unavailable")
+      return Response.json(props.getVolatileEvents(filters))
+    }
+    if (request.method === "POST" && path === "/restart") {
+      if (props.restart === undefined)
+        return Response.json({ error: "Restart is unavailable" }, { status: 503 })
+      try {
+        const overrides = launchSchema
+          .pick({ cwd: true, soul: true, model: true, codexBin: true })
+          .parse(await request.json())
+        return Response.json(props.restart(overrides, requestId))
+      } catch (error) {
+        return daemonErrorResponse({
+          error,
+          status: 422,
+          requestId,
+          reportError: props.reportError,
+        })
+      }
+    }
     if (request.method === "POST" && path === "/stop") {
-      props.stop()
-      return Response.json({ stopping: true })
+      props.stop(requestId)
+      if (props.awaitStop) await props.awaitStop()
+      return Response.json({
+        stopping: true,
+        stopped: props.awaitStop !== undefined,
+        processWillExit: props.ownsProcess ?? false,
+      })
     }
     if (request.method === "POST" && path === "/slack") {
       if (!props.isReady())
@@ -61,13 +116,16 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
         )
           throw new Error("Unsupported Slack operation")
         if (props.runSlackCommand === undefined) throw new Error("Slack is unavailable")
-        const reply = await props.runSlackCommand(parsed, upload)
+        const reply = await props.runSlackCommand(parsed, upload, requestId)
         return reply instanceof Response ? reply : Response.json(reply)
-      } catch {
-        return Response.json(
-          { error: "Slack operation failed. Check the operation and daemon configuration." },
-          { status: 422 },
-        )
+      } catch (error) {
+        return daemonErrorResponse({
+          error,
+          status: 422,
+          requestId,
+          reportError: props.reportError,
+          fallback: "Slack operation failed. Inspect events for this requestId.",
+        })
       }
     }
     if (request.method !== "POST" || path !== "/turn")
@@ -76,11 +134,17 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
       return Response.json({ error: "Leuco is starting or stopping" }, { status: 503 })
     try {
       const turn = turnSchema.parse(await request.json())
-      const reply = await props.runTextTurn(turn.key, turn.text)
-      if (reply instanceof Error) return Response.json({ error: reply.message }, { status: 422 })
+      const reply = await props.runTextTurn(turn.key, turn.text, requestId)
+      if (reply instanceof Error)
+        return daemonErrorResponse({
+          error: reply,
+          status: 422,
+          requestId,
+          reportError: props.reportError,
+        })
       return Response.json({ reply })
     } catch (error) {
-      return Response.json({ error: errorMessage(error) }, { status: 400 })
+      return daemonErrorResponse({ error, status: 400, requestId, reportError: props.reportError })
     }
   }
 }

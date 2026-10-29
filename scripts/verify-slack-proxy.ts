@@ -7,9 +7,20 @@ import { MemoryCredentialStore } from "@/secrets/memory-credential-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 
+if (process.platform === "win32")
+  throw new Error(
+    "Native desktop-helper fixtures are not yet validated on Windows; refusing to read the user's real clipboard.",
+  )
+
 const repository = resolve(import.meta.dir, "..")
 const workspace = realpathSync(mkdtempSync("/tmp/leuco-proxy-"))
 const home = join(workspace, "state")
+const clipboardHelpers = join(workspace, "clipboard-helpers")
+mkdirSync(clipboardHelpers)
+for (const name of ["pbpaste", "wl-paste", "xclip", "xsel"])
+  writeFileSync(join(clipboardHelpers, name), "#!/bin/sh\nexit 0\n", { mode: 0o700 })
+const clipboardPath = `${clipboardHelpers}:${process.env.PATH ?? ""}`
+
 const clientDirectory = join(workspace, "client")
 mkdirSync(clientDirectory)
 const store = new NodeLeucoStore(home)
@@ -45,9 +56,9 @@ globalThis.fetch = Object.assign(
   { preconnect: originalFetch.preconnect },
 )
 async function cli(args: string[], success = true): Promise<string> {
-  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args], {
+  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args, "--json"], {
     cwd: clientDirectory,
-    env: { ...process.env, LEUCO_HOME: home },
+    env: { ...process.env, LEUCO_HOME: home, PATH: clipboardPath },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -60,7 +71,7 @@ async function cli(args: string[], success = true): Promise<string> {
       !output.includes(botToken) && !output.includes(appToken),
       "Credential leaked to CLI output",
     )
-    return output
+    return success ? JSON.stringify(JSON.parse(output).data) : output
   } finally {
     clearTimeout(timer)
   }
@@ -93,11 +104,11 @@ try {
   )
   assert.deepEqual(credentials.reads, [reference])
   assert.ok(!readFileSync(join(home, "settings.json"), "utf8").includes("synthetic-secret"))
-  await cli(["slack", "login"], false)
+  await cli(["slack", "login", "bot"], false)
   await cli(["slack", "logout"], false)
   await cli(["stop"])
   await running
-  assert.match(await cli(["slack", "login"], false), /interactive terminal/)
+  assert.match(await cli(["slack", "login", "bot"], false), /clipboard/i)
   await cli(["slack", "call", "auth.test", "--body", "{}"], false)
   console.log(
     "Slack proxy integration passed: startup-only credentials, caller-side file IO, no token output",

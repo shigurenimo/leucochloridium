@@ -1,14 +1,20 @@
+import { errorDetailsSchema } from "@/error-details-schema"
 import { z } from "zod"
 import { leucoSlackSourceStatusSchema } from "@/connectors/slack/leuco-slack-event-source"
 import { slackEventSchema } from "@/connectors/slack/slack-event-schema"
 
-const baseTs = { ts: z.number() }
+const baseTs = {
+  ts: z.number(),
+  instanceId: z.string().optional(),
+  requestId: z.string().optional(),
+}
 
 const logEventSchema = z.object({
   ...baseTs,
   type: z.literal("log"),
   level: z.enum(["info", "warn", "error"]),
   line: z.string(),
+  causes: errorDetailsSchema.optional(),
 })
 
 const runtimeStartedSchema = z.object({
@@ -115,6 +121,9 @@ const turnCompleteSchema = z.object({
 })
 
 const turnErrorSchema = z.object({
+  causes: errorDetailsSchema.optional(),
+  phase: z.string().optional(),
+  cancelled: z.boolean().optional(),
   ...baseTs,
   type: z.literal("turn.error"),
   runtime: z.string(),
@@ -153,7 +162,19 @@ const scheduleFiredSchema = z.object({
   kind: z.enum(["cron", "one-shot"]),
 })
 
+const maintenanceEventSchema = z.object({
+  ...baseTs,
+  type: z.literal("maintenance"),
+  operationId: z.string(),
+  status: z.enum(["accepted", "stopping", "starting", "ready", "failed", "uncertain"]),
+  workerPid: z.number().nullable(),
+  oldPid: z.number().nullable(),
+  newPid: z.number().nullable(),
+  error: z.string().nullable(),
+})
+
 export const leucoEventSchema = z.discriminatedUnion("type", [
+  maintenanceEventSchema,
   logEventSchema,
   runtimeStartedSchema,
   runtimeStoppedSchema,

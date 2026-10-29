@@ -12,7 +12,7 @@ Leuco独自の読み書き可能ディレクトリ制限やCLI allowlistは実�
 
 制御用Unix socketはLeucoホーム内に作り、ランダムtokenによる認証を行う。ホームは0700、socket、設定、状態、イベントDBは0600。TCP管理ポートは開かない。同じOSユーザーで動く他のプロセスからの分離は保証しない。
 
-`settings.json` にはSlack資格情報の参照IDだけを保存する。bot / app tokenはBun.secrets経由でOSの資格情報ストアへ保存する。macOSはKeychain、Windowsは資格情報マネージャーの端末内保存、Linuxはlibsecretを使う。平文保存へフォールバックしない。登録は `slack login` の非表示入力で行い、コマンド引数やpipeによるトークン登録を受け付けない。
+`settings.json` にはSlack資格情報の参照IDだけを保存する。bot / app tokenはBun.secrets経由でOSの資格情報ストアへ保存する。macOSはKeychain、Windowsは資格情報マネージャーの端末内保存、Linuxはlibsecretを使う。平文保存へフォールバックしない。登録は一つずつコピーした値を `slack login bot` / `slack login app` でクリップボードから直接読む。JSONなどの包装形式、手入力、標準入力、コマンド引数、環境変数、ファイル経由のトークン登録は受け付けない。クリップボードの保持・共有はOSや利用アプリの設定に従い、Leucoは値を表示・ログ出力しない。
 
 起動時に読み取り、daemonだけがSlack通信に使う。Codexへトークンを指示・コマンド引数で渡さず、既知のSlackトークン環境変数は子プロセスから除外する。Slack操作CLIは認証付きのローカル制御経由で依頼する。ファイルの読み書きは呼び出し元で行い、daemonにはuploadのバイト列を渡し、downloadのバイト列を受け取る。
 

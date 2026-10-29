@@ -1,10 +1,17 @@
 #!/usr/bin/env bun
+import { randomUUID } from "node:crypto"
 import { runCli } from "@/cli/run-cli"
+import { writeCliError } from "@/cli/write-cli-error"
+import { CliDeadline } from "@/cli/cli-deadline"
 
 process.title = "leuco"
+const requestId = randomUUID()
+const execution: { deadline: CliDeadline | null } = { deadline: null }
 try {
-  await runCli(process.argv.slice(2))
+  execution.deadline = new CliDeadline(process.argv.slice(2), requestId)
+  await runCli(process.argv.slice(2), { signal: execution.deadline.controller.signal, requestId })
 } catch (error) {
-  process.stderr.write(`leuco: ${error instanceof Error ? error.message : String(error)}\n`)
-  process.exitCode = 1
+  if (!execution.deadline?.expired) writeCliError(error, process.argv.slice(2), requestId)
+} finally {
+  execution.deadline?.finish()
 }

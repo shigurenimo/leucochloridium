@@ -14,6 +14,8 @@ export function queryLeucoEventEntries(
 }
 
 function matches(entry: EventLogEntry<LeucoEvent>, query: LeucoEventQuery): boolean {
+  if (query.requestId !== undefined && entry.event.requestId !== query.requestId) return false
+  if (query.sinceTs !== undefined && entry.ts < query.sinceTs) return false
   if (entry.seq <= (query.sinceSeq ?? 0)) return false
   if (query.type !== undefined && entry.event.type !== query.type) return false
   if (query.runtime === undefined) return true

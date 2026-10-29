@@ -4,7 +4,7 @@ import { validateCommand } from "@/cli/validate-command"
 
 describe("flat CLI commands", () => {
   it.each([
-    ["run", "--no-soul"],
+    ["run", "--no-soul", "--prompt", "hello"],
     ["start", "--cwd", "/work"],
     ["ask", "two", "words", "--thread", "notes"],
     ["config", "set", "soul", "null"],

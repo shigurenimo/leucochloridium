@@ -14,6 +14,14 @@ export type CodexTurnOptions = {
 export type CodexClientPort = {
   start(): Promise<void>
   stop(): Promise<void>
+  getStatus?(): {
+    pid: number | null
+    ready: boolean
+    starting: boolean
+    stopping: boolean
+    cleaningUp: boolean
+    activeTurns: number
+  }
   isRunning(): boolean
   getDeveloperInstructions?(): Promise<string>
   startThread(params: ThreadStartParams): Promise<ThreadStartResult | Error>

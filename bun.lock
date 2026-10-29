@@ -5,13 +5,13 @@
     "": {
       "name": "react",
       "dependencies": {
-        "@interactive-inc/flume": "0.10.1",
+        "@interactive-inc/flume": "0.12.0",
         "zod": "^4.6.7",
       },
       "devDependencies": {
         "@types/bun": "^1.4.4",
         "@vitest/coverage-v8": "5.0.5",
-        "publint": "0.3.22",
+        "publint": "0.3.25",
         "typescript": "7.0.2",
         "vite-plus": "1.4.0",
         "vitest": "5.0.5",
@@ -40,7 +40,7 @@
 
     "@blazediff/core": ["@blazediff/core@1.10.0", "", {}, "sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ=="],
 
-    "@interactive-inc/flume": ["@interactive-inc/flume@0.10.1", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-5HkE5cflwB24D2VK+fwbHGu2zu2RaQvmxFNWxiTVlpvsKXSbCZSaCB5Vx0cxnlsqz1jl1QoOkUCRsZhUjVwfeg=="],
+    "@interactive-inc/flume": ["@interactive-inc/flume@0.12.0", "", { "dependencies": { "zod": "^4.6.7" } }, "sha512-OmRHRRd1bj4/OCFCrykgec8JIvDXXd39TQOjNKnR9We9u+2Xtf9Ddneg4K9WQhU2ACqca9ZQXD3Bte5CVZbERw=="],
 
     "@jridgewell/resolve-uri": ["@jridgewell/resolve-uri@3.1.2", "", {}, "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw=="],
 
@@ -394,7 +394,7 @@
 
     "pretty-format": ["pretty-format@27.5.1", "", { "dependencies": { "ansi-regex": "^5.0.1", "ansi-styles": "^5.0.0", "react-is": "^17.0.1" } }, "sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ=="],
 
-    "publint": ["publint@0.3.22", "", { "dependencies": { "@publint/pack": "^0.1.6", "package-manager-detector": "^1.7.0", "picocolors": "^1.1.1", "sade": "^1.8.1" }, "bin": { "publint": "./src/cli.js" } }, "sha512-6Z/scsr5CA7APdwyF35EY88CqgDj1textWuY788DVTJYPCWVv/Wn9G6KmLnrVRnStgYcahqN4wCDLZGSbQJ69w=="],
+    "publint": ["publint@0.3.25", "", { "dependencies": { "@publint/pack": "^0.1.7", "package-manager-detector": "^1.8.0", "picocolors": "^1.1.1", "sade": "^1.8.1" }, "bin": { "publint": "./src/cli.js" } }, "sha512-WMMbn/d7JqRlfXQL/JUI4n5skC8cJ5WVr8/wT5mmiYWkUdENkZr1I5rgs2+dQPVRgoJd+JRYtB46MTsuDylw9g=="],
 
     "react-is": ["react-is@17.0.2", "", {}, "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w=="],
 

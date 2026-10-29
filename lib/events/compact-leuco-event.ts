@@ -4,6 +4,8 @@ const MAX_TURN_TEXT_CHARS = 16_000
 const MAX_NOTIFICATION_CHARS = 8_000
 
 export function compactLeucoEvent(event: LeucoEvent): LeucoEvent {
+  if (event.type === "log" && event.line.length > 16000)
+    return { ...event, line: `${event.line.slice(0, 16000)} [truncated]` }
   if (event.type === "turn.start" && event.input.length > MAX_TURN_TEXT_CHARS) {
     return {
       ...event,

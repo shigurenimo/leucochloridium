@@ -17,7 +17,11 @@ function fixture() {
     handler(
       new Request("http://localhost/slack", {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "x-leuco-request-id": "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+        },
         body: JSON.stringify(body),
       }),
     )
@@ -33,7 +37,11 @@ describe("authenticated Slack proxy", () => {
   it("forwards explicit actions and suppresses sensitive backend exceptions", async () => {
     const test = fixture()
     expect(await (await test.request(command)).json()).toEqual({ ok: true })
-    expect(test.runSlackCommand).toHaveBeenCalledWith(command, undefined)
+    expect(test.runSlackCommand).toHaveBeenCalledWith(
+      command,
+      undefined,
+      "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+    )
     test.runSlackCommand.mockRejectedValueOnce(new Error("raw-bot-secret"))
     const response = await test.request(command)
     expect(response.status).toBe(422)
@@ -59,11 +67,50 @@ describe("authenticated Slack proxy", () => {
     const response = await test.handler(
       new Request("http://localhost/slack", {
         method: "POST",
-        headers: { authorization: "Bearer control-secret" },
+        headers: {
+          authorization: "Bearer control-secret",
+          "x-leuco-request-id": "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+        },
         body: multipart,
       }),
     )
     expect(response.status).toBe(200)
-    expect(test.runSlackCommand).toHaveBeenCalledWith(parsed, new TextEncoder().encode("content"))
+    expect(test.runSlackCommand).toHaveBeenCalledWith(
+      parsed,
+      new TextEncoder().encode("content"),
+      "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+    )
+  })
+  it("returns the safe original reason and correlation ID when the daemon supplies a reporter", async () => {
+    const reportError = vi.fn(
+      (_error: unknown, _requestId: string) => "Slack API chat.postMessage: missing_scope",
+    )
+    const handler = handleDaemonRequest({
+      token: "control-secret",
+      cwd: "/work",
+      isReady: () => true,
+      runTextTurn: async () => "",
+      stop: () => {},
+      runSlackCommand: async () => {
+        throw new Error("raw-secret")
+      },
+      reportError,
+    })
+    const response = await handler(
+      new Request("http://localhost/slack", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer control-secret",
+          "content-type": "application/json",
+          "x-leuco-request-id": "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+        },
+        body: JSON.stringify(command),
+      }),
+    )
+    expect(await response.json()).toEqual({
+      error: "Slack API chat.postMessage: missing_scope",
+      requestId: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+    })
+    expect(reportError).toHaveBeenCalledOnce()
   })
 })

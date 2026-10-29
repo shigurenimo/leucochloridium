@@ -73,6 +73,9 @@ export class LeucoCodexClient {
   private readonly protocolMaxFrameChars: number | undefined
   private readonly protocolLogPreviewChars: number | undefined
 
+  private starting: Promise<void> | null = null
+  private stopping: Promise<void> | null = null
+  private initialized = false
   private child: ChildProcessWithoutNullStreams | null = null
   private protocol: LeucoCodexProtocol | null = null
   private notificationHandler: NotificationHandler | null = null
@@ -92,7 +95,18 @@ export class LeucoCodexClient {
     this.args = props.args ?? ["app-server"]
     this.cwd = props.cwd
     this.env = props.env
-    this.onLog = props.onLog
+    this.onLog =
+      props.onLog === undefined
+        ? undefined
+        : (line) => {
+            try {
+              props.onLog?.(line)
+            } catch (error) {
+              process.stderr.write(
+                `[codex log consumer failed] ${errorMessage(error).slice(0, 4000)}\n`,
+              )
+            }
+          }
     this.clientName = props.clientName ?? "leuco"
     this.clientTitle = props.clientTitle ?? "leucochloridium"
     this.clientVersion = props.clientVersion ?? "0.1.0"
@@ -110,13 +124,42 @@ export class LeucoCodexClient {
   }
 
   isRunning(): boolean {
-    return this.child !== null && this.protocol !== null
+    return this.child !== null && this.protocol !== null && this.initialized
+  }
+
+  getStatus() {
+    return {
+      pid: this.child?.pid ?? null,
+      ready: this.isRunning(),
+      starting: this.starting !== null,
+      stopping: this.stopping !== null,
+      cleaningUp: this.transportFailurePromise !== null,
+      activeTurns: this.turnAborters.size,
+    }
   }
 
   async start(): Promise<void> {
+    if (this.starting !== null) return this.starting
+    if (this.stopping !== null) await this.stopping
+    const starting = this.startChild()
+    this.starting = starting
+    try {
+      await starting
+    } finally {
+      if (this.starting === starting) this.starting = null
+    }
+  }
+
+  private async startChild(): Promise<void> {
     const transportFailurePromise = this.transportFailurePromise
     if (transportFailurePromise !== null) await transportFailurePromise
-    if (this.child !== null) return
+    if (this.child !== null) {
+      if (this.protocol === null)
+        throw new Error(
+          "Previous Codex process has not exited after transport failure; refusing to spawn a duplicate. Inspect logs and stop it before retrying.",
+        )
+      return
+    }
 
     const child = spawn(this.bin, this.args, {
       cwd: this.cwd,
@@ -197,6 +240,7 @@ export class LeucoCodexClient {
 
     this.child = child
     this.protocol = protocol
+    this.initialized = false
 
     // Mandatory handshake. codex app-server rejects every other request with
     // `Not initialized` until `initialize` completes. If the request fails
@@ -222,16 +266,35 @@ export class LeucoCodexClient {
       await this.failTransport(child, protocol, error)
       throw error
     }
+    if (this.child !== child || this.protocol !== protocol)
+      throw new Error("Codex stopped during initialization")
     protocol.notify("initialized")
+    this.initialized = true
     this.onLog?.(`[codex] app-server ready (pid=${child.pid ?? "unknown"})`)
   }
 
   async stop(): Promise<void> {
+    if (this.stopping !== null) return this.stopping
+    const stopping = this.stopChild()
+    this.stopping = stopping
+    try {
+      await stopping
+    } finally {
+      if (this.stopping === stopping) this.stopping = null
+    }
+  }
+
+  private async stopChild(): Promise<void> {
     const transportFailurePromise = this.transportFailurePromise
     if (transportFailurePromise !== null) await transportFailurePromise
 
     const child = this.child
     if (child === null) return
+    const cancelled = new Error("Codex stopped")
+    this.protocol?.fail(cancelled)
+    this.protocol = null
+    this.initialized = false
+    this.abortInFlightTurns(cancelled)
     child.stdin.end()
     child.kill("SIGTERM")
     await this.waitForExitOrEscalate(child)
@@ -255,7 +318,6 @@ export class LeucoCodexClient {
         if (this.onLog) this.onLog(`[codex cleanup] ${errorMessage(err)}`)
       })
       .finally(() => {
-        if (this.child === child) this.child = null
         if (this.transportFailurePromise === cleanup) this.transportFailurePromise = null
       })
     this.transportFailurePromise = cleanup
@@ -587,7 +649,13 @@ export class LeucoCodexClient {
   }
 
   private handleNotification(method: string, params: unknown): void {
-    this.notificationHandler?.(method, params)
+    try {
+      this.notificationHandler?.(method, params)
+    } catch (error) {
+      const message = `[codex notification consumer failed] ${errorMessage(error)}`
+      if (this.onLog) this.onLog(message)
+      else process.stderr.write(`${message.slice(0, 4000)}\n`)
+    }
     const threadId = notificationThreadId(params)
     if (threadId === null) {
       if (this.turnHandlers.size === 1) {

@@ -13,3 +13,6 @@ export const slackCredentialsSchema = z.strictObject({
     .regex(/^xapp-[A-Za-z0-9._-]+$/),
 })
 export type SlackCredentials = z.infer<typeof slackCredentialsSchema>
+
+export const slackCredentialDraftSchema = slackCredentialsSchema.partial()
+export type SlackCredentialDraft = z.infer<typeof slackCredentialDraftSchema>

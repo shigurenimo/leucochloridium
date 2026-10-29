@@ -72,6 +72,12 @@ describe("cached Slack credentials", () => {
     await expect(missing.runtime.start()).rejects.toThrow("credentials are missing")
     expect(missing.codex.startCount).toBe(0)
   })
+  it("reports which token is missing before starting Codex", async () => {
+    const test = fixture()
+    await test.credentials.set(test.reference, JSON.stringify({ botToken: "xoxb-bot-secret" }))
+    await expect(test.runtime.start()).rejects.toThrow("leuco slack login app")
+    expect(test.codex.startCount).toBe(0)
+  })
   it("does not resurrect credentials after a read completes following shutdown", async () => {
     const test = fixture()
     const pending = Promise.withResolvers<string | null>()

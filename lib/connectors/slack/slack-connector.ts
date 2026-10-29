@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type {
   LeucoSlackEnvelope,
   LeucoSlackEventSource,
@@ -60,6 +61,8 @@ export class LeucoSlackConnector implements Connector {
   private processor: LeucoSlackEventProcessor
   private ctx: ConnectorContext | null = null
   private botUserId: string | null = null
+  private lastReceivedAt: number | null = null
+  private lastFailure: { ts: number; message: string } | null = null
   private lastConnectionStatus: LeucoSlackSourceStatus | null = null
   private readonly activeThreads = new Map<string, number>()
   private lifecycleGeneration = 0
@@ -120,6 +123,14 @@ export class LeucoSlackConnector implements Connector {
     }
   }
 
+  getStatus() {
+    return {
+      state: this.props.eventSource.status(),
+      lastActivityAt: this.lastReceivedAt,
+      lastFailure: this.lastFailure === null ? null : { ...this.lastFailure },
+    }
+  }
+
   getIdentity(): ConnectorIdentity {
     return { name: this.name, type: "slack", botUserId: this.botUserId }
   }
@@ -160,7 +171,7 @@ export class LeucoSlackConnector implements Connector {
       return { userId: result.userId, botId: result.botId ?? null }
     } catch (err) {
       this.emitAuthFailure(err, generation)
-      return { userId: null, botId: null }
+      throw new Error(`Slack auth.test failed: ${errorMessage(err)}`, { cause: err })
     }
   }
 
@@ -168,7 +179,8 @@ export class LeucoSlackConnector implements Connector {
     if (!this.isGenerationActive(generation)) return
     const ctx = this.ctx
     if (ctx === null) return
-    const message = errorMessage(err)
+    const message = ctx.eventLog.redactText(errorMessage(err))
+    this.lastFailure = { ts: Date.now(), message }
     ctx.eventLog.append({
       ts: Date.now(),
       type: "slack.error",
@@ -208,6 +220,7 @@ export class LeucoSlackConnector implements Connector {
 
   private async handleEnvelope(envelope: LeucoSlackEnvelope, generation: number): Promise<void> {
     if (!this.isGenerationActive(generation)) return
+    this.lastReceivedAt = envelope.receivedAt
     if (envelope.type !== "events_api") return
 
     const rawEvent = envelope.payload.event
@@ -244,6 +257,7 @@ export class LeucoSlackConnector implements Connector {
     // and the event log would otherwise drown out the events worth alerting on.
     if (this.lastConnectionStatus === status) return
     this.lastConnectionStatus = status
+    if (status === "connected") this.lastFailure = null
     ctx.eventLog.append({
       ts: Date.now(),
       type: "slack.connection",
@@ -259,6 +273,12 @@ export class LeucoSlackConnector implements Connector {
     if (ctx === null) return
 
     if (log.level === "warn" || log.level === "error") {
+      if (log.error !== null)
+        ctx.eventLog.error(`Slack ${this.name} ${log.action}: ${log.message}`, log.error)
+      this.lastFailure = {
+        ts: log.timestamp,
+        message: ctx.eventLog.redactText(log.error?.message ?? log.message),
+      }
       ctx.eventLog.append({
         ts: Date.now(),
         type: "slack.error",
@@ -294,8 +314,10 @@ export class LeucoSlackConnector implements Connector {
     if (!this.isGenerationActive(generation)) return
     const ctx = this.ctx
 
+    const requestId = randomUUID()
     if (ctx) {
       ctx.eventLog.append({
+        requestId,
         ts: Date.now(),
         type: "slack.event",
         runtime: ctx.runtimeName,
@@ -309,11 +331,15 @@ export class LeucoSlackConnector implements Connector {
     // them through would loop the agent on every ack it just placed.
     if (event.kind !== "message") return
 
-    await this.handleMessage(event, generation)
+    await this.handleMessage(event, generation, requestId)
   }
 
   /** Dispatch inbound text; final answers remain internal. */
-  private async handleMessage(msg: SlackMessageEvent, generation: number): Promise<void> {
+  private async handleMessage(
+    msg: SlackMessageEvent,
+    generation: number,
+    requestId: string,
+  ): Promise<void> {
     if (!this.isGenerationActive(generation)) return
     const ctx = this.ctx
     const adapter = this.adapter
@@ -328,7 +354,11 @@ export class LeucoSlackConnector implements Connector {
       if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, icons.progress)
       if (!this.isGenerationActive(generation)) return
 
-      const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(this.name, msg))
+      const monologue = await ctx.runTextTurn(
+        threadKey,
+        formatMessageInput(this.name, msg),
+        requestId,
+      )
       if (!this.isGenerationActive(generation)) return
 
       if (monologue instanceof Error) {

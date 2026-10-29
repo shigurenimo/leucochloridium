@@ -4,7 +4,7 @@ import type { LeucoEventLog } from "@/events/leuco-event-log"
 export type ConnectorContext = {
   cwd: string
   onLog: (line: string) => void
-  runTextTurn: (threadKey: string, text: string) => Promise<string | Error>
+  runTextTurn: (threadKey: string, text: string, requestId?: string) => Promise<string | Error>
   eventLog: LeucoEventLog
   runtimeName: string
 }
@@ -15,9 +15,16 @@ export type ConnectorIdentity = {
   botUserId: string | null
 }
 
+export type ConnectorStatus = {
+  state: string
+  lastActivityAt: number | null
+  lastFailure: { ts: number; message: string } | null
+}
+
 export type Connector = {
   readonly name: string
   start(ctx: ConnectorContext): Promise<void>
   stop(): Promise<void>
+  getStatus?(): ConnectorStatus
   getIdentity(): ConnectorIdentity
 }

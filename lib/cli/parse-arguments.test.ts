@@ -20,4 +20,8 @@ describe("flat CLI arguments", () => {
   ])("rejects invalid arguments %j", (...args) => {
     expect(() => parseArguments(args)).toThrow()
   })
+  it("accepts explicit equals values beginning with -- without treating them as flags", () => {
+    expect(parseArguments(["run", "--prompt=--help"]).flags).toEqual({ prompt: "--help" })
+    expect(() => parseArguments(["--help", "-h"])).toThrow("Duplicate flag")
+  })
 })

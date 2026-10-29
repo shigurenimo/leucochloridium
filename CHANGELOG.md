@@ -6,8 +6,28 @@ All notable changes to Leuco are documented here.
 
 ### 変更
 
+- 起動失敗のCLIエラーへ子PID・終了コード・signal・マスク済み直近ログを追加。制御情報の破損時は停止と断定せず、起動・状態リセットの誤案内を抑止。
+- 停止受付の理由をイベントとテキストログへ記録。CLI停止のrequestId、OSシグナル、abort、内部異常、一回実行の完了を区別。
+
+- doctorが停止中を正常と誤判定する問題を修正。Slack返信用CLIのPATH検査と、起動・bun link・PATH修正の案内を追加。
+
+- FlumeClosed.errors()の停止失敗を検査し、終了未確認のソケット上に次の接続を開かないよう修正。watchdogの登録・解除失敗とconsumer例外を診断へ残す。
+
+- Slack登録を一つずつコピーしたトークンのクリップボード読み取りだけへ限定し、手入力・stdin・トークン引数・interactive flagを廃止。読み取りのサイズと時間を制限。
+- CLI所有のBotは未処理例外後に自動復旧し、60秒内3回で再起動ループを停止。起動識別情報と操作IDで古いworkerの誤操作を防止。
+
+- 初期化中の停止、後片付けの失敗の隠蔽、元の原因の上書き、単発予定の自動再送を修正。Codexの初期化・停止を直列化し、終了未確認のプロセスを保持。
+- 原因の連鎖・スタック・コード、入力接続の健全性、未処理例外の記録と終了処理を追加。イベントDB障害時は明示的なメモリ履歴とテキスト記録で継続。
+- 障害注入の実プロセス検証と全検証scriptの型検査を追加。
+
+- 結果を標準YAML / 任意JSONへ統一し、requestIdを追加。通常CLIの入力待ちを廃止し期限を設定。前面常駐は明示optionで選ぶ。
+- 独立workerによるrestart、安全なrepair、診断・待ち行列・ログ保存健全性、依頼別イベント検索とログローテーションを追加。
+- Flumeを0.12.0、publintを0.3.25へ更新。
+
+- AI向けの個別helpとそのJSON版、JSON結果とエラーコードを追加。コマンド契約から引数検証とCLI.mdを生成し、生成差分と実CLIを検査。読み取り時にホームを生成せず、eventsをSQLiteの読み取り専用queryへ変更。
+
 - 対応Bunを1.4.4以上へ変更し、Windowsの端末内資格情報保存を指定。
-- Slack tokenをOS資格情報ストアへ保存し、起動時に一度だけ読む形へ変更。login / logoutと非表示入力を追加し、設定は参照IDだけに変更。Slack操作はdaemonへ中継し、ファイルIOは呼び出し元に維持。
+- Slack tokenをOS資格情報ストアへ保存し、起動時に一度だけ読む形へ変更。login / logoutとクリップボード登録を追加し、設定は参照IDだけに変更。Slack操作はdaemonへ中継し、ファイルIOは呼び出し元に維持。
 
 - 一つのCodex app-serverを動かすCLIへ変更。project登録、supervisor、connector登録、旧boot管理とHTTP gatewayを廃止。
 - 通常のCODEX_HOMEをそのまま使用。Codex設定の生成、認証symlink、内蔵prompt presetを廃止。

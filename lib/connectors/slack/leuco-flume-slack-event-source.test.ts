@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-type RunningStub = {
-  close: () => Promise<void>
+type ClosedStub = {
+  errors: () => ReadonlyArray<{ source: string; errorCode?: string; error: Error }>
 }
+type RunningStub = { close: () => Promise<ClosedStub> }
 
 const captured = vi.hoisted(() => ({
   sourceOptions: null as Record<string, unknown> | null,
@@ -12,7 +13,7 @@ const captured = vi.hoisted(() => ({
   }>,
   openResults: [] as Array<RunningStub | Error | Promise<RunningStub | Error>>,
   openCalls: 0,
-  close: vi.fn(async () => {}),
+  close: vi.fn(async (): Promise<ClosedStub> => ({ errors: () => [] })),
 }))
 
 vi.mock("@interactive-inc/flume/slack", () => ({
@@ -48,7 +49,7 @@ describe("LeucoFlumeSlackEventSource", () => {
     captured.openResults = []
     captured.openCalls = 0
     captured.close.mockReset()
-    captured.close.mockResolvedValue(undefined)
+    captured.close.mockResolvedValue({ errors: () => [] })
   })
 
   afterEach(() => {
@@ -148,9 +149,7 @@ describe("LeucoFlumeSlackEventSource", () => {
 
     expect(captured.flumeOptions[0]?.signal?.aborted).toBe(true)
     deferred.resolve({ close: captured.close })
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(captured.close).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(captured.close).toHaveBeenCalledTimes(1))
   })
 
   it("aborts an in-progress open immediately when stopped and closes a late success", async () => {
@@ -168,9 +167,7 @@ describe("LeucoFlumeSlackEventSource", () => {
 
     expect(captured.flumeOptions[0]?.signal?.aborted).toBe(true)
     deferred.resolve({ close: captured.close })
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(captured.close).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(captured.close).toHaveBeenCalledTimes(1))
   })
 
   it("rebuilds the Slack socket when timer drift indicates host suspension", async () => {
@@ -276,5 +273,145 @@ describe("LeucoFlumeSlackEventSource", () => {
     await vi.waitFor(() => {
       expect(captured.close).toHaveBeenCalledTimes(2)
     })
+  })
+  it("does not open another socket after the previous socket failed to close", async () => {
+    const wake = new LeucoMemorySlackWakeClock()
+    const logs: string[] = []
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeClock: wake,
+      wakeCheckIntervalMs: 100,
+      wakeDriftThresholdMs: 200,
+    })
+    await source.start({
+      onEvent: async () => {},
+      onLog: (log) => {
+        logs.push(log.action)
+      },
+    })
+    captured.close.mockRejectedValueOnce(new Error("old socket close unconfirmed"))
+    wake.advance(301)
+    await vi.waitFor(() => expect(logs).toContain("wake.close.failed"))
+    expect(captured.openCalls).toBe(1)
+    expect(source.status()).toBe("disconnected")
+    wake.advance(100)
+    await vi.waitFor(() => expect(captured.openCalls).toBe(2))
+    expect(captured.close).toHaveBeenCalledTimes(2)
+    await source.stop()
+  })
+
+  it("retains a failed cleanup so stop can retry it and start cannot hide it", async () => {
+    const source = new LeucoFlumeSlackEventSource({ appToken: "xapp-test", botToken: "xoxb-test" })
+    await source.start({ onEvent: async () => {} })
+    captured.close.mockRejectedValueOnce(new Error("socket close failed"))
+    await expect(source.stop()).rejects.toThrow("socket close failed")
+    await expect(source.start({ onEvent: async () => {} })).rejects.toThrow("cleanup")
+    await source.stop()
+    expect(captured.close).toHaveBeenCalledTimes(2)
+  })
+  it("reports watchdog cancellation failure and retries it without skipping socket shutdown", async () => {
+    const wake = new LeucoMemorySlackWakeClock()
+    const cancel = vi.fn().mockImplementationOnce(() => {
+      throw new Error("watchdog cancel failed")
+    })
+    vi.spyOn(wake, "setInterval").mockReturnValue(cancel)
+    const logs: string[] = []
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeClock: wake,
+    })
+    await source.start({
+      onEvent: async () => {},
+      onLog: (log) => {
+        logs.push(log.action)
+      },
+    })
+    await expect(source.stop()).rejects.toThrow("watchdog cancel failed")
+    expect(captured.close).toHaveBeenCalledOnce()
+    expect(logs).toContain("wake.watchdog.cancel.failed")
+    await source.stop()
+    expect(cancel).toHaveBeenCalledTimes(2)
+  })
+
+  it("contains failing status and log consumers while preserving status and redacting diagnostics", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true)
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-private-token",
+      botToken: "xoxb-private-token",
+    })
+    try {
+      await source.start({
+        onEvent: async () => {},
+        onStatus: () => {
+          throw new Error("status consumer failed")
+        },
+        onLog: async () => {
+          throw new Error("log consumer failed xoxb-private-token")
+        },
+      })
+      const emit = captured.flumeOptions[0]!.onEvent
+      expect(() =>
+        emit({
+          kind: "log",
+          log: {
+            level: "error",
+            action: "status",
+            message: "socket state",
+            detail: { to: "reconnecting" },
+            timestamp: 1,
+          },
+        }),
+      ).not.toThrow()
+      await vi.waitFor(() => expect(stderr).toHaveBeenCalled())
+      expect(source.status()).toBe("reconnecting")
+      expect(stderr.mock.calls.map(String).join(" ")).toContain("socket state")
+      expect(stderr.mock.calls.map(String).join(" ")).not.toContain("private-token")
+    } finally {
+      await source.stop()
+      stderr.mockRestore()
+    }
+  })
+  it("recognizes cleanup errors resolved inside FlumeClosed instead of treating close as successful", async () => {
+    const source = new LeucoFlumeSlackEventSource({ appToken: "xapp-test", botToken: "xoxb-test" })
+    await source.start({ onEvent: async () => {} })
+    captured.close.mockResolvedValueOnce({
+      errors: () => [
+        {
+          source: "slack",
+          errorCode: "FLUME_STOP_FAILED",
+          error: new Error("source disconnect failed"),
+        },
+      ],
+    })
+    await expect(source.stop()).rejects.toThrow("source disconnect failed")
+    expect(source.status()).toBe("disconnected")
+    await source.stop()
+  })
+
+  it("does not claim successful startup when wake monitoring could not be installed", async () => {
+    const wake = new LeucoMemorySlackWakeClock()
+    vi.spyOn(wake, "setInterval").mockImplementation(() => {
+      throw new Error("watchdog setup failed")
+    })
+    const logs: string[] = []
+    const source = new LeucoFlumeSlackEventSource({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      wakeClock: wake,
+    })
+    await expect(
+      source.start({
+        onEvent: async () => {},
+        onLog: (log) => {
+          logs.push(log.action)
+        },
+      }),
+    ).rejects.toThrow("watchdog setup failed")
+    expect(logs).toContain("wake.watchdog.schedule.failed")
+    expect(captured.close).toHaveBeenCalledOnce()
+    expect(source.status()).toBe("disconnected")
+    await source.stop()
   })
 })

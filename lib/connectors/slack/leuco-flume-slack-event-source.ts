@@ -1,3 +1,4 @@
+import { redactPublicText } from "@/secrets/redact-public-text"
 import { Flume } from "@interactive-inc/flume"
 import type {
   FlumeEvent,
@@ -38,6 +39,7 @@ type StartProps = {
 type SlackSession = {
   controller: AbortController
   running: FlumeRunning | null
+  closing: Promise<void> | null
   dispose: () => void
 }
 
@@ -47,7 +49,7 @@ const DEFAULT_WAKE_DRIFT_THRESHOLD_MS = 60_000
 const SYSTEM_WAKE_CLOCK = new LeucoNodeSlackWakeClock()
 
 /**
- * `LeucoSlackEventSource` backed by `@interactive-inc/flume` (>= 0.9). The
+ * `LeucoSlackEventSource` backed by `@interactive-inc/flume` (0.12). The
  * flume types leak no further than this file: the unified firehose
  * (`FlumeStreamItem`) is split back into Leuco's three callbacks
  * (`onEvent` / `onStatus` / `onLog`) so the Slack connector stays decoupled
@@ -56,6 +58,7 @@ const SYSTEM_WAKE_CLOCK = new LeucoNodeSlackWakeClock()
 export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   private lifecycleController: AbortController | null = null
   private session: SlackSession | null = null
+  private sourceLog: StartProps["onLog"] = undefined
   private currentStatus: LeucoSlackSourceStatus = "disconnected"
   private wakeTimerCancel: (() => void) | null = null
   private wakeLastCheckAt = 0
@@ -88,6 +91,11 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       throw new Error("Slack event source is already started or starting")
     }
 
+    if (this.session !== null || this.wakeTimerCancel !== null)
+      throw new Error(
+        "Previous Slack cleanup is unconfirmed; inspect its errors and finish shutdown before opening another session",
+      )
+    this.sourceLog = props.onLog
     const controller = new AbortController()
     this.lifecycleController = controller
     const session = this.createSession(controller)
@@ -97,20 +105,31 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       const running = await this.openSession(session, props)
       if (controller.signal.aborted || this.lifecycleController !== controller) {
         session.running = running
-        await this.closeSession(session).catch(() => undefined)
         throw abortError(controller.signal)
       }
       session.running = running
       this.armWakeWatchdog(controller, props)
     } catch (error) {
+      const failures: unknown[] = [error]
       if (this.session === session) {
-        this.session = null
-        await this.closeSession(session).catch(() => undefined)
+        try {
+          await this.closeSession(session)
+          this.session = null
+        } catch (cleanup) {
+          failures.push(cleanup)
+          this.reportFailure(props.onLog, "start.cleanup.failed", cleanup)
+        }
       }
       if (this.lifecycleController === controller) {
         this.lifecycleController = null
         this.currentStatus = "disconnected"
       }
+      if (failures.length > 1)
+        throw new AggregateError(
+          failures,
+          `Slack startup failed: ${normalizeError(error).message}; cleanup also failed`,
+          { cause: error },
+        )
       throw error
     }
   }
@@ -118,27 +137,36 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   async stop(): Promise<void> {
     const controller = this.lifecycleController
     this.lifecycleController = null
-    this.disarmWakeWatchdog()
+    const watchdogError = this.disarmWakeWatchdog()
+    const failures: unknown[] = watchdogError === null ? [] : [watchdogError]
     this.wakeReconnectNeeded = false
-    if (controller !== null && !controller.signal.aborted) {
+    if (controller !== null && !controller.signal.aborted)
       controller.abort(new Error("Slack event source start cancelled"))
-    }
-
     const session = this.session
-    this.session = null
     const wakeReconnectPromise = this.wakeReconnectPromise
     this.currentStatus = "disconnected"
-
-    let closeError: unknown = null
     if (session !== null) {
       try {
         await this.closeSession(session)
+        if (this.session === session) this.session = null
       } catch (error) {
-        closeError = error
+        failures.push(error)
       }
     }
-    if (wakeReconnectPromise !== null) await wakeReconnectPromise
-    if (closeError !== null) throw closeError
+    if (wakeReconnectPromise !== null) {
+      try {
+        await wakeReconnectPromise
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Slack shutdown failed; inspect socket and watchdog causes",
+        { cause: failures[0] },
+      )
   }
 
   status(): LeucoSlackSourceStatus {
@@ -188,30 +216,56 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     return {
       controller,
       running: null,
+      closing: null,
       dispose: () => lifecycleController.signal.removeEventListener("abort", onLifecycleAbort),
     }
   }
 
   private async openSession(session: SlackSession, props: StartProps): Promise<FlumeRunning> {
     const flume = this.buildFlume(props, session.controller)
-    return await this.openWithinDeadline(flume, session.controller, props.onLog)
+    return await this.openWithinDeadline(flume, session, props.onLog)
   }
 
   private async closeSession(session: SlackSession): Promise<void> {
+    if (session.closing !== null) return session.closing
     session.dispose()
-    if (!session.controller.signal.aborted) {
+    if (!session.controller.signal.aborted)
       session.controller.abort(new Error("Slack socket session replaced"))
-    }
     const running = session.running
-    session.running = null
-    if (running !== null) await running.close()
+    if (running === null) return
+    const closing = Promise.resolve()
+      .then(() => running.close())
+      .then((closed) => {
+        const failures = closed.errors().map((failure) =>
+          Object.assign(
+            new Error(`${failure.source} cleanup failed: ${failure.error.message}`, {
+              cause: failure.error,
+            }),
+            { code: failure.errorCode },
+          ),
+        )
+        if (failures.length > 0)
+          throw new AggregateError(
+            failures,
+            `Slack socket cleanup failed: ${failures.map((failure) => failure.message).join("; ")}`,
+            { cause: failures[0] },
+          )
+        session.running = null
+      })
+    session.closing = closing
+    try {
+      await closing
+    } finally {
+      if (session.closing === closing) session.closing = null
+    }
   }
 
   private async openWithinDeadline(
     flume: Flume,
-    controller: AbortController,
+    session: SlackSession,
     onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
   ): Promise<FlumeRunning> {
+    const controller = session.controller
     const timeout = setTimeout(() => {
       controller.abort(
         new Error(`Slack event source start timed out after ${this.startTimeoutMs}ms`),
@@ -220,7 +274,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     const aborted = waitForAbort(controller.signal)
     const opened = flume.open()
     void opened.then(
-      (running) => this.closeLateOpen(running, controller, onLog),
+      (running) => this.closeLateOpen(running, session, onLog),
       () => undefined,
     )
     try {
@@ -234,34 +288,29 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   }
 
   private armWakeWatchdog(controller: AbortController, props: StartProps): void {
-    this.disarmWakeWatchdog()
+    const previousWatchdogError = this.disarmWakeWatchdog()
+    if (previousWatchdogError !== null) throw previousWatchdogError
     this.wakeLastCheckAt = this.wakeClock.now()
     try {
       this.wakeTimerCancel = this.wakeClock.setInterval(() => {
         this.checkForWake(controller, props)
       }, this.wakeCheckIntervalMs)
     } catch (error) {
-      const normalized = normalizeError(error)
-      this.emitSourceLog(props.onLog, {
-        level: "error",
-        action: "wake.watchdog.schedule.failed",
-        message: normalized.message,
-        error: normalized,
-        detail: null,
-        timestamp: this.wakeClock.now(),
-      })
+      this.reportFailure(props.onLog, "wake.watchdog.schedule.failed", error)
+      throw error
     }
   }
 
-  private disarmWakeWatchdog(): void {
-    if (this.wakeTimerCancel === null) return
+  private disarmWakeWatchdog(): Error | null {
+    if (this.wakeTimerCancel === null) return null
     const cancel = this.wakeTimerCancel
-    this.wakeTimerCancel = null
     try {
       cancel()
-    } catch {
-      // Stopping the socket must continue even if an injected/runtime timer
-      // implementation refuses to clear an already-fired handle.
+      this.wakeTimerCancel = null
+      return null
+    } catch (error) {
+      this.reportFailure(this.sourceLog, "wake.watchdog.cancel.failed", error)
+      return normalizeError(error)
     }
   }
 
@@ -293,8 +342,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       if (controller.signal.aborted || this.lifecycleController !== controller) return
       const normalized = normalizeError(error)
       this.wakeReconnectNeeded = true
-      this.currentStatus = "disconnected"
-      props.onStatus?.("disconnected")
+      this.publishStatus("disconnected", props.onStatus, props.onLog)
       this.emitSourceLog(props.onLog, {
         level: "error",
         action: "wake.reconnect.failed",
@@ -311,14 +359,13 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   }
 
   private async reconnectAfterWake(controller: AbortController, props: StartProps): Promise<void> {
-    this.currentStatus = "reconnecting"
-    props.onStatus?.("reconnecting")
+    this.publishStatus("reconnecting", props.onStatus, props.onLog)
 
     const previous = this.session
     if (previous !== null) {
-      this.session = null
       try {
         await this.closeSession(previous)
+        if (this.session === previous) this.session = null
       } catch (error) {
         const normalized = normalizeError(error)
         this.emitSourceLog(props.onLog, {
@@ -329,6 +376,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
           detail: null,
           timestamp: this.wakeClock.now(),
         })
+        throw error
       }
     }
     if (controller.signal.aborted || this.lifecycleController !== controller) return
@@ -339,7 +387,8 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       const running = await this.openSession(next, props)
       if (controller.signal.aborted || this.lifecycleController !== controller) {
         next.running = running
-        await this.closeSession(next).catch(() => undefined)
+        await this.closeSession(next)
+        if (this.session === next) this.session = null
         return
       }
       next.running = running
@@ -353,31 +402,31 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         timestamp: this.wakeClock.now(),
       })
     } catch (error) {
-      if (this.session === next) this.session = null
-      await this.closeSession(next).catch(() => undefined)
+      try {
+        await this.closeSession(next)
+        if (this.session === next) this.session = null
+      } catch (cleanup) {
+        this.reportFailure(props.onLog, "wake.cleanup.failed", cleanup)
+        throw new AggregateError(
+          [error, cleanup],
+          "Slack reconnect failed and cleanup was unconfirmed",
+          { cause: error },
+        )
+      }
       throw error
     }
   }
 
   private closeLateOpen(
     running: FlumeRunning | Error,
-    controller: AbortController,
-    onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
+    session: SlackSession,
+    onLog: StartProps["onLog"],
   ): void {
-    if (running instanceof Error || !controller.signal.aborted) return
-
-    void running.close().catch((error: unknown) => {
-      if (!onLog) return
-      const normalized = error instanceof Error ? error : new Error(String(error))
-      onLog({
-        level: "error",
-        action: "open.late-close.failed",
-        message: normalized.message,
-        error: normalized,
-        detail: null,
-        timestamp: Date.now(),
-      })
-    })
+    if (running instanceof Error || !session.controller.signal.aborted) return
+    session.running = running
+    void this.closeSession(session).catch((error) =>
+      this.reportFailure(onLog, "open.late-close.failed", error),
+    )
   }
 
   private handleEvent(
@@ -386,21 +435,13 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
   ): void {
     if (event.source !== "slack") return
-    // Catch a rejected handler explicitly so an exception inside the connector's
-    // event pipeline does not become an unhandled rejection — which run.ts
-    // treats as a fatal error and terminates the daemon.
-    onEvent(toLeucoEnvelope(event)).catch((err: unknown) => {
-      if (!onLog) return
-      const error = err instanceof Error ? err : new Error(String(err))
-      onLog({
-        level: "error",
-        action: "event.handler.failed",
-        message: error.message,
-        error,
-        detail: null,
-        timestamp: Date.now(),
-      })
-    })
+    try {
+      void Promise.resolve(onEvent(toLeucoEnvelope(event))).catch((error) =>
+        this.reportFailure(onLog, "event.handler.failed", error),
+      )
+    } catch (error) {
+      this.reportFailure(onLog, "event.handler.failed", error)
+    }
   }
 
   private handleLog(
@@ -410,17 +451,60 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   ): void {
     const status = extractStatus(log)
     if (status !== null) {
-      this.currentStatus = status
-      if (onStatus) onStatus(status)
+      this.publishStatus(status, onStatus, onLog)
     }
-    if (onLog) onLog(toLeucoLog(log))
+    this.emitSourceLog(onLog, toLeucoLog(log))
   }
 
-  private emitSourceLog(
-    onLog: ((log: LeucoSlackSourceLog) => void) | undefined,
-    log: LeucoSlackSourceLog,
+  private publishStatus(
+    status: LeucoSlackSourceStatus,
+    onStatus: StartProps["onStatus"],
+    onLog: StartProps["onLog"],
   ): void {
-    if (onLog) onLog(log)
+    this.currentStatus = status
+    try {
+      void Promise.resolve(onStatus?.(status)).catch((error) =>
+        this.reportFailure(onLog, "status.consumer.failed", error),
+      )
+    } catch (error) {
+      this.reportFailure(onLog, "status.consumer.failed", error)
+    }
+  }
+
+  private reportFailure(onLog: StartProps["onLog"], action: string, error: unknown): void {
+    const normalized = normalizeError(error)
+    this.emitSourceLog(onLog, {
+      level: "error",
+      action,
+      message: normalized.message,
+      error: normalized,
+      detail: null,
+      timestamp: this.wakeClock.now(),
+    })
+  }
+
+  private writeDiagnostic(action: string, error: unknown): void {
+    const message = [this.props.botToken, this.props.appToken]
+      .filter(Boolean)
+      .reduce((text, token) => text.split(token).join("[redacted]"), normalizeError(error).message)
+    process.stderr.write(`[leuco slack ${action}] ${redactPublicText(message).slice(0, 4000)}\n`)
+  }
+
+  private emitSourceLog(onLog: StartProps["onLog"], log: LeucoSlackSourceLog): void {
+    if (!onLog) {
+      if (log.level === "error") this.writeDiagnostic(log.action, log.error ?? log.message)
+      return
+    }
+    try {
+      void Promise.resolve(onLog(log)).catch((error) => this.reportLogConsumerFailure(log, error))
+    } catch (error) {
+      this.reportLogConsumerFailure(log, error)
+    }
+  }
+
+  private reportLogConsumerFailure(log: LeucoSlackSourceLog, error: unknown): void {
+    this.writeDiagnostic(log.action, log.error ?? log.message)
+    this.writeDiagnostic("log.consumer.failed", error)
   }
 }
 

@@ -1,44 +1,96 @@
 import type { CliArguments } from "@/cli/parse-arguments"
-
-const RUN_FLAGS = ["cwd", "soul", "no-soul", "model", "codex-bin"]
-const COMMANDS: Record<string, { flags: string[]; min: number; max: number }> = {
-  run: { flags: [...RUN_FLAGS, "prompt", "thread"], min: 1, max: 1 },
-  start: { flags: RUN_FLAGS, min: 1, max: 1 },
-  stop: { flags: [], min: 1, max: 1 },
-  status: { flags: [], min: 1, max: 1 },
-  ask: { flags: ["thread"], min: 2, max: Infinity },
-  "config show": { flags: [], min: 1, max: 2 },
-  "config set": { flags: [], min: 4, max: 4 },
-  "schedules list": { flags: [], min: 1, max: 2 },
-  "schedules add": { flags: ["name", "run-at", "prompt"], min: 2, max: 2 },
-  "schedules remove": { flags: [], min: 3, max: 3 },
-  "session list": { flags: [], min: 1, max: 2 },
-  "session reset": { flags: [], min: 2, max: 3 },
-  "slack login": { flags: [], min: 2, max: 2 },
-  "slack logout": { flags: [], min: 2, max: 2 },
-  "slack call": { flags: ["body"], min: 3, max: 3 },
-  "slack upload-file": {
-    flags: ["channel", "file", "thread-ts", "title", "comment"],
-    min: 2,
-    max: 2,
-  },
-  "slack download-file": { flags: ["file", "out"], min: 2, max: 2 },
-  logs: { flags: ["limit"], min: 1, max: 1 },
-  events: { flags: ["limit"], min: 1, max: 1 },
-  doctor: { flags: [], min: 1, max: 1 },
-}
+import { GLOBAL_OPTIONS } from "@/cli/command-catalog"
+import type { Parameter } from "@/cli/command-catalog"
+import { resolveCommand } from "@/cli/resolve-command"
+import { CliError } from "@/cli/cli-error"
 
 export function validateCommand(parsed: CliArguments): void {
-  const command = parsed.words[0] ?? ""
-  const defaults: Record<string, string> = { config: "show", schedules: "list", session: "list" }
-  const key = ["config", "schedules", "session", "slack"].includes(command)
-    ? `${command} ${parsed.words[1] ?? defaults[command] ?? ""}`
-    : command
-  const definition = COMMANDS[key]
-  if (!definition) throw new Error(`Unknown command: ${key}. Run leuco --help`)
-  for (const flag of Object.keys(parsed.flags)) {
-    if (!definition.flags.includes(flag)) throw new Error(`--${flag} is not supported by ${key}`)
+  const resolved = resolveCommand(parsed.words)
+  const definition = resolved.definition
+  const parameters = [...definition.options, ...GLOBAL_OPTIONS]
+  for (const name of Object.keys(parsed.flags)) {
+    const parameter = parameters.find((entry) => entry.name === name)
+    if (parameter === undefined)
+      throw new CliError(
+        "USAGE",
+        `--${name} is not supported by ${definition.name}. Run leuco ${definition.name} --help`,
+      )
+    validateParameter(parameter, parsed.flags[name])
+    if (parameter.conflicts?.some((other) => parsed.flags[other] !== undefined))
+      throw new CliError("USAGE", `--${name} conflicts with another supplied option`)
   }
-  if (parsed.words.length < definition.min || parsed.words.length > definition.max)
-    throw new Error(`Invalid arguments for ${key}. Run leuco --help`)
+  for (const parameter of definition.options)
+    if (parameter.required && parsed.flags[parameter.name] === undefined)
+      throw new CliError("USAGE", `--${parameter.name} is required by ${definition.name}`)
+  if (definition.name === "run" && parsed.flags.prompt === undefined && !parsed.flags.foreground)
+    throw new CliError(
+      "USAGE",
+      "run requires --prompt for one-shot execution, or explicit --foreground for a human-managed daemon. Automation should use start.",
+    )
+  if (definition.name === "config set" && resolved.arguments[1] === "-")
+    throw new CliError(
+      "USAGE",
+      "stdin input is disabled; pass the JSON setting value as an argument",
+    )
+  const minimum = definition.arguments.filter((entry) => entry.required).length
+  const maximum = definition.arguments.some((entry) => entry.variadic)
+    ? Infinity
+    : definition.arguments.length
+  if (resolved.arguments.length < minimum || resolved.arguments.length > maximum)
+    throw new CliError(
+      "USAGE",
+      `Invalid positional arguments for ${definition.name}. Run leuco ${definition.name} --help`,
+    )
+  for (const [index, parameter] of definition.arguments.entries())
+    if (resolved.arguments[index] !== undefined)
+      validateParameter(parameter, resolved.arguments[index])
+  if (
+    definition.name === "run" &&
+    parsed.flags.thread !== undefined &&
+    parsed.flags.prompt === undefined
+  )
+    throw new CliError("USAGE", "run --thread requires --prompt")
+}
+
+function validateParameter(parameter: Parameter, value: string | true | undefined): void {
+  if (parameter.type === "boolean") {
+    if (value !== true) throw new CliError("USAGE", `--${parameter.name} takes no value`)
+    return
+  }
+  if (typeof value !== "string" || value.length === 0)
+    throw new CliError("USAGE", `${parameter.name} requires a value`)
+  if (parameter.pattern && !new RegExp(parameter.pattern).test(value))
+    throw new CliError("USAGE", `Invalid ${parameter.name}; expected ${parameter.pattern}`)
+  if (parameter.maxLength !== undefined && value.length > parameter.maxLength)
+    throw new CliError("USAGE", `${parameter.name} is too long`)
+  if (parameter.choices && !parameter.choices.includes(value))
+    throw new CliError("USAGE", `Unsupported ${parameter.name}; inspect leuco --help --json`)
+  if (parameter.type === "integer") {
+    const number = Number(value)
+    if (
+      !/^[0-9]+$/.test(value) ||
+      !Number.isSafeInteger(number) ||
+      number < (parameter.minimum ?? -Infinity) ||
+      number > (parameter.maximum ?? Infinity)
+    )
+      throw new CliError(
+        "USAGE",
+        `${parameter.name} must be an integer from ${parameter.minimum} to ${parameter.maximum}`,
+      )
+  }
+  if ((parameter.type === "json" && value !== "-") || parameter.type === "json-object") {
+    try {
+      const decoded: unknown = JSON.parse(value)
+      if (
+        parameter.type === "json-object" &&
+        (decoded === null || typeof decoded !== "object" || Array.isArray(decoded))
+      )
+        throw new Error("object required")
+    } catch {
+      throw new CliError(
+        "USAGE",
+        `${parameter.name} requires valid ${parameter.type === "json-object" ? "JSON object" : "JSON"}`,
+      )
+    }
+  }
 }

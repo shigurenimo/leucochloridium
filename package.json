@@ -30,7 +30,9 @@
     "CHANGELOG.md",
     "SECURITY.md",
     "tsconfig.json",
-    "README.md"
+    "README.md",
+    "CLI.md",
+    "skills/leuco-cli/SKILL.md"
   ],
   "type": "module",
   "sideEffects": false,
@@ -59,18 +61,20 @@
     "test:bun": "bun test ./lib/events/leuco-event-log.bun-test.ts",
     "test:coverage": "vp test run --coverage",
     "test:package": "bun run scripts/verify-packed-package.ts",
-    "typecheck": "tsc -b --pretty false",
-    "verify": "bun run check && bun run typecheck && bun run test && bun run test:cli && bun run package:check && bun run test:package",
-    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts"
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.scripts.json --pretty false",
+    "verify": "bun run check && bun run docs:check && bun run typecheck && bun run test && bun run test:cli && bun run package:check && bun run test:package",
+    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts && bun run scripts/verify-cli-contract.ts && bun run scripts/verify-noninteractive.ts && bun run scripts/verify-maintenance.ts && bun run scripts/verify-reliability.ts && bun run scripts/verify-clipboard.ts && bun run scripts/verify-linked-cli.ts",
+    "docs:cli": "bun run scripts/generate-cli-docs.ts",
+    "docs:check": "bun run scripts/generate-cli-docs.ts --check"
   },
   "dependencies": {
-    "@interactive-inc/flume": "0.10.1",
+    "@interactive-inc/flume": "0.12.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "@vitest/coverage-v8": "5.0.5",
-    "publint": "0.3.22",
+    "publint": "0.3.25",
     "typescript": "7.0.2",
     "vite-plus": "1.4.0",
     "vitest": "5.0.5"

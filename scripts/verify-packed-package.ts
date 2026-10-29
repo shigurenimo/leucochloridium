@@ -96,8 +96,18 @@ try {
     consumerDirectory,
   )
   const installedCli = join(consumerDirectory, "node_modules/leuco/lib/index.ts")
+  if (!existsSync(join(consumerDirectory, "node_modules/leuco/skills/leuco-cli/SKILL.md")))
+    throw new Error("Packed CLI skill is missing")
   const help = run([process.execPath, installedCli, "--help"], consumerDirectory)
   if (!help.includes("one local Codex companion")) throw new Error("Packed CLI help is stale")
+  const machineHelp = JSON.parse(
+    run([process.execPath, installedCli, "slack", "call", "--help", "--json"], consumerDirectory),
+  )
+  if (machineHelp.commands.length !== 1 || machineHelp.commands[0].name !== "slack call")
+    throw new Error("Packed command help is not discoverable")
+  if (!existsSync(join(consumerDirectory, "node_modules/leuco/CLI.md")))
+    throw new Error("Packed CLI documentation is missing")
+
   const fakeCodex = join(workspace, "fake-codex")
   writeFileSync(
     fakeCodex,
@@ -105,7 +115,16 @@ try {
     { mode: 0o700 },
   )
   const reply = run(
-    [process.execPath, installedCli, "run", "--codex-bin", fakeCodex, "--prompt", "hello"],
+    [
+      process.execPath,
+      installedCli,
+      "run",
+      "--codex-bin",
+      fakeCodex,
+      "--prompt",
+      "hello",
+      "--json",
+    ],
     consumerDirectory,
     {
       ...process.env,
@@ -114,7 +133,9 @@ try {
       LEUCO_VERIFY_TRACE: join(workspace, "trace.jsonl"),
     },
   )
-  if (!reply.includes("verified reply")) throw new Error("Packed CLI could not complete a turn")
+  const result = JSON.parse(reply)
+  if (result.ok !== true || result.command !== "run" || result.data.reply !== "verified reply")
+    throw new Error("Packed CLI could not complete a JSON-mode turn")
 } finally {
   rmSync(workspace, { force: true, recursive: true })
 }

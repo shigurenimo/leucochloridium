@@ -29,7 +29,7 @@ writeFileSync(
   { mode: 0o700 },
 )
 chmodSync(fake, 0o700)
-const environment = {
+const environment: NodeJS.ProcessEnv = {
   ...process.env,
   LEUCO_HOME: home,
   CODEX_HOME: codexHome,
@@ -37,7 +37,7 @@ const environment = {
 }
 
 async function cli(args: string[], success = true, env = environment): Promise<string> {
-  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args], {
+  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args, "--json"], {
     env,
     cwd: workspace,
     stdout: "pipe",
@@ -49,7 +49,11 @@ async function cli(args: string[], success = true, env = environment): Promise<s
     const error = await new Response(child.stderr).text()
     const code = await child.exited
     assert.equal(code === 0, success, `${args.join(" ")}: ${code}\n${output}\n${error}`)
-    return output + error
+    if (!success) return output + error
+    const envelope = JSON.parse(output)
+    return typeof envelope.data?.reply === "string"
+      ? envelope.data.reply
+      : JSON.stringify(envelope.data)
   } finally {
     clearTimeout(timer)
   }
