@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { LogDeliveryHealth } from "@/log-delivery-health-schema"
 
 /**
  * Inbound port for Slack Socket Mode envelopes. The real implementation
@@ -17,6 +18,7 @@ export abstract class LeucoSlackEventSource {
   abstract stop(): Promise<void>
 
   abstract status(): LeucoSlackSourceStatus
+  abstract getLogHealth(): LogDeliveryHealth
 }
 
 export type LeucoSlackEnvelope = {

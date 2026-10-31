@@ -3,7 +3,8 @@ export type LeucoEventQuery = {
   requestId?: string
   sinceSeq?: number
   type?: string
-  runtime?: string
+  summary?: boolean
+  /** Non-negative safe integer; zero selects no entries. */
   limit?: number
   order?: "asc" | "desc"
 }

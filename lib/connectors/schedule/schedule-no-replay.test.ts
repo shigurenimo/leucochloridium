@@ -22,8 +22,6 @@ describe("one-shot safety after uncertain execution", () => {
     }
     const observed: Array<number | null> = []
     const context: ConnectorContext = {
-      cwd: "/work",
-      runtimeName: "leuco",
       onLog: () => {},
       eventLog: new LeucoEventLog(),
       runTextTurn: async () => {
@@ -33,16 +31,17 @@ describe("one-shot safety after uncertain execution", () => {
     }
     const connector = () =>
       new LeucoScheduleConnector({
-        name: "schedule",
         now: () => new Date("2026-10-02T00:00:00Z"),
         store: {
           listEntries: () => durable.entries,
-          getLastFiredAt: () => durable.timestamp,
+          getLastAttempt: () =>
+            durable.timestamp === null ? null : { firedAt: durable.timestamp, runAt: null },
           markFired: (_id, timestamp) => {
             durable.timestamp = timestamp
           },
           removeEntry: () => {
             durable.entries = []
+            return true
           },
         },
       })

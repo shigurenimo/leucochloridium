@@ -17,6 +17,18 @@ const operation = (id: string) =>
     launch: { workingDirectory: "/work", codexHome: null },
   })
 describe("maintenance journal ownership", () => {
+  it.each(["workingDirectory", "cwd", "soul"])(
+    "preserves launch configuration when %s is not absolute",
+    (field) => {
+      const store = new MemoryMaintenanceStore()
+      const launch = { workingDirectory: "/work", codexHome: null, cwd: "/work", soul: null }
+      store.writeLaunch(launch)
+      for (const value of ["", "relative/path"]) {
+        expect(() => store.writeLaunch({ ...launch, [field]: value })).toThrow()
+        expect(store.readLaunch()).toEqual(launch)
+      }
+    },
+  )
   it("refuses an old worker update after a newer operation replaces it", () => {
     const store = new MemoryMaintenanceStore()
     const first = operation("6e6d9bcc-a07c-4c72-93f0-7eb651f9711d")

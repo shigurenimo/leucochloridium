@@ -1,3 +1,8 @@
+import {
+  SCHEDULE_CONNECTOR_NAME,
+  prepareScheduleInput,
+} from "@/connectors/schedule/prepare-schedule-input"
+import { formatScheduleLog } from "@/connectors/schedule/format-schedule-log"
 import { randomUUID } from "node:crypto"
 import { isCronDue } from "@/connectors/schedule/is-cron-due"
 import { isCronSchedule } from "@/connectors/schedule/is-cron-schedule"
@@ -6,11 +11,9 @@ import { parseScheduleCron } from "@/connectors/schedule/parse-schedule-cron"
 import type { ScheduleStorePort } from "@/connectors/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
 import type { ConnectorIdentity, Connector, ConnectorContext } from "@/connectors/connector"
-import { errorMessage } from "@/error-message"
+import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 
 type Props = {
-  /** ConnectorConfig name as configured in settings.json. */
-  name: string
   /** Read/mutate access to this connector's entries. */
   store: ScheduleStorePort
   /** Tick cadence in milliseconds. Defaults to 60_000. */
@@ -33,19 +36,22 @@ type OneShotRetry = {
   runAt: string
   failures: number
   retryAt: number
+  lastFailure: { ts: number; message: string }
 }
 
 type OneShotRetryRequest = {
   entry: ScheduleEntry
   nowMs: number
   ctx: ConnectorContext
-  reason: string
+  error: unknown
 }
 
 type ScheduleTick = {
   ctx: ConnectorContext
   generation: number
   signal: AbortSignal
+  entriesById: Map<string, ScheduleEntry> | null
+  startedAt: number
 }
 
 const DEFAULT_INTERVAL_MS = 60_000
@@ -79,7 +85,7 @@ const CATCHUP_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000
  * whose external side effects may already have happened.
  */
 export class LeucoScheduleConnector implements Connector {
-  readonly name: string
+  readonly name = SCHEDULE_CONNECTOR_NAME
   private readonly props: Props
   private readonly intervalMs: number
   private readonly now: () => Date
@@ -89,12 +95,10 @@ export class LeucoScheduleConnector implements Connector {
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly lastFiredMinute = new Map<string, number>()
   private readonly oneShotRetries = new Map<string, OneShotRetry>()
-  /** How far (epoch ms, minute-aligned) the catch-up walk has scanned per
-   * entry in THIS process. If the durable decision write fails before
-   * dispatch, this floor lets the next catch-up reconsider that occurrence
-   * once without retrying it on every later tick. No turn starts until the
-   * durable marker succeeds. */
-  private readonly catchUpWalkedTo = new Map<string, number>()
+  /** Last scanned minute in this start/stop cycle, also used as the lower
+   * bound for a never-fired entry. Failed durable writes do not consume an
+   * occurrence. Restart clears this observation; durable marks still apply. */
+  private readonly catchUpWalkedTo = new Map<string, { runAt: string; minute: number }>()
   private lastTickAt: number | null = null
   private lastFailure: { ts: number; message: string } | null = null
   private generation = 0
@@ -106,29 +110,42 @@ export class LeucoScheduleConnector implements Connector {
   private startupTick: Promise<void> = Promise.resolve()
 
   constructor(props: Props) {
-    this.name = props.name
     this.props = props
     this.intervalMs = props.intervalMs ?? DEFAULT_INTERVAL_MS
+    if (
+      !Number.isSafeInteger(this.intervalMs) ||
+      this.intervalMs < 1 ||
+      this.intervalMs > MAX_TIMER_DELAY_MS
+    )
+      throw new Error(
+        `Schedule interval must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
+      )
     this.now = props.now ?? (() => new Date())
     this.setIntervalFn = props.setIntervalFn ?? setInterval
     this.clearIntervalFn = props.clearIntervalFn ?? clearInterval
   }
 
   async start(ctx: ConnectorContext): Promise<void> {
+    if (this.ctx !== null || this.timer !== null || this.tickInFlight !== null)
+      throw new Error(
+        "Schedule connector is already started or stopping; await stop() before starting again",
+      )
     this.generation += 1
+    this.catchUpWalkedTo.clear()
     this.generationController?.abort()
     const generationController = new AbortController()
     this.generationController = generationController
     this.ctx = ctx
-    ctx.onLog(`[${this.name}] schedule connector ready (tick=${this.intervalMs}ms)`)
+    this.log(ctx, `[${this.name}] schedule connector ready (tick=${this.intervalMs}ms)`)
+    if (generationController.signal.aborted) throw new Error("Schedule start was cancelled")
 
     // Kick off the first tick (catch-up + any past one-shots) WITHOUT awaiting
     // it — a `runTextTurn` inside the first fire can take up to the runtime's
     // codex wall-clock timeout, and blocking `daemon ready` on that would
-    // delay the gateway and every other connector start for a
-    // single overdue schedule entry.
+    // delay daemon readiness and other input connections for one overdue entry.
     this.startupTick = this.tickOnce()
     void this.startupTick
+    if (generationController.signal.aborted) throw new Error("Schedule start was cancelled")
 
     this.timer = this.setIntervalFn(() => {
       void this.tickOnce()
@@ -157,19 +174,46 @@ export class LeucoScheduleConnector implements Connector {
   }
 
   getStatus() {
+    const lastFailure =
+      this.lastFailure ??
+      [...this.oneShotRetries.values()]
+        .map((retry) => retry.lastFailure)
+        .sort((left, right) => right.ts - left.ts)[0] ??
+      null
+    const cleanup: { pending: number; nextRetryAt: number | null } = {
+      pending: this.oneShotRetries.size,
+      nextRetryAt: null,
+    }
+    for (const retry of this.oneShotRetries.values()) {
+      if (cleanup.nextRetryAt === null || retry.retryAt < cleanup.nextRetryAt)
+        cleanup.nextRetryAt = retry.retryAt
+    }
     return {
-      state: this.ctx === null ? "stopped" : this.lastFailure === null ? "ready" : "error",
+      cleanup,
+      state: this.ctx === null ? "stopped" : lastFailure === null ? "ready" : "error",
       lastActivityAt: this.lastTickAt,
-      lastFailure: this.lastFailure === null ? null : { ...this.lastFailure },
+      lastFailure: lastFailure === null ? null : { ...lastFailure },
     }
   }
 
-  private recordFailure(error: unknown, ctx: ConnectorContext): void {
+  private recordFailure(
+    error: unknown,
+    ctx: ConnectorContext,
+    diagnostic: { prefix?: string; requestId?: string } = {},
+  ): void {
     this.lastFailure = {
       ts: this.now().getTime(),
-      message: ctx.eventLog.redactText(errorMessage(error)),
+      message: ctx.eventLog.redactError(error).message,
     }
-    ctx.eventLog.error(`[${this.name}] ${this.lastFailure.message}`, error)
+    const prefix = diagnostic.prefix ?? `[${this.name}]`
+    const line = formatScheduleLog(`${prefix} ${this.lastFailure.message}`, ctx.eventLog)
+    ctx.eventLog.error(line, error, diagnostic.requestId)
+    const mirror = ctx.onTextLog ?? ctx.onLog
+    mirror(line, "error", diagnostic.requestId)
+  }
+
+  private log(ctx: ConnectorContext, line: string, requestId?: string): void {
+    ctx.onLog(formatScheduleLog(line, ctx.eventLog), "info", requestId)
   }
 
   getIdentity(): ConnectorIdentity {
@@ -193,9 +237,14 @@ export class LeucoScheduleConnector implements Connector {
       ctx,
       generation: this.generation,
       signal: generationController.signal,
+      entriesById: null,
+      startedAt: this.now().getTime(),
     }
-    const tickPromise = this.runTick(tick)
+    // Failure diagnostics may synchronously request another tick or stop.
+    const execution = Promise.withResolvers<void>()
+    const tickPromise = execution.promise
     this.tickInFlight = tickPromise
+    execution.resolve(this.runTick(tick))
     try {
       await tickPromise
     } finally {
@@ -205,16 +254,15 @@ export class LeucoScheduleConnector implements Connector {
 
   private async runTick(tick: ScheduleTick): Promise<void> {
     try {
-      this.lastTickAt = this.now().getTime()
+      this.lastTickAt = tick.startedAt
       await this.tickOnceInner(tick)
     } catch (err) {
       // The interval fires this via `void this.tickOnce()`; anything that
       // escapes here becomes an unhandledRejection, and the daemon records those
-      // as fatal asynchronous failures. One broken store read (e.g. the project
-      // was removed mid-tick) must not take every runtime down.
+      // as fatal asynchronous failures. Unreadable schedule settings during a
+      // tick must not terminate the companion.
       if (!this.isTickCancelled(tick)) {
-        this.recordFailure(err, tick.ctx)
-        tick.ctx.onLog(`[${this.name}] tick failed: ${errorMessage(err)}`)
+        this.recordFailure(err, tick.ctx, { prefix: `[${this.name}] tick failed:` })
       }
     }
   }
@@ -225,37 +273,35 @@ export class LeucoScheduleConnector implements Connector {
       entries = this.props.store.listEntries()
       this.lastFailure = null
     } catch (err) {
-      this.recordFailure(err, tick.ctx)
-      tick.ctx.onLog(`[${this.name}] failed to read entries: ${errorMessage(err)}`)
+      this.recordFailure(err, tick.ctx, { prefix: `[${this.name}] failed to read entries:` })
       return
     }
 
-    const liveEntryIds = new Set(entries.map((entry) => entry.id))
+    tick.entriesById = this.indexCurrentEntries(entries)
+    const liveEntryIds = new Set(tick.entriesById.keys())
     for (const trackedId of this.lastFiredMinute.keys()) {
       if (!liveEntryIds.has(trackedId)) this.lastFiredMinute.delete(trackedId)
     }
     for (const trackedId of this.catchUpWalkedTo.keys()) {
       if (!liveEntryIds.has(trackedId)) this.catchUpWalkedTo.delete(trackedId)
     }
-    for (const trackedId of this.oneShotRetries.keys()) {
-      if (!liveEntryIds.has(trackedId)) this.oneShotRetries.delete(trackedId)
-    }
 
-    const now = this.now()
-    // Dedup window is always one wall-clock minute (cron resolution). Don't
-    // tie this to `intervalMs` even if the tick rate is overridden in tests.
-    const minuteEpoch = Math.floor(now.getTime() / 60_000)
-
-    for (const entry of entries) {
+    for (const listedEntry of entries) {
       if (this.isTickCancelled(tick)) return
-      if (!entry.enabled) continue
+      if (tick.entriesById === null)
+        tick.entriesById = this.indexCurrentEntries(this.props.store.listEntries())
+      const entry = tick.entriesById.get(listedEntry.id)
+      if (entry === undefined || !entry.enabled) continue
+      const now = this.now()
+      // A preceding turn may cross a minute boundary or a system-clock adjustment.
+      const minuteEpoch = Math.floor(now.getTime() / 60_000)
 
       // 1. Catch-up firing for cron entries: when the daemon was down (or
       //    the machine was asleep) across a minute the cron expression
       //    would have matched, fire once on the next tick so daily / hourly
       //    schedules don't silently skip. Capped at 24h; one-shots already
       //    catch up implicitly via the `ts <= now` branch.
-      const catchupFired = await this.maybeCatchUp(entry, now, minuteEpoch, tick)
+      const catchupFired = await this.maybeCatchUp(entry, minuteEpoch, tick)
       if (this.isTickCancelled(tick)) return
 
       if (this.lastFiredMinute.get(entry.id) === minuteEpoch) continue
@@ -279,40 +325,68 @@ export class LeucoScheduleConnector implements Connector {
     }
   }
 
+  private indexCurrentEntries(entries: ReadonlyArray<ScheduleEntry>): Map<string, ScheduleEntry> {
+    const indexed = new Map(entries.map((entry) => [entry.id, entry]))
+    for (const trackedId of this.oneShotRetries.keys()) {
+      const entry = indexed.get(trackedId)
+      if (
+        entry === undefined ||
+        !entry.enabled ||
+        entry.runAt !== this.oneShotRetries.get(trackedId)?.runAt
+      )
+        this.oneShotRetries.delete(trackedId)
+    }
+    return indexed
+  }
+
   private async maybeCatchUp(
     entry: ScheduleEntry,
-    now: Date,
     minuteEpoch: number,
     tick: ScheduleTick,
   ): Promise<boolean> {
     if (!isCronSchedule(entry.runAt)) return false
 
-    const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
-    if (lastFiredAt === null) return false
+    const observation = this.catchUpWalkedTo.get(entry.id)
+    const walkedTo =
+      observation !== undefined && observation.runAt === entry.runAt ? observation.minute : null
+    const attempt = this.props.store.getLastAttempt(entry.id)
+    // An old expression's decision cannot backfill a newly selected expression.
+    const lastFiredAt =
+      (attempt !== null && (attempt.runAt === null || attempt.runAt === entry.runAt)
+        ? attempt.firedAt
+        : null) ??
+      walkedTo ??
+      Math.floor(tick.startedAt / 60_000) * 60_000 - 1
+    const currentMinuteStart = minuteEpoch * 60_000
+    if (lastFiredAt >= currentMinuteStart) return false
 
     const parsed = parseScheduleCron(entry.runAt)
     if (parsed === null) return false
 
-    const walkedTo = this.catchUpWalkedTo.get(entry.id) ?? 0
-    const currentMinuteStart = minuteEpoch * 60_000
     const walkedThrough = currentMinuteStart - 60_000
     const latest = latestScheduleCatchup({
       cron: parsed,
-      lastFiredAt: Math.max(lastFiredAt, walkedTo),
+      lastFiredAt: Math.max(lastFiredAt, walkedTo ?? 0),
       now: currentMinuteStart - 1,
       maxWindowMs: CATCHUP_MAX_LOOKBACK_MS,
     })
     if (latest === null) {
-      this.catchUpWalkedTo.set(entry.id, walkedThrough)
+      this.catchUpWalkedTo.set(entry.id, { runAt: entry.runAt, minute: walkedThrough })
       return false
     }
     if (this.isTickCancelled(tick)) return false
 
     const delivered = await this.fire(entry, tick, "cron")
     const latestMinuteEpoch = Math.floor(latest / 60_000)
-    if (!this.wasCronFiredAtOrAfter(entry, latestMinuteEpoch)) return false
+    const recorded = this.props.store.getLastAttempt(entry.id)
+    if (
+      recorded === null ||
+      (recorded.runAt !== null && recorded.runAt !== entry.runAt) ||
+      Math.floor(recorded.firedAt / 60_000) < latestMinuteEpoch
+    )
+      return false
 
-    this.catchUpWalkedTo.set(entry.id, walkedThrough)
+    this.catchUpWalkedTo.set(entry.id, { runAt: entry.runAt, minute: walkedThrough })
     this.lastFiredMinute.set(entry.id, minuteEpoch)
     return delivered
   }
@@ -324,14 +398,25 @@ export class LeucoScheduleConnector implements Connector {
   ): Promise<boolean> {
     if (this.isTickCancelled(tick)) return false
 
+    const input = (() => {
+      try {
+        return prepareScheduleInput(entry)
+      } catch (error) {
+        this.recordFailure(error, tick.ctx, {
+          prefix: `[${this.name}] entry ${entry.name} not fired because input validation failed:`,
+        })
+        return null
+      }
+    })()
+    if (input === null) return false
+
     {
       try {
-        this.props.store.markFired(entry.id, this.now().getTime())
+        this.props.store.markFired(entry.id, this.now().getTime(), entry.runAt)
       } catch (err) {
-        this.recordFailure(err, tick.ctx)
-        tick.ctx.onLog(
-          `[${this.name}] entry ${entry.name} not fired because durable mark failed: ${errorMessage(err)}`,
-        )
+        this.recordFailure(err, tick.ctx, {
+          prefix: `[${this.name}] entry ${entry.name} not fired because durable mark failed:`,
+        })
         return false
       }
     }
@@ -341,24 +426,27 @@ export class LeucoScheduleConnector implements Connector {
       ts: Date.now(),
       requestId,
       type: "schedule.fired",
-      runtime: tick.ctx.runtimeName,
-      connector: this.name,
       entryId: entry.id,
       entryName: entry.name,
       runAt: entry.runAt,
       kind,
     })
 
-    const threadKey = `schedule:${entry.id}`
-    const text = formatPrompt(this.name, entry)
-    tick.ctx.onLog(`[${this.name}] firing ${entry.name} (${kind})`)
+    // Either diagnostic sink may stop this tick after the durable decision.
+    if (this.isTickCancelled(tick)) return false
+    this.log(tick.ctx, `[${this.name}] firing ${entry.name} (${kind})`, requestId)
+    if (this.isTickCancelled(tick)) return false
 
-    const reply = await tick.ctx.runTextTurn(threadKey, text, requestId)
+    // Discard this tick's snapshot before waiting on Codex, including failed turns.
+    tick.entriesById = null
+    const reply = await tick.ctx.runTextTurn(input.threadKey, input.text, requestId)
     const turnFailed = reply instanceof Error
     if (turnFailed) {
       if (!this.isTickCancelled(tick)) {
-        this.recordFailure(reply, tick.ctx)
-        tick.ctx.onLog(`[${this.name}] entry ${entry.name} turn failed: ${reply.message}`)
+        this.recordFailure(reply, tick.ctx, {
+          prefix: `[${this.name}] entry ${entry.name} turn failed:`,
+          requestId,
+        })
       }
       return false
     }
@@ -369,17 +457,24 @@ export class LeucoScheduleConnector implements Connector {
   private async fireOneShot(entry: ScheduleEntry, now: Date, tick: ScheduleTick): Promise<void> {
     const nowMs = now.getTime()
     if (this.isWaitingForOneShotRetry(entry, nowMs)) return
-    const marker = this.props.store.getLastFiredAt(entry.id)
-    const attempted = marker !== null && marker >= Date.parse(entry.runAt)
+    const attempt = this.props.store.getLastAttempt(entry.id)
+    const attempted =
+      attempt !== null &&
+      (attempt.runAt === null
+        ? attempt.firedAt >= Date.parse(entry.runAt)
+        : !isCronSchedule(attempt.runAt) && Date.parse(attempt.runAt) === Date.parse(entry.runAt))
     if (attempted)
-      tick.ctx.onLog(`[${this.name}] entry ${entry.name} already attempted; retrying cleanup only`)
+      this.log(
+        tick.ctx,
+        `[${this.name}] entry ${entry.name} already attempted; retrying cleanup only`,
+      )
     else if (!(await this.fire(entry, tick, "one-shot"))) return
-    this.removeDeliveredOneShot(entry, nowMs, tick.ctx)
+    this.removeAttemptedOneShot(entry, tick.ctx)
   }
 
   private wasCronFiredAtOrAfter(entry: ScheduleEntry, minuteEpoch: number): boolean {
     if (!isCronSchedule(entry.runAt)) return false
-    const lastFiredAt = this.props.store.getLastFiredAt(entry.id)
+    const lastFiredAt = this.props.store.getLastAttempt(entry.id)?.firedAt ?? null
     if (lastFiredAt === null) return false
     return Math.floor(lastFiredAt / 60_000) >= minuteEpoch
   }
@@ -397,18 +492,23 @@ export class LeucoScheduleConnector implements Connector {
     return false
   }
 
-  private removeDeliveredOneShot(entry: ScheduleEntry, nowMs: number, ctx: ConnectorContext): void {
+  private removeAttemptedOneShot(entry: ScheduleEntry, ctx: ConnectorContext): void {
     try {
-      this.props.store.removeEntry(entry.id)
+      const removed = this.props.store.removeEntry(entry.id, entry.runAt)
       this.oneShotRetries.delete(entry.id)
-      ctx.onLog(`[${this.name}] entry ${entry.name} delivered and removed`)
+      this.log(
+        ctx,
+        removed
+          ? `[${this.name}] entry ${entry.name} removed after recorded attempt; no replay`
+          : `[${this.name}] entry ${entry.name} cleanup skipped: schedule changed or already absent`,
+      )
     } catch (err) {
       this.recordFailure(err, ctx)
       this.postponeOneShot({
         entry,
-        nowMs,
+        nowMs: this.now().getTime(),
         ctx,
-        reason: `delete failed: ${errorMessage(err)}`,
+        error: err,
       })
     }
   }
@@ -418,13 +518,16 @@ export class LeucoScheduleConnector implements Connector {
     const previousFailures = previous?.runAt === request.entry.runAt ? previous.failures : 0
     const failures = Math.min(previousFailures + 1, ONE_SHOT_RETRY_MAX_FAILURES)
     const delayMs = oneShotRetryDelayMs(failures)
+    const message = request.ctx.eventLog.redactError(request.error).message
     this.oneShotRetries.set(request.entry.id, {
       runAt: request.entry.runAt,
       failures,
       retryAt: request.nowMs + delayMs,
+      lastFailure: { ts: request.nowMs, message },
     })
-    request.ctx.onLog(
-      `[${this.name}] entry ${request.entry.name} cleanup retry #${failures} in ${delayMs / 1000}s: ${request.reason}`,
+    this.log(
+      request.ctx,
+      `[${this.name}] entry ${request.entry.name} cleanup retry #${failures} in ${delayMs / 1000}s: delete failed: ${message}`,
     )
   }
 }
@@ -442,7 +545,12 @@ const decideFire = (
   if (isCronSchedule(entry.runAt)) {
     const parsed = parseScheduleCron(entry.runAt)
     if (parsed === null) {
-      ctx.onLog(`[schedule] entry ${entry.name} has bad cron '${entry.runAt}'`)
+      ctx.onLog(
+        formatScheduleLog(
+          `[schedule] entry ${entry.name} has bad cron '${entry.runAt}'`,
+          ctx.eventLog,
+        ),
+      )
       return "skip"
     }
     return isCronDue(parsed, now) ? "cron" : "skip"
@@ -450,16 +558,13 @@ const decideFire = (
 
   const timestamp = Date.parse(entry.runAt)
   if (Number.isNaN(timestamp)) {
-    ctx.onLog(`[schedule] entry ${entry.name} has unparseable runAt: '${entry.runAt}'`)
+    ctx.onLog(
+      formatScheduleLog(
+        `[schedule] entry ${entry.name} has unparseable runAt: '${entry.runAt}'`,
+        ctx.eventLog,
+      ),
+    )
     return "skip"
   }
   return timestamp <= now.getTime() ? "one-shot" : "skip"
-}
-
-const formatPrompt = (connectorName: string, entry: ScheduleEntry): string => {
-  return [
-    `<schedule connector="${connectorName}" entry="${entry.name}" run-at="${entry.runAt}">`,
-    entry.prompt,
-    `</schedule>`,
-  ].join("\n")
 }

@@ -1,3 +1,5 @@
-export function redactPublicText(text: string): string {
-  return text.replace(/\b(?:xox[a-z][.-]|xapp-)[A-Za-z0-9._-]+/g, "[redacted]")
+import { PublicTextRedactor } from "@/secrets/public-text-redactor"
+
+export function redactPublicText(text: string, secrets: ReadonlyArray<string> = []): string {
+  return new PublicTextRedactor(text, secrets).redact()
 }

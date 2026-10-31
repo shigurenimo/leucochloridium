@@ -2,17 +2,6 @@ import { describe, expect, it } from "vitest"
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
 import { LeucoSlackAdapter } from "@/connectors/slack/slack-adapter"
 
-describe("LeucoSlackAdapter.postReply", () => {
-  it("forwards channel/threadTs/text", async () => {
-    const client = new LeucoMemorySlackWebClient()
-    const adapter = new LeucoSlackAdapter({ client })
-
-    await adapter.postReply({ channel: "C1", threadTs: "1.0", text: "hi" })
-
-    expect(client.calls.chatPostMessage).toEqual([{ channel: "C1", threadTs: "1.0", text: "hi" }])
-  })
-})
-
 describe("LeucoSlackAdapter.addReaction / removeReaction", () => {
   it("calls the underlying client with the right shape", async () => {
     const client = new LeucoMemorySlackWebClient()

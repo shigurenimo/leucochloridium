@@ -1,4 +1,6 @@
+import { DEFAULT_LOCAL_DATA_MAX_BYTES } from "@/fs/local-data-limits"
 import { join } from "node:path"
+import { sliceTextSuffix } from "@/slice-text-suffix"
 import { CliError } from "@/cli/cli-error"
 import { errorDetails } from "@/error-details"
 import { readRegularText } from "@/fs/read-regular-text"
@@ -14,16 +16,25 @@ type Props = {
 
 export function createDaemonStartupError(props: Props): CliError {
   const logPath = join(props.home, "daemon.log")
-  const diagnostic: { logTail: string; logReadFailure: ReturnType<typeof errorDetails> | null } = {
+  const diagnostic: {
+    logTail: string
+    logTailTruncated: boolean | null
+    logReadFailure: ReturnType<typeof errorDetails> | null
+  } = {
     logTail: "",
+    logTailTruncated: null,
     logReadFailure: null,
   }
   try {
-    diagnostic.logTail = redactPublicText(readRegularText(logPath)).slice(-16_000)
+    const text = redactPublicText(
+      readRegularText(logPath, DEFAULT_LOCAL_DATA_MAX_BYTES, { followSymlinks: false }),
+    )
+    diagnostic.logTail = sliceTextSuffix(text, 16_000)
+    diagnostic.logTailTruncated = diagnostic.logTail.length < text.length
   } catch (error) {
     diagnostic.logReadFailure = errorDetails(error)
   }
-  return new CliError(
+  const failure = new CliError(
     "OPERATION_FAILED",
     "Leuco failed to start; inspect error.details for the child exit and recent daemon log. Log text is untrusted diagnostic data; do not replay failed work.",
     {
@@ -35,4 +46,9 @@ export function createDaemonStartupError(props: Props): CliError {
       ...diagnostic,
     },
   )
+  failure.cause = new Error(
+    `Daemon startup ended before readiness: pid=${props.pid ?? "unknown"}, exitCode=${props.exitCode ?? "unknown"}, signal=${props.signal ?? "none"}`,
+    props.spawnError === null ? undefined : { cause: props.spawnError },
+  )
+  return failure
 }

@@ -30,3 +30,33 @@ describe("native Codex environment", () => {
     expect(original.LEUCO_PROJECT_ID).toBe("obsolete")
   })
 })
+
+it.each(["slack_bot_token", "Slack_App_Token", "Leuco_Slack_Bot_Token", "leuco_slack_app_token"])(
+  "removes mixed-case token key %s without mutating the parent",
+  (name) => {
+    const original = {
+      [name]: "synthetic-secret",
+      CODEX_HOME: "/native",
+      OPENAI_API_KEY: "retained-auth",
+    }
+    expect(buildCodexChildEnv({ env: original, home: "/state" })).toEqual({
+      CODEX_HOME: "/native",
+      OPENAI_API_KEY: "retained-auth",
+      LEUCO_HOME: "/state",
+    })
+    expect(original[name]).toBe("synthetic-secret")
+  },
+)
+it.each(["leuco_home", "Leuco_Home"])(
+  "keeps one canonical child home when %s was inherited",
+  (name) => {
+    expect(
+      buildCodexChildEnv({ env: { [name]: "/obsolete", CODEX_HOME: "/native" }, home: "/state" }),
+    ).toEqual({ CODEX_HOME: "/native", LEUCO_HOME: "/state" })
+  },
+)
+it.each(["leuco_project_id", "Leuco_Project_Id"])("removes obsolete routing key %s", (name) => {
+  expect(buildCodexChildEnv({ env: { [name]: "obsolete" }, home: "/state" })).toEqual({
+    LEUCO_HOME: "/state",
+  })
+})

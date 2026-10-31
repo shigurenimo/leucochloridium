@@ -16,3 +16,32 @@ describe("OS credential diagnostics", () => {
     expect(osCredentialError("delete", { code: -25293 }).message).toContain("-25293")
   })
 })
+
+it("does not expose a secondary exception from an OS code getter", () => {
+  const failure = Object.defineProperty({}, "code", {
+    get() {
+      throw new Error("private-accessor-sentinel")
+    },
+  })
+  expect(() => osCredentialError("read", failure)).not.toThrow()
+  const safe = osCredentialError("read", failure)
+  expect(safe.message).toContain("unknown")
+  expect(JSON.stringify(errorDetails(safe))).not.toContain("private-accessor-sentinel")
+})
+it("does not invoke an OS code object's string conversion", () => {
+  const code = {
+    toString() {
+      throw new Error("private-conversion-sentinel")
+    },
+  }
+  expect(() => osCredentialError("save", { code })).not.toThrow()
+  const safe = osCredentialError("save", { code })
+  expect(safe.message).toContain("unknown")
+  expect(JSON.stringify(errorDetails(safe))).not.toContain("private-conversion-sentinel")
+})
+it("contains an unreadable revoked OS error value", () => {
+  const failure = Proxy.revocable({}, {})
+  failure.revoke()
+  expect(() => osCredentialError("delete", failure.proxy)).not.toThrow()
+  expect(osCredentialError("delete", failure.proxy).message).toContain("unknown")
+})

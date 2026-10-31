@@ -4,12 +4,14 @@ import {
   type LeucoSlackSourceLog,
   type LeucoSlackSourceStatus,
 } from "@/connectors/slack/leuco-slack-event-source"
+import { logDeliveryHealthSchema } from "@/log-delivery-health-schema"
 
 /**
  * In-memory test double for `LeucoSlackEventSource`. After `start(...)`, the
  * test drives traffic with `emit(envelope)`, `setStatus(status)`, and `log({...})`.
  */
 export class LeucoMemorySlackEventSource extends LeucoSlackEventSource {
+  logHealth = logDeliveryHealthSchema.parse({ healthy: true, lastFailure: null })
   private onEvent: ((envelope: LeucoSlackEnvelope) => Promise<void>) | null = null
   private onStatus: ((status: LeucoSlackSourceStatus) => void) | null = null
   private onLog: ((log: LeucoSlackSourceLog) => void) | null = null
@@ -35,6 +37,10 @@ export class LeucoMemorySlackEventSource extends LeucoSlackEventSource {
 
   status(): LeucoSlackSourceStatus {
     return this.currentStatus
+  }
+
+  getLogHealth() {
+    return logDeliveryHealthSchema.parse(this.logHealth)
   }
 
   async emit(envelope: LeucoSlackEnvelope): Promise<void> {

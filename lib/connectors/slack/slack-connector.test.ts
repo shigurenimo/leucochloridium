@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { LeucoMemorySlackEventSource } from "@/connectors/slack/leuco-memory-slack-event-source"
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
 import { LeucoSlackConnector } from "@/connectors/slack/slack-connector"
@@ -25,8 +25,6 @@ const makeCtx = (
     turns,
     events: () => eventLog.query().map((entry) => entry.event),
     ctx: {
-      cwd: "/tmp/project",
-      runtimeName: "demo",
       eventLog,
       onLog: (line) => logs.push(line),
       runTextTurn: async (threadKey, text) => {
@@ -38,6 +36,24 @@ const makeCtx = (
 }
 
 describe("LeucoSlackConnector", () => {
+  it("exposes log delivery health independently from socket connection state", () => {
+    const eventSource = new LeucoMemorySlackEventSource()
+    eventSource.setStatus("connected")
+    eventSource.logHealth = {
+      healthy: false,
+      lastFailure: { ts: 1, message: "delivery failed", causes: [] },
+    }
+    const connector = new LeucoSlackConnector({
+      eventSource,
+      webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+    })
+    expect(connector.getStatus()).toMatchObject({
+      state: "connected",
+      diagnostics: eventSource.logHealth,
+    })
+    connector.getStatus().diagnostics.lastFailure!.message = "caller mutation"
+    expect(eventSource.getLogHealth().lastFailure?.message).toBe("delivery failed")
+  })
   it("adds ack reactions to addressed messages by default", async () => {
     const ts = `${Math.floor(Date.now() / 1000) + 1}.0`
     const eventSource = new LeucoMemorySlackEventSource()
@@ -45,10 +61,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: true,
     })
     const { ctx, turns } = makeCtx()
 
@@ -85,10 +99,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: true,
       ackMode: "off",
     })
     const { ctx, turns, events } = makeCtx()
@@ -110,11 +122,9 @@ describe("LeucoSlackConnector", () => {
     await connector.stop()
 
     expect(webClient.calls.authTest).toHaveLength(1)
-    expect(webClient.calls.conversationsList).toHaveLength(0)
-    expect(webClient.calls.conversationsHistory).toHaveLength(0)
-    expect(webClient.calls.searchMessages).toHaveLength(0)
+    expect(webClient.calls.apiCall).toHaveLength(0)
     expect(turns).toHaveLength(1)
-    expect(turns[0]?.threadKey).toBe(`main:D1:${ts}`)
+    expect(turns[0]?.threadKey).toBe(`slack:D1:${ts}`)
     expect(turns[0]?.text).toContain('mentioned="true"')
     expect(turns[0]?.text).toContain("hello dm")
     expect(events().some((event) => event.type === "slack.event")).toBe(true)
@@ -129,10 +139,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: true,
     })
     const { ctx, turns } = makeCtx()
 
@@ -168,10 +176,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: true,
       ackMode: "off",
     })
     const { ctx, turns, logs } = makeCtx()
@@ -193,7 +199,7 @@ describe("LeucoSlackConnector", () => {
     await connector.stop()
 
     expect(turns).toHaveLength(1)
-    expect(turns[0]?.threadKey).toBe(`main:D1:${ts}`)
+    expect(turns[0]?.threadKey).toBe(`slack:D1:${ts}`)
     expect(turns[0]?.text).toContain("delayed but socket-delivered")
     expect(logs.some((line) => line.includes("skip stale socket event"))).toBe(false)
   })
@@ -202,15 +208,10 @@ describe("LeucoSlackConnector", () => {
     const eventSource = new LeucoMemorySlackEventSource()
     const webClient = new LeucoMemorySlackWebClient({
       authTest: { userId: "UBOT" },
-      conversationsInfo: () => {
-        throw new Error("slack conversations.info: missing_scope")
-      },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: false,
     })
     const { ctx, turns } = makeCtx()
 
@@ -231,7 +232,7 @@ describe("LeucoSlackConnector", () => {
     await connector.stop()
 
     expect(turns).toHaveLength(1)
-    expect(webClient.calls.conversationsInfo).toHaveLength(0)
+    expect(webClient.calls.apiCall).toHaveLength(0)
   })
 
   it("records a failed turn without posting a canned Slack reply", async () => {
@@ -240,13 +241,12 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: false,
       ackMode: "mention",
     })
     const { ctx, events } = makeCtx(new Error("codex turn timed out after 360s"))
+    const log = vi.spyOn(ctx, "onLog")
 
     await connector.start(ctx)
     await eventSource.emit({
@@ -264,7 +264,7 @@ describe("LeucoSlackConnector", () => {
     })
     await connector.stop()
 
-    expect(webClient.calls.chatPostMessage).toHaveLength(0)
+    expect(webClient.calls.apiCall).toHaveLength(0)
     expect(webClient.calls.reactionsAdd).toEqual([
       { channel: "C1", timestamp: "102.0", name: "hourglass_flowing_sand" },
       { channel: "C1", timestamp: "102.0", name: "x" },
@@ -272,12 +272,20 @@ describe("LeucoSlackConnector", () => {
     expect(webClient.calls.reactionsRemove).toEqual([
       { channel: "C1", timestamp: "102.0", name: "hourglass_flowing_sand" },
     ])
+    const requestId = events().find((event) => event.type === "slack.event")?.requestId
+    expect(typeof requestId).toBe("string")
     expect(events()).toContainEqual(
       expect.objectContaining({
+        requestId,
         type: "slack.error",
         action: "turn.failed",
         error: "codex turn timed out after 360s",
       }),
+    )
+    expect(log).toHaveBeenCalledWith(
+      "[slack] turn failed: codex turn timed out after 360s",
+      "error",
+      requestId,
     )
   })
 
@@ -287,10 +295,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: false,
     })
     const { ctx } = makeCtx("  generated answer  ")
 
@@ -310,7 +316,7 @@ describe("LeucoSlackConnector", () => {
     })
     await connector.stop()
 
-    expect(webClient.calls.chatPostMessage).toHaveLength(0)
+    expect(webClient.calls.apiCall).toHaveLength(0)
   })
 
   it("does not post analysis-like final text from an unaddressed turn", async () => {
@@ -319,10 +325,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: false,
     })
     const { ctx } = makeCtx("no. internal analysis that must never reach Slack")
 
@@ -342,7 +346,7 @@ describe("LeucoSlackConnector", () => {
     })
     await connector.stop()
 
-    expect(webClient.calls.chatPostMessage).toHaveLength(0)
+    expect(webClient.calls.apiCall).toHaveLength(0)
   })
 
   it("drains an accepted handler and suppresses its late side effects during stop", async () => {
@@ -351,10 +355,8 @@ describe("LeucoSlackConnector", () => {
       authTest: { userId: "UBOT" },
     })
     const connector = new LeucoSlackConnector({
-      name: "main",
       eventSource,
       webClient,
-      usesUserToken: false,
       ackMode: "always",
     })
     const firstHarness = makeCtx()
@@ -430,4 +432,131 @@ describe("LeucoSlackConnector", () => {
       { channel: "C1", timestamp: "202.0", name: "hourglass_flowing_sand" },
     ])
   })
+})
+
+it.each([true, false])(
+  "bounds Slack status logs after redaction (error object: %s)",
+  async (withError) => {
+    const setup = makeCtx()
+    const secret = "synthetic-slack-status-credential"
+    setup.ctx.eventLog.addRedactionSecrets([secret])
+    const message = `${"p".repeat(3980)}${secret}${"q".repeat(20000)}`
+    const source = new LeucoMemorySlackEventSource()
+    const connector = new LeucoSlackConnector({
+      eventSource: source,
+      webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+    })
+    try {
+      await connector.start(setup.ctx)
+      source.log({
+        level: "error",
+        action: "probe",
+        message,
+        error: withError ? new Error(message) : null,
+        detail: null,
+        timestamp: 123,
+      })
+      const retained = connector.getStatus().lastFailure?.message
+      expect(retained?.length).toBeLessThanOrEqual(4000)
+      expect(retained).toContain("[truncated]")
+      expect(retained).not.toContain(secret.slice(0, 8))
+    } finally {
+      await connector.stop()
+      setup.ctx.eventLog.close()
+    }
+  },
+)
+
+it.each<[string, boolean]>([
+  ["", false],
+  [" ", false],
+  ["100.0", true],
+])("tracks participation only from a valid self message timestamp %j", async (ts, mentioned) => {
+  const eventSource = new LeucoMemorySlackEventSource()
+  const connector = new LeucoSlackConnector({
+    eventSource,
+    webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+    ackMode: "off",
+  })
+  const harness = makeCtx()
+  await connector.start(harness.ctx)
+  try {
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: 1,
+      payload: {
+        event: {
+          type: "message",
+          channel: "C1",
+          user: "UBOT",
+          text: "reply",
+          ts,
+          thread_ts: "100.0",
+        },
+      },
+    })
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: 2,
+      payload: {
+        event: {
+          type: "message",
+          channel: "C1",
+          user: "U_USER",
+          text: "follow-up",
+          ts: "101.0",
+          thread_ts: "100.0",
+        },
+      },
+    })
+    expect(harness.turns).toHaveLength(1)
+    expect(harness.turns[0]?.text).toContain(`mentioned="${mentioned}"`)
+  } finally {
+    await connector.stop()
+  }
+})
+
+it("identifies new Slack events by type while retaining the actual channel", async () => {
+  const eventSource = new LeucoMemorySlackEventSource()
+  const connector = new LeucoSlackConnector({
+    eventSource,
+    ackMode: "off",
+    webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+  })
+  const test = makeCtx("reply")
+  try {
+    await connector.start(test.ctx)
+    await eventSource.emit({
+      type: "events_api",
+      receivedAt: Date.now(),
+      payload: {
+        event: {
+          type: "message",
+          channel: "D1",
+          user: "U_HUMAN",
+          text: "probe",
+          ts: `${Math.floor(Date.now() / 1000) + 1}.0`,
+        },
+      },
+    })
+    eventSource.log({
+      level: "warn",
+      action: "probe",
+      message: "diagnostic",
+      error: null,
+      detail: null,
+      timestamp: Date.now(),
+    })
+    const events = test.events()
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["slack.connection", "slack.event", "slack.error"]),
+    )
+    for (const event of events) expect(Object.hasOwn(event, "connector")).toBe(false)
+    expect(events.find((event) => event.type === "slack.event")).toMatchObject({
+      event: { channel: "D1" },
+    })
+  } finally {
+    await connector.stop()
+    test.ctx.eventLog.close()
+  }
 })

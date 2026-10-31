@@ -1,7 +1,25 @@
+import { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from "@/diagnostic-limits"
+import { readDiagnosticProperty } from "@/read-diagnostic-property"
+import { readDiagnosticCauses } from "@/read-diagnostic-causes"
+import { redactPublicText } from "@/secrets/redact-public-text"
+import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
 import { errorMessage } from "@/error-message"
 
-/** Bounded diagnostic snapshot; callers redact before persisting or returning it. */
-export function errorDetails(error: unknown) {
+/** Mask before truncation so a cutoff cannot expose part of a known secret. */
+export function errorDetails(
+  error: unknown,
+  secrets: ReadonlyArray<string> = [],
+  redactText?: (text: string) => string,
+) {
+  const bounded = (value: unknown, maxChars: number): string => {
+    try {
+      const text = String(value)
+      const safe = redactText === undefined ? text : redactText(text)
+      return truncateDiagnosticText(redactPublicText(safe, secrets), maxChars)
+    } catch {
+      return "[unprintable diagnostic value]"
+    }
+  }
   const pending: unknown[] = [error]
   const seen = new Set<unknown>()
   const causes: Array<{
@@ -14,17 +32,27 @@ export function errorDetails(error: unknown) {
     const current = pending.shift()
     if (seen.has(current)) continue
     seen.add(current)
+    const kind = (() => {
+      try {
+        return { isError: current instanceof Error, isAggregate: current instanceof AggregateError }
+      } catch {
+        return { isError: false, isAggregate: false }
+      }
+    })()
+    const stack = kind.isError
+      ? readDiagnosticProperty(current, "stack", "[unreadable stack]")
+      : null
+    const code = readDiagnosticProperty(current, "code", "[unreadable code]")
     causes.push({
-      name: current instanceof Error ? current.name : "Error",
-      message: errorMessage(current).slice(0, 4000),
-      stack: current instanceof Error ? (current.stack?.slice(0, 8000) ?? null) : null,
-      code:
-        typeof current === "object" && current !== null && "code" in current
-          ? String(current.code).slice(0, 100)
-          : null,
+      name: bounded(
+        kind.isError ? readDiagnosticProperty(current, "name", "[unreadable name]") : "Error",
+        100,
+      ),
+      message: bounded(errorMessage(current), MAX_DIAGNOSTIC_MESSAGE_CHARACTERS),
+      stack: stack === undefined || stack === null ? null : bounded(stack, 8000),
+      code: code === undefined || code === null ? null : bounded(code, 100),
     })
-    if (current instanceof Error && current.cause !== undefined) pending.push(current.cause)
-    if (current instanceof AggregateError) pending.push(...current.errors.slice(0, 8))
+    pending.push(...readDiagnosticCauses(current, kind))
   }
   return causes
 }

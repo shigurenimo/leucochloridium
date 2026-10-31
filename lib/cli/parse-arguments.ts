@@ -30,7 +30,7 @@ export function parseArguments(args: readonly string[]): CliArguments {
     }
     const equal = arg.indexOf("=")
     const name = arg.slice(2, equal < 0 ? undefined : equal)
-    if (name in parsed.flags) throw new CliError("USAGE", `Duplicate flag: --${name}`)
+    if (Object.hasOwn(parsed.flags, name)) throw new CliError("USAGE", `Duplicate flag: --${name}`)
     if (BOOLEAN_FLAGS.has(name)) {
       if (equal >= 0) throw new CliError("USAGE", `--${name} does not take a value`)
       parsed.flags[name] = true

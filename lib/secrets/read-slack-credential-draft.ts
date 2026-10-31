@@ -9,6 +9,11 @@ export async function readSlackCredentialDraft(
   if (reference === null) return {}
   const stored = await store.get(reference)
   if (stored === null) return {}
+  return parseSlackCredentialDraft(stored)
+}
+
+/** Parse failures must not retain credential text in messages or causes. */
+export function parseSlackCredentialDraft(stored: string): SlackCredentialDraft {
   try {
     return slackCredentialDraftSchema.parse(JSON.parse(stored))
   } catch {

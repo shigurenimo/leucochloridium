@@ -52,3 +52,24 @@ describe("validateRunAt", () => {
     expect(() => validateRunAt("* * * *", nowAt("2026-07-03T09:00:00Z"))).toThrow(/5 fields/)
   })
 })
+
+it.each([
+  "2050",
+  "2050-01-01",
+  "2050-01-01T09:00:00",
+  "2050-02-29T09:00:00Z",
+  "2050-04-31T09:00:00+09:00",
+])("rejects ambiguous or normalized-away one-shot dates (%s)", (value) => {
+  expect(() => validateRunAt(value, nowAt("2026-01-01T00:00:00Z"))).toThrow()
+})
+it.each([
+  "2052-02-29T09:00:00+09:00",
+  "2050-01-01T09:00+09:00",
+  "2050-01-01T09:00Z",
+  "2050-01-01T09:00:00.123-05:00",
+  "2050-01-01t09:00z",
+  "2050-01-01T09:00+0900",
+  "2050-01-01T24:00:00Z",
+])("keeps explicit-offset ISO precision and valid leap days (%s)", (value) => {
+  expect(validateRunAt(value, nowAt("2026-01-01T00:00:00Z"))).toBe(value)
+})

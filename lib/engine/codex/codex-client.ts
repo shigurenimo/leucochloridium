@@ -1,4 +1,15 @@
+import { getCodexProtocolLimits } from "@/engine/codex/get-codex-protocol-limits"
+import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
+import pkg from "leuco/package.json" with { type: "json" }
+import { CodexTurnText } from "@/engine/codex/codex-turn-text"
+import { CodexConsumerDiagnostics } from "@/engine/codex/codex-consumer-diagnostics"
+import type { DiagnosticOutput } from "@/diagnostic-output"
+import { formatCodexConsumerError } from "@/engine/codex/format-codex-consumer-error"
+import { isCodexThreadMissingError } from "@/engine/codex/is-codex-thread-missing-error"
+import { CodexPendingNotifications } from "@/engine/codex/codex-pending-notifications"
 import { spawn } from "node:child_process"
+import type { LogLevel } from "@/log-level"
+import { CodexStderrLog } from "@/engine/codex/codex-stderr-log"
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { LeucoCodexProtocol } from "@/engine/codex/codex-protocol"
 import { CodexRequestTimeoutError } from "@/engine/codex/codex-request-timeout-error"
@@ -22,36 +33,33 @@ import type {
 } from "@/engine/codex/codex-types"
 import { errorMessage } from "@/error-message"
 
-type NotificationHandler = (method: string, params: unknown) => void
-
-type BufferedNotification = {
-  method: string
-  params: unknown
-}
+type NotificationHandler = (method: string, params: unknown, requestId?: string) => void
 
 type ActiveTurn = {
   id: string | null
 }
+
+type TrackedTurn = { handler: NotificationHandler; turn: ActiveTurn; requestId?: string }
 
 export type LeucoCodexClientProps = {
   bin?: string
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
-  onLog?: (line: string) => void
+  onLog?: (line: string, level?: LogLevel) => void
   /**
    * Called for every JSON-RPC notification from codex BEFORE per-turn handlers
    * (`collectTurn`'s temporary handler chains to whatever was set previously).
+   * requestId is supplied only after both thread and turn identity are confirmed.
    * Useful for broadcasting to the structured event log.
    */
   onAnyNotification?: NotificationHandler
-  clientName?: string
-  clientTitle?: string
-  clientVersion?: string
   commandOutputLimitChars?: number
   threadRequestTimeoutMs?: number
   protocolMaxFrameChars?: number
   protocolLogPreviewChars?: number
+  redactLogText?: (text: string) => string
+  diagnosticOutput?: DiagnosticOutput
 }
 
 /**
@@ -64,22 +72,22 @@ export class LeucoCodexClient {
   private readonly args: string[]
   private readonly cwd: string | undefined
   private readonly env: NodeJS.ProcessEnv | undefined
-  private readonly onLog: ((line: string) => void) | undefined
-  private readonly clientName: string
-  private readonly clientTitle: string
-  private readonly clientVersion: string
+  private readonly onLog: ((line: string, level?: LogLevel) => void) | undefined
   private readonly commandOutputLimitChars: number
   private readonly threadRequestTimeoutMs: number
-  private readonly protocolMaxFrameChars: number | undefined
-  private readonly protocolLogPreviewChars: number | undefined
+  private readonly protocolMaxFrameChars: number
+  private readonly protocolLogPreviewChars: number
+  private readonly redactLogText: ((text: string) => string) | undefined
+
+  private readonly consumerDiagnostics: CodexConsumerDiagnostics
 
   private starting: Promise<void> | null = null
   private stopping: Promise<void> | null = null
   private initialized = false
   private child: ChildProcessWithoutNullStreams | null = null
   private protocol: LeucoCodexProtocol | null = null
-  private notificationHandler: NotificationHandler | null = null
-  private readonly turnHandlers = new Map<string, NotificationHandler>()
+  private readonly notificationHandler: NotificationHandler | null
+  private readonly turnHandlers = new Map<string, TrackedTurn>()
   private exitPromise: Promise<void> | null = null
   private transportFailurePromise: Promise<void> | null = null
   /**
@@ -92,35 +100,48 @@ export class LeucoCodexClient {
 
   constructor(props: LeucoCodexClientProps = {}) {
     this.bin = props.bin ?? "codex"
-    this.args = props.args ?? ["app-server"]
+    this.args = props.args === undefined ? ["app-server"] : [...props.args]
     this.cwd = props.cwd
-    this.env = props.env
+    this.env = props.env === undefined ? undefined : { ...props.env }
+    this.consumerDiagnostics = new CodexConsumerDiagnostics({
+      output: props.diagnosticOutput,
+      redactLogText: props.redactLogText,
+    })
+    const onLog = props.onLog
     this.onLog =
-      props.onLog === undefined
+      onLog === undefined
         ? undefined
-        : (line) => {
+        : (line, level) => {
             try {
-              props.onLog?.(line)
+              onLog(line, level)
             } catch (error) {
-              process.stderr.write(
-                `[codex log consumer failed] ${errorMessage(error).slice(0, 4000)}\n`,
-              )
+              this.consumerDiagnostics.report({ kind: "log", error })
             }
           }
-    this.clientName = props.clientName ?? "leuco"
-    this.clientTitle = props.clientTitle ?? "leucochloridium"
-    this.clientVersion = props.clientVersion ?? "0.1.0"
     this.commandOutputLimitChars = props.commandOutputLimitChars ?? COMMAND_OUTPUT_LIMIT_CHARS
     this.threadRequestTimeoutMs = props.threadRequestTimeoutMs ?? THREAD_REQUEST_TIMEOUT_MS
-    this.protocolMaxFrameChars = props.protocolMaxFrameChars
-    this.protocolLogPreviewChars = props.protocolLogPreviewChars
-    if (props.onAnyNotification !== undefined) {
-      this.notificationHandler = props.onAnyNotification
-    }
+    const protocolLimits = getCodexProtocolLimits({
+      maxFrameChars: props.protocolMaxFrameChars,
+      logPreviewChars: props.protocolLogPreviewChars,
+    })
+    this.protocolMaxFrameChars = protocolLimits.maxFrameChars
+    this.protocolLogPreviewChars = protocolLimits.logPreviewChars
+    this.validateLimits()
+    this.redactLogText = props.redactLogText
+    this.notificationHandler = props.onAnyNotification ?? null
   }
 
-  onNotification(handler: NotificationHandler): void {
-    this.notificationHandler = handler
+  private validateLimits(): void {
+    if (!Number.isSafeInteger(this.commandOutputLimitChars) || this.commandOutputLimitChars < 0)
+      throw new Error("commandOutputLimitChars must be a non-negative safe integer")
+    if (
+      !Number.isSafeInteger(this.threadRequestTimeoutMs) ||
+      this.threadRequestTimeoutMs < 1 ||
+      this.threadRequestTimeoutMs > MAX_TIMER_DELAY_MS
+    )
+      throw new Error(
+        `threadRequestTimeoutMs must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
+      )
   }
 
   isRunning(): boolean {
@@ -135,6 +156,7 @@ export class LeucoCodexClient {
       stopping: this.stopping !== null,
       cleaningUp: this.transportFailurePromise !== null,
       activeTurns: this.turnAborters.size,
+      diagnostics: this.consumerDiagnostics.getHealth(),
     }
   }
 
@@ -175,6 +197,7 @@ export class LeucoCodexClient {
       onLog: this.onLog,
       maxFrameChars: this.protocolMaxFrameChars,
       logPreviewChars: this.protocolLogPreviewChars,
+      redactLogText: this.redactLogText,
     })
     protocol.onNotification((method, params) => this.handleNotification(method, params))
 
@@ -185,18 +208,15 @@ export class LeucoCodexClient {
       if (frameError !== null) void this.failTransport(child, protocol, frameError)
     })
 
-    child.stderr.on("data", (chunk: string) => {
-      if (!this.onLog) return
-      for (const line of chunk.split(/\r?\n/)) {
-        if (line.trim().length > 0) this.onLog(line)
-      }
-    })
+    const stderrLog = new CodexStderrLog((line, level) => this.onLog?.(line, level))
+    child.stderr.on("data", (chunk: string) => stderrLog.write(chunk))
+    child.stderr.on("end", () => stderrLog.flush())
 
     // A write racing the pipe closing surfaces asynchronously as a stream
     // `error` event; without a listener Node turns it into an
     // uncaughtException that takes the whole daemon down with it.
     child.stdin.on("error", (err: Error) => {
-      if (this.onLog) this.onLog(`[codex stdin] ${errorMessage(err)}`)
+      if (this.onLog) this.onLog(`[codex stdin] ${errorMessage(err)}`, "error")
       void this.failTransport(
         child,
         protocol,
@@ -217,18 +237,21 @@ export class LeucoCodexClient {
 
       child.once("exit", (code, signal) => {
         const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`
-        this.onLog?.(`[codex] app-server exited (${reason})`)
+        this.onLog?.(
+          `[codex] app-server exited (${reason})`,
+          code === 0 && !signal ? "info" : "warn",
+        )
         settle(new Error(`codex app-server exited (${reason})`))
       })
 
       // A failed spawn (binary missing, EACCES) emits `error` and never
       // `exit`; `child.pid` stays undefined in that case. Settling here is
       // what keeps `isRunning()` truthful — otherwise the dead child sticks
-      // around forever and the project runtime never respawns. When `pid` exists the
+      // around forever and the Leuco runtime never respawns. When `pid` exists the
       // process may still be alive (e.g. a kill failure), so only the
       // in-flight work is failed.
       child.once("error", (err) => {
-        this.onLog?.(`[codex] app-server error: ${errorMessage(err)}`)
+        this.onLog?.(`[codex] app-server error: ${errorMessage(err)}`, "error")
         if (child.pid === undefined) {
           settle(err)
           return
@@ -253,9 +276,9 @@ export class LeucoCodexClient {
       await withTimeout(
         protocol.request("initialize", {
           clientInfo: {
-            name: this.clientName,
-            title: this.clientTitle,
-            version: this.clientVersion,
+            name: "leuco",
+            title: "leucochloridium",
+            version: pkg.version,
           },
         }),
         INITIALIZE_TIMEOUT_MS,
@@ -271,11 +294,13 @@ export class LeucoCodexClient {
     protocol.notify("initialized")
     this.initialized = true
     this.onLog?.(`[codex] app-server ready (pid=${child.pid ?? "unknown"})`)
+    if (this.child !== child || this.protocol !== protocol || !this.initialized)
+      throw new Error("Codex stopped during initialization")
   }
 
   async stop(): Promise<void> {
     if (this.stopping !== null) return this.stopping
-    const stopping = this.stopChild()
+    const stopping = this.stopChild().finally(() => this.consumerDiagnostics.drain())
     this.stopping = stopping
     try {
       await stopping
@@ -413,12 +438,12 @@ export class LeucoCodexClient {
         await this.failTransport(child, protocol, error)
         return error
       }
-      if (/not found|no such thread|no thread/i.test(error.message)) return null
+      if (isCodexThreadMissingError(error, params.threadId)) return null
       return error
     }
   }
 
-  async startTurn(params: TurnStartParams): Promise<TurnStartResult | Error> {
+  private async startTurn(params: TurnStartParams): Promise<TurnStartResult | Error> {
     const protocol = this.protocol
     if (!protocol) return new Error("codex client not started")
     try {
@@ -434,25 +459,19 @@ export class LeucoCodexClient {
    * concatenated assistant text — preferring `item/completed` agentMessage
    * text, falling back to streamed `item/agentMessage/delta`.
    */
-  runTextTurn(
-    threadId: string,
-    text: string,
-    options?: string | CodexTurnOptions,
-  ): Promise<string | Error> {
+  runTextTurn(threadId: string, text: string, options?: CodexTurnOptions): Promise<string | Error> {
     const input: TurnInputItem[] = [{ type: "text", text }]
-    const cwd = typeof options === "string" ? options : options?.cwd
-    const onActivity = typeof options === "string" ? undefined : options?.onActivity
-    return this.collectTurn({ threadId, input, cwd }, onActivity)
+    return this.collectTurn({ threadId, input, cwd: options?.cwd }, options)
   }
 
   private async collectTurn(
     params: TurnStartParams,
-    onActivity?: (method: string) => void,
+    options?: CodexTurnOptions,
   ): Promise<string | Error> {
     const protocol = this.protocol
     if (!protocol) return new Error("codex client not started")
     try {
-      return await this.collectTurnInternal(protocol, params, onActivity)
+      return await this.collectTurnInternal(protocol, params, options)
     } catch (err) {
       return err instanceof Error ? err : new Error(String(err))
     }
@@ -461,14 +480,12 @@ export class LeucoCodexClient {
   private collectTurnInternal(
     protocol: LeucoCodexProtocol,
     params: TurnStartParams,
-    onActivity?: (method: string) => void,
+    options?: CodexTurnOptions,
   ): Promise<string> {
+    const onActivity = options?.onActivity
     return new Promise<string>((resolve, reject) => {
-      const deltas: string[] = []
-      const legacyCompletedTexts: string[] = []
-      const finalTexts: string[] = []
-      const phaseState = { hasExplicitAgentMessagePhase: false }
-      const bufferedNotifications: BufferedNotification[] = []
+      const text = new CodexTurnText()
+      const bufferedNotifications = new CodexPendingNotifications()
       const activeTurn: ActiveTurn = { id: null }
       const commandOutputState = { chars: 0 }
       const lifecycle = { isTornDown: false }
@@ -490,10 +507,21 @@ export class LeucoCodexClient {
       const teardown = (): void => {
         if (lifecycle.isTornDown) return
         lifecycle.isTornDown = true
-        if (this.turnHandlers.get(params.threadId) === handler) {
+        bufferedNotifications.clear()
+        text.clear()
+        if (this.turnHandlers.get(params.threadId)?.handler === handler) {
           this.turnHandlers.delete(params.threadId)
         }
         this.turnAborters.delete(aborter)
+      }
+
+      const failCollection = (error: unknown): void => {
+        teardown()
+        void this.stop().then(
+          () => reject(error),
+          (cleanupError: unknown) =>
+            reject(new AggregateError([error, cleanupError], "Codex turn cleanup failed")),
+        )
       }
 
       const processNotification = (method: string, raw: unknown, canBuffer: boolean): void => {
@@ -501,10 +529,10 @@ export class LeucoCodexClient {
           const parsed = agentMessageDeltaSchema.safeParse(raw)
           if (!parsed.success || parsed.data.threadId !== params.threadId) return
           if (activeTurn.id === null) {
-            if (canBuffer) bufferedNotifications.push({ method, params: raw })
+            if (canBuffer) bufferedNotifications.push(method, raw)
             return
           }
-          if (parsed.data.turnId === activeTurn.id) deltas.push(parsed.data.delta)
+          if (parsed.data.turnId === activeTurn.id) text.appendDelta(parsed.data.delta)
           return
         }
 
@@ -514,10 +542,10 @@ export class LeucoCodexClient {
           const identity = turnNotificationIdentitySchema.safeParse(raw)
           if (!identity.success || identity.data.threadId !== params.threadId) return
           if (activeTurn.id === null) {
-            if (canBuffer) bufferedNotifications.push({ method, params: raw })
+            if (canBuffer) bufferedNotifications.push(method, raw)
             return
           }
-          const turnId = "turnId" in identity.data ? identity.data.turnId : identity.data.turn.id
+          const turnId = identity.data.turnId
           if (turnId !== activeTurn.id) return
 
           commandOutputState.chars += parsed.data.delta.length
@@ -527,11 +555,7 @@ export class LeucoCodexClient {
           const err = new Error(
             `codex command output exceeded ${this.commandOutputLimitChars} chars${item}`,
           )
-          teardown()
-          void this.stop().then(
-            () => reject(err),
-            () => reject(err),
-          )
+          failCollection(err)
           return
         }
 
@@ -539,7 +563,7 @@ export class LeucoCodexClient {
           const parsed = itemCompletedSchema.safeParse(raw)
           if (!parsed.success || parsed.data.threadId !== params.threadId) return
           if (activeTurn.id === null) {
-            if (canBuffer) bufferedNotifications.push({ method, params: raw })
+            if (canBuffer) bufferedNotifications.push(method, raw)
             return
           }
           if (
@@ -547,14 +571,7 @@ export class LeucoCodexClient {
             parsed.data.item.type === "agentMessage" &&
             typeof parsed.data.item.text === "string"
           ) {
-            if (typeof parsed.data.item.phase === "string") {
-              phaseState.hasExplicitAgentMessagePhase = true
-            } else {
-              legacyCompletedTexts.push(parsed.data.item.text)
-            }
-            if (parsed.data.item.phase === "final_answer") {
-              finalTexts.push(parsed.data.item.text)
-            }
+            text.complete(parsed.data.item.text, parsed.data.item.phase)
           }
           return
         }
@@ -565,7 +582,7 @@ export class LeucoCodexClient {
             const identity = turnCompletedIdentitySchema.safeParse(raw)
             if (!identity.success || identity.data.threadId !== params.threadId) return
             if (activeTurn.id === null) {
-              if (canBuffer) bufferedNotifications.push({ method, params: raw })
+              if (canBuffer) bufferedNotifications.push(method, raw)
               return
             }
             if (identity.data.turn.id !== activeTurn.id) return
@@ -576,28 +593,30 @@ export class LeucoCodexClient {
           }
           if (parsed.data.threadId !== params.threadId) return
           if (activeTurn.id === null) {
-            if (canBuffer) bufferedNotifications.push({ method, params: raw })
+            if (canBuffer) bufferedNotifications.push(method, raw)
             return
           }
           if (parsed.data.turn.id !== activeTurn.id) return
 
-          teardown()
           const turn = parsed.data.turn
           if (turn.status !== "completed") {
+            teardown()
             const message =
               getTurnErrorMessage(turn.error) ?? `codex turn ${turn.id} ${turn.status}`
             reject(new Error(message))
             return
           }
-          const finalText =
-            finalTexts.length > 0
-              ? finalTexts.join("\n\n")
-              : phaseState.hasExplicitAgentMessagePhase
-                ? ""
-                : legacyCompletedTexts.length > 0
-                  ? legacyCompletedTexts.join("\n\n")
-                  : deltas.join("")
+          const finalText = text.getText()
+          teardown()
           resolve(finalText)
+        }
+      }
+
+      const collectNotification = (method: string, raw: unknown, canBuffer: boolean): void => {
+        try {
+          processNotification(method, raw, canBuffer)
+        } catch (error) {
+          failCollection(error)
         }
       }
 
@@ -614,23 +633,28 @@ export class LeucoCodexClient {
         if (!onActivity || activeTurn.id === null) return
         const parsed = turnNotificationIdentitySchema.safeParse(raw)
         if (!parsed.success || parsed.data.threadId !== params.threadId) return
-        const turnId = "turnId" in parsed.data ? parsed.data.turnId : parsed.data.turn.id
+        const turnId = parsed.data.turnId
         if (turnId === activeTurn.id) signalActivity(method)
       }
 
       const handler: NotificationHandler = (method, raw) => {
         noteActivity(method, raw)
-        processNotification(method, raw, true)
+        collectNotification(method, raw, true)
       }
 
-      this.turnHandlers.set(params.threadId, handler)
+      this.turnHandlers.set(params.threadId, {
+        handler,
+        turn: activeTurn,
+        requestId: options?.requestId,
+      })
       this.turnAborters.add(aborter)
 
       // `startTurn` always resolves (errors are folded into `| Error`), so a
       // single `.then` is enough — settling here rejects the outer promise
       // when codex never sends `turn/completed`. Without this `runTextTurn`
-      // would hang until the project runtime's wall-clock timeout kicks in.
+      // would hang until the Leuco runtime's wall-clock timeout kicks in.
       void this.startTurn(params).then((result) => {
+        if (lifecycle.isTornDown) return
         if (result instanceof Error) {
           teardown()
           reject(result)
@@ -639,10 +663,10 @@ export class LeucoCodexClient {
 
         activeTurn.id = result.turn.id
         signalActivity("turn/start")
-        const buffered = bufferedNotifications.splice(0)
+        const buffered = bufferedNotifications.drain()
         for (const notification of buffered) {
           if (lifecycle.isTornDown) return
-          processNotification(notification.method, notification.params, false)
+          collectNotification(notification.method, notification.params, false)
         }
       })
     })
@@ -650,20 +674,31 @@ export class LeucoCodexClient {
 
   private handleNotification(method: string, params: unknown): void {
     try {
-      this.notificationHandler?.(method, params)
+      const identity = turnNotificationIdentitySchema.safeParse(params)
+      const tracked = identity.success ? this.turnHandlers.get(identity.data.threadId) : undefined
+      const turnId = identity.success ? identity.data.turnId : null
+      const requestId =
+        tracked !== undefined && tracked.turn.id !== null && tracked.turn.id === turnId
+          ? tracked.requestId
+          : undefined
+      this.notificationHandler?.(method, params, requestId)
     } catch (error) {
-      const message = `[codex notification consumer failed] ${errorMessage(error)}`
-      if (this.onLog) this.onLog(message)
-      else process.stderr.write(`${message.slice(0, 4000)}\n`)
+      const message = formatCodexConsumerError({
+        kind: "notification",
+        error,
+        redactLogText: this.redactLogText,
+      })
+      if (this.onLog) this.onLog(message, "error")
+      else this.consumerDiagnostics.report({ kind: "notification", error })
     }
     const threadId = notificationThreadId(params)
     if (threadId === null) {
       if (this.turnHandlers.size === 1) {
-        this.turnHandlers.values().next().value?.(method, params)
+        this.turnHandlers.values().next().value?.handler(method, params)
       }
       return
     }
-    this.turnHandlers.get(threadId)?.(method, params)
+    this.turnHandlers.get(threadId)?.handler(method, params)
   }
 
   private abortInFlightTurns(err: Error): void {

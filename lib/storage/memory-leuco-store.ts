@@ -1,3 +1,4 @@
+import { encodeLocalJson } from "@/fs/encode-local-json"
 import { settingsSchema, stateSchema } from "@/config/config-schema"
 import type { LeucoSettings, LeucoState } from "@/config/config-schema"
 import { LeucoStore } from "@/storage/leuco-store"
@@ -10,6 +11,7 @@ export class MemoryLeucoStore extends LeucoStore {
   constructor(settings: Partial<LeucoSettings> = {}) {
     super()
     this.settings = settingsSchema.parse(settings)
+    encodeLocalJson(this.settings)
   }
 
   loadSettings(): LeucoSettings {
@@ -20,11 +22,15 @@ export class MemoryLeucoStore extends LeucoStore {
   }
 
   updateSettings(transform: (settings: LeucoSettings) => LeucoSettings): void {
-    this.settings = settingsSchema.parse(transform(this.loadSettings()))
+    const next = settingsSchema.parse(transform(this.loadSettings()))
+    encodeLocalJson(next)
+    this.settings = next
   }
 
   updateState(transform: (state: LeucoState) => LeucoState): void {
-    this.state = stateSchema.parse(transform(this.loadState()))
+    const next = stateSchema.parse(transform(this.loadState()))
+    encodeLocalJson(next)
+    this.state = next
   }
 
   readInstructions(path: string): string {

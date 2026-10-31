@@ -1,0 +1,2 @@
+export const MAX_TURN_INPUT_BYTES = 256 * 1024
+export const MAX_THREAD_KEY_CHARACTERS = 512

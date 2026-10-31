@@ -25,13 +25,14 @@ export const leucoEventReadSchema = z.preprocess((value) => {
 
   const event = parsed.data
   const type = LEGACY_EVENT_TYPES[event.type] ?? event.type
+  const runtime = event.runtime ?? event.project
   const connector = event.connector ?? event.channel
   const reason = event.reason === "tenant_stopped" ? "runtime_stopped" : event.reason
 
   return {
     ...event,
     type,
-    runtime: event.runtime ?? event.project,
+    ...(runtime === undefined ? {} : { runtime }),
     ...(connector === undefined ? {} : { connector }),
     ...(reason === undefined ? {} : { reason }),
   }

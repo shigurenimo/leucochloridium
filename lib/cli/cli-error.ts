@@ -1,11 +1,15 @@
-export type CliErrorCode =
-  | "USAGE"
-  | "NOT_RUNNING"
-  | "STATE_CONFLICT"
-  | "NEEDS_HUMAN"
-  | "STATE_UNCERTAIN"
-  | "CHECK_FAILED"
-  | "OPERATION_FAILED"
+import { z } from "zod"
+
+export const cliErrorCodeSchema = z.enum([
+  "USAGE",
+  "NOT_RUNNING",
+  "STATE_CONFLICT",
+  "NEEDS_HUMAN",
+  "STATE_UNCERTAIN",
+  "CHECK_FAILED",
+  "OPERATION_FAILED",
+])
+export type CliErrorCode = z.infer<typeof cliErrorCodeSchema>
 export const ERROR_CODES = {
   USAGE: { exitCode: 2, recovery: "Read --help and fix the input before calling again." },
   NOT_RUNNING: {
@@ -20,7 +24,7 @@ export const ERROR_CODES = {
   NEEDS_HUMAN: {
     exitCode: 4,
     recovery:
-      "Ask the human to copy the required token into the desktop clipboard, then run slack login bot or slack login app. Never request token values in chat.",
+      "Ask the human to copy the required token into the desktop clipboard, then run leuco slack login bot or leuco slack login app. Never request token values in chat.",
   },
   STATE_UNCERTAIN: {
     exitCode: 5,

@@ -1,7 +1,9 @@
+import type { LogDeliveryHealth } from "@/log-delivery-health-schema"
 import type { ThreadStartResult } from "@/engine/codex/codex-schemas"
 import type { ThreadResumeParams, ThreadStartParams } from "@/engine/codex/codex-types"
 
 export type CodexTurnOptions = {
+  requestId?: string
   cwd?: string
   onActivity?: (method: string) => void
 }
@@ -20,6 +22,7 @@ export type CodexClientPort = {
     starting: boolean
     stopping: boolean
     cleaningUp: boolean
+    diagnostics?: LogDeliveryHealth
     activeTurns: number
   }
   isRunning(): boolean
@@ -29,9 +32,5 @@ export type CodexClientPort = {
    * (caller should fall back to `startThread`), or to `Error` for any other
    * failure (rule: backend functions return `T | Error` instead of throwing). */
   resumeThread(params: ThreadResumeParams): Promise<ThreadStartResult | null | Error>
-  runTextTurn(
-    threadId: string,
-    text: string,
-    options?: string | CodexTurnOptions,
-  ): Promise<string | Error>
+  runTextTurn(threadId: string, text: string, options?: CodexTurnOptions): Promise<string | Error>
 }

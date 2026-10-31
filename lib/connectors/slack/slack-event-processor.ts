@@ -1,3 +1,4 @@
+import { getBoundedValidationIssues } from "@/get-bounded-validation-issues"
 import {
   slackAppMentionEventSchema,
   slackMessageEventSchema,
@@ -9,7 +10,7 @@ import type {
   SlackReactionEvent,
 } from "@/connectors/slack/slack-types"
 
-export type LeucoSlackEventProcessorProps = {
+type LeucoSlackEventProcessorProps = {
   botUserId: string | null
   botId?: string | null
   /** Hard cap on the dedup map; events older than the TTL are evicted lazily. */
@@ -20,9 +21,7 @@ export type LeucoSlackEventProcessorProps = {
   now?: () => number
 }
 
-export type ProcessSkip = { skip: true; reason: string }
-export type ProcessEmit = { skip: false; event: SlackEvent }
-export type ProcessResult = ProcessSkip | ProcessEmit
+export type ProcessResult = { skip: true; reason: string } | { skip: false; event: SlackEvent }
 
 const DEFAULT_DEDUP_CAPACITY = 10_000
 const DEFAULT_DEDUP_TTL_MS = 5 * 60 * 1000
@@ -68,7 +67,10 @@ export class LeucoSlackEventProcessor {
   processAppMention(event: unknown): ProcessResult {
     const parsed = slackAppMentionEventSchema.safeParse(event)
     if (!parsed.success) {
-      return { skip: true, reason: `app_mention schema failed: ${parsed.error.message}` }
+      return {
+        skip: true,
+        reason: `app_mention schema failed: ${JSON.stringify(getBoundedValidationIssues(parsed.error))}`,
+      }
     }
     const data = parsed.data
 
@@ -83,7 +85,11 @@ export class LeucoSlackEventProcessor {
 
   processMessage(event: unknown): ProcessResult {
     const parsed = slackMessageEventSchema.safeParse(event)
-    if (!parsed.success) return { skip: true, reason: "message schema failed" }
+    if (!parsed.success)
+      return {
+        skip: true,
+        reason: `message schema failed: ${JSON.stringify(getBoundedValidationIssues(parsed.error))}`,
+      }
     const data = parsed.data
 
     if (data.subtype !== undefined && !FORWARDED_MESSAGE_SUBTYPES.has(data.subtype)) {
@@ -107,7 +113,11 @@ export class LeucoSlackEventProcessor {
 
   processReaction(event: unknown): ProcessResult {
     const parsed = slackReactionEventSchema.safeParse(event)
-    if (!parsed.success) return { skip: true, reason: "reaction schema failed" }
+    if (!parsed.success)
+      return {
+        skip: true,
+        reason: `reaction schema failed: ${JSON.stringify(getBoundedValidationIssues(parsed.error))}`,
+      }
     const data = parsed.data
 
     if (this.botUserId === null) return { skip: true, reason: "botUserId unknown" }
@@ -115,7 +125,7 @@ export class LeucoSlackEventProcessor {
       return { skip: true, reason: "self reaction" }
     }
 
-    const dedupKey = `${data.type}:${data.event_ts}:${data.user}:${data.reaction}:${data.item.ts}`
+    const dedupKey = `${data.type}:${data.item.channel}:${data.event_ts}:${data.user}:${data.reaction}:${data.item.ts}`
     if (!this.consume(dedupKey)) return { skip: true, reason: `dedup ${dedupKey}` }
 
     const reaction: SlackReactionEvent = {
@@ -195,7 +205,7 @@ const stripMention = (text: string, botUserId: string | null): string => {
   return text.replace(slackMentionRegex(botUserId), "").trim()
 }
 
-export const slackTextMentionsUser = (text: string, userId: string | null): boolean => {
+const slackTextMentionsUser = (text: string, userId: string | null): boolean => {
   if (userId === null) return false
   return slackMentionRegex(userId).test(text)
 }

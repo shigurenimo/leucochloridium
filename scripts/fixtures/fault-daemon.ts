@@ -9,6 +9,16 @@ commands.once("line", (mode) => {
   commands.close()
   const cause = new Error("injected root cause xoxb-reliability-secret")
   const failure = new Error("injected asynchronous failure", { cause })
+  if (mode === "metadata")
+    Object.defineProperty(failure, "code", {
+      get: () => {
+        throw new Error("private metadata accessor failure")
+      },
+    })
+  if (mode === "unprintable") {
+    void Promise.reject(Object.create(null))
+    return
+  }
   if (mode === "null") {
     void Promise.reject(null)
     return
@@ -24,10 +34,9 @@ try {
     home: process.env.LEUCO_HOME!,
     cwd: process.cwd(),
     codexBin: process.env.LEUCO_VERIFY_CODEX!,
-    quiet: true,
     ownsProcess: process.env.LEUCO_VERIFY_OWNS_PROCESS === "1",
     requestId,
   })
 } catch (error) {
-  writeCliError(error, ["run", "--foreground", "--json"], requestId)
+  await writeCliError(error, ["run", "--foreground", "--json"], { requestId })
 }

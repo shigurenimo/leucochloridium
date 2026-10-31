@@ -1,13 +1,7 @@
 import { randomUUID } from "node:crypto"
-import {
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs"
+import { withSyncCleanup } from "@/fs/with-sync-cleanup"
+import { readRegularText } from "@/fs/read-regular-text"
+import { linkSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 
 type Props = {
@@ -33,17 +27,13 @@ type LockOwner = {
  */
 export const withFileLock = <T>(props: Props, fn: () => T): T => {
   const owner = acquireLock(props)
-  try {
-    return fn()
-  } finally {
-    releaseLock(props.lockPath, owner)
-  }
+  return withSyncCleanup(fn, () => releaseLock(props.lockPath, owner))
 }
 
 const acquireLock = (props: Props): LockOwner => {
   const timeoutMs = props.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const staleMs = props.staleMs ?? DEFAULT_STALE_MS
-  const deadline = Date.now() + timeoutMs
+  const deadline = performance.now() + timeoutMs
   const owner = { token: randomUUID(), pid: process.pid }
 
   mkdirSync(dirname(props.lockPath), { recursive: true })
@@ -51,7 +41,7 @@ const acquireLock = (props: Props): LockOwner => {
   while (true) {
     if (tryAcquire(props.lockPath, owner)) return owner
     stealIfStale(props.lockPath, staleMs)
-    if (Date.now() >= deadline) throw new Error(`file lock busy: ${props.lockPath}`)
+    if (performance.now() >= deadline) throw new Error(`file lock busy: ${props.lockPath}`)
     sleepSync(RETRY_INTERVAL_MS)
   }
 }
@@ -70,19 +60,38 @@ const tryAcquire = (lockPath: string, owner: LockOwner): boolean => {
       mode: 0o600,
     })
   } catch (error) {
-    removeFile(claimPath)
-    throw error
+    if (isNodeErrno(error) && error.code === "EEXIST") throw error
+    return withSyncCleanup(
+      () => {
+        throw error
+      },
+      () => removeFile(claimPath),
+    )
   }
 
+  const published = { value: false }
   try {
-    // A hard link is atomic and refuses to replace any existing path,
-    // including an empty directory left by an older lock implementation.
-    linkSync(claimPath, lockPath)
-    removeFile(claimPath)
-    return true
+    return withSyncCleanup(
+      () => {
+        try {
+          linkSync(claimPath, lockPath)
+          published.value = true
+          return true
+        } catch (error) {
+          if (isNodeErrno(error) && error.code === "EEXIST") return false
+          throw error
+        }
+      },
+      () => removeFile(claimPath),
+    )
   } catch (error) {
-    removeFile(claimPath)
-    if (isNodeErrno(error) && error.code === "EEXIST") return false
+    if (published.value)
+      return withSyncCleanup(
+        () => {
+          throw error
+        },
+        () => releaseLock(lockPath, owner),
+      )
     throw error
   }
 }
@@ -116,25 +125,21 @@ const stealIfStale = (lockPath: string, staleMs: number): void => {
 
 const releaseLock = (lockPath: string, owner: LockOwner): void => {
   try {
-    if (readOwner(lockPath)?.token !== owner.token) return
+    const current = inspectOwner(lockPath)
+    if (current === null) throw new Error(`Cannot verify lock ownership for release: ${lockPath}`)
+    if (current.token !== owner.token) return
     unlinkSync(lockPath)
-  } catch {
-    // Idempotent release; a stale lock may already have been reclaimed.
-  }
-}
-
-const readOwner = (lockPath: string): LockOwner | null => {
-  try {
-    return inspectOwner(lockPath)
-  } catch {
-    return null
+  } catch (error) {
+    if (isNodeErrno(error) && error.code === "ENOENT") return
+    throw error
   }
 }
 
 const inspectOwner = (lockPath: string): LockOwner | null => {
   let text: string
   try {
-    text = readFileSync(lockPath, "utf8")
+    if (statSync(lockPath).isDirectory()) return null
+    text = readRegularText(lockPath, 8192)
   } catch (error) {
     if (isNodeErrno(error) && (error.code === "EISDIR" || error.code === "EINVAL")) return null
     throw error
@@ -170,8 +175,9 @@ const isNodeErrno = (error: unknown): error is NodeJS.ErrnoException =>
 const removeFile = (path: string): void => {
   try {
     unlinkSync(path)
-  } catch {
-    // best-effort cleanup for a private claim path
+  } catch (error) {
+    if (isNodeErrno(error) && error.code === "ENOENT") return
+    throw error
   }
 }
 

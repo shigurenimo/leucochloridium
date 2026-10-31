@@ -42,3 +42,22 @@ describe("assertSlackFileUrl", () => {
     expect(() => assertSlackFileUrl("not a url")).toThrow(/invalid download url/)
   })
 })
+
+it("does not quote malformed download URLs in diagnostics", () => {
+  const raw = "https://user:private-password@[invalid?ticket=private-ticket"
+  const failure = (() => {
+    try {
+      assertSlackFileUrl(raw)
+    } catch (error) {
+      return error
+    }
+  })()
+  expect(String(failure)).toContain("invalid download url")
+  expect(String(failure)).not.toContain("private-")
+  expect(String(failure)).toContain(String(raw.length))
+})
+it("rejects URL credentials before an authenticated fetch", () => {
+  expect(() => assertSlackFileUrl("https://user:private-password@files.slack.com/file")).toThrow(
+    "credentials",
+  )
+})

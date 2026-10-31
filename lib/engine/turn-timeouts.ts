@@ -1,4 +1,6 @@
-export type LeucoTurnTimeoutClock = {
+import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
+
+type LeucoTurnTimeoutClock = {
   setTimeout(handler: () => void, timeoutMs: number): ReturnType<typeof setTimeout>
   clearTimeout(timer: ReturnType<typeof setTimeout>): void
 }
@@ -16,7 +18,6 @@ type Props = {
 export class LeucoTurnTimeouts {
   readonly hardTimeout: Promise<Error>
   readonly idleTimeout: Promise<Error>
-  private readonly hardError: Error
   private readonly idleError: Error
   private hardTimer: ReturnType<typeof setTimeout> | null = null
   private idleTimer: ReturnType<typeof setTimeout> | null = null
@@ -26,14 +27,24 @@ export class LeucoTurnTimeouts {
   private isCleared = false
 
   constructor(private readonly props: Props) {
-    this.hardError = new Error(
+    for (const milliseconds of [props.hardTimeoutMs, props.idleTimeoutMs]) {
+      if (
+        !Number.isSafeInteger(milliseconds) ||
+        milliseconds < 1 ||
+        milliseconds > MAX_TIMER_DELAY_MS
+      )
+        throw new Error(
+          `Turn timeouts must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
+        )
+    }
+    const hardError = new Error(
       `codex turn hard deadline exceeded after ${props.hardTimeoutMs / 1000}s`,
     )
     this.idleError = new Error(
       `codex turn idle timeout after ${props.idleTimeoutMs / 1000}s without activity`,
     )
     this.hardTimeout = new Promise((resolve) => {
-      this.hardTimer = props.clock.setTimeout(() => resolve(this.hardError), props.hardTimeoutMs)
+      this.hardTimer = props.clock.setTimeout(() => resolve(hardError), props.hardTimeoutMs)
     })
     this.idleTimeout = new Promise((resolve) => {
       this.resolveIdle = resolve
@@ -50,10 +61,6 @@ export class LeucoTurnTimeouts {
     if (!this.isIdleStarted || this.isIdleExpired || this.isCleared) return
     if (this.idleTimer !== null) this.props.clock.clearTimeout(this.idleTimer)
     this.armIdle()
-  }
-
-  isTimeout(value: string | Error): boolean {
-    return value === this.hardError || value === this.idleError
   }
 
   clear(): void {

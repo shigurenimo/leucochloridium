@@ -49,10 +49,10 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
-    const result = await client.searchMessages({
+    const result = await client.apiCall("search.messages", {
       query: "<@UBOT>",
       sort: "timestamp",
-      sortDir: "desc",
+      sort_dir: "desc",
       count: 50,
     })
 
@@ -74,15 +74,20 @@ describe("LeucoFetchSlackWebClient", () => {
     expect(params.get("sort")).toBe("timestamp")
     expect(params.get("sort_dir")).toBe("desc")
     expect(params.get("count")).toBe("50")
-    expect(result.matches).toEqual([
-      {
-        channelId: "C1",
-        user: "U1",
-        text: "<@UBOT> hi",
-        ts: "100.0",
-        permalink: "https://example.slack.com/archives/C1/p100",
+    expect(result).toEqual({
+      ok: true,
+      messages: {
+        matches: [
+          {
+            channel: { id: "C1" },
+            user: "U1",
+            text: "<@UBOT> hi",
+            ts: "100.0",
+            permalink: "https://example.slack.com/archives/C1/p100",
+          },
+        ],
       },
-    ])
+    })
   })
 
   it("posts conversations.list as form-encoded data", async () => {
@@ -100,7 +105,7 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
-    const result = await client.conversationsList({
+    const result = await client.apiCall("conversations.list", {
       types: "im",
       limit: 200,
       cursor: "page-1",
@@ -113,11 +118,14 @@ describe("LeucoFetchSlackWebClient", () => {
       limit: "200",
       cursor: "page-1",
     })
-    expect(result.channels).toEqual([{ id: "D1", isIm: true }])
-    expect(result.nextCursor).toBe("page-2")
+    expect(result).toEqual({
+      ok: true,
+      channels: [{ id: "D1", is_im: true }],
+      response_metadata: { next_cursor: "page-2" },
+    })
   })
 
-  it("posts and normalizes cursor pagination for conversations.replies", async () => {
+  it("posts and preserves cursor pagination for conversations.replies", async () => {
     const fetchMock = vi.fn(
       async (_url: string | URL | Request, _init?: RequestInit) =>
         new Response(
@@ -132,7 +140,7 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxp-test" })
-    const replies = await client.conversationsReplies({
+    const replies = await client.apiCall("conversations.replies", {
       channel: "D1",
       ts: "100.0",
       oldest: null,
@@ -149,7 +157,11 @@ describe("LeucoFetchSlackWebClient", () => {
       limit: "100",
       cursor: "page-1",
     })
-    expect(replies.nextCursor).toBe("page-2")
+    expect(replies).toEqual({
+      ok: true,
+      messages: [],
+      response_metadata: { next_cursor: "page-2" },
+    })
   })
 
   it("posts files.getUploadURLExternal as form-encoded data through apiCall", async () => {
@@ -179,7 +191,7 @@ describe("LeucoFetchSlackWebClient", () => {
   })
 
   it("uploads and shares a local file through Slack external upload", async () => {
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
       if (String(url).endsWith("/files.getUploadURLExternal")) {
         return new Response(
           JSON.stringify({
@@ -224,6 +236,7 @@ describe("LeucoFetchSlackWebClient", () => {
     })
     expect(String(uploadCall[0])).toBe("https://files.slack.com/upload/test")
     expect(uploadCall[1]?.body).toBeInstanceOf(FormData)
+    expect(uploadCall[1]?.redirect).toBe("error")
     expect(String(completeCall[0])).toBe("https://slack.com/api/files.completeUploadExternal")
     const completeBody = new URLSearchParams(String(completeCall[1]?.body))
     expect({
@@ -239,7 +252,7 @@ describe("LeucoFetchSlackWebClient", () => {
     })
   })
 
-  it("normalizes Slack thread reply counts from conversations.history", async () => {
+  it("preserves raw Slack thread reply counts from conversations.history", async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -262,24 +275,17 @@ describe("LeucoFetchSlackWebClient", () => {
       fetchFn: fetchMock,
     })
 
-    const history = await client.conversationsHistory({
+    const history = await client.apiCall("conversations.history", {
       channel: "D1",
       oldest: null,
       inclusive: null,
       limit: 50,
     })
 
-    expect(history.messages).toEqual([
-      {
-        user: "U1",
-        text: "root",
-        ts: "100.0",
-        threadTs: null,
-        replyCount: 2,
-        subtype: null,
-        botId: null,
-      },
-    ])
+    expect(history).toEqual({
+      ok: true,
+      messages: [{ user: "U1", text: "root", ts: "100.0", reply_count: 2 }],
+    })
   })
 
   it.each([
@@ -321,7 +327,7 @@ describe("LeucoFetchSlackWebClient", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
-    await client.chatPostMessage({ channel: "C1", threadTs: null, text: "hi" })
+    await client.apiCall("chat.postMessage", { channel: "C1", text: "hi" })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
@@ -334,9 +340,9 @@ describe("LeucoFetchSlackWebClient", () => {
 
     const client = new LeucoFetchSlackWebClient({ botToken: "xoxb-test" })
 
-    await expect(
-      client.chatPostMessage({ channel: "C1", threadTs: null, text: "hi" }),
-    ).rejects.toThrow("http 429")
+    await expect(client.apiCall("chat.postMessage", { channel: "C1", text: "hi" })).rejects.toThrow(
+      "http 429",
+    )
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
@@ -428,3 +434,27 @@ const expectFormBody = (init: RequestInit, expected: Record<string, string>): vo
     expect(params.get(key)).toBe(value)
   }
 }
+
+it("keeps stored bearer authentication and literal body keys without mutating caller data", async () => {
+  const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+    Response.json({ ok: true }),
+  )
+  const client = new LeucoFetchSlackWebClient({
+    botToken: "synthetic-stored-token",
+    fetchFn: fetchMock,
+  })
+  const body: Record<string, unknown> = JSON.parse(
+    '{"token":"caller-override","__proto__":{"literal":true},"constructor":"value","channel":"C1"}',
+  )
+  const original = JSON.stringify(body)
+  await client.apiCall("chat.postMessage", body)
+  const request = fetchMock.mock.calls[0]?.[1]
+  expect(new Headers(request?.headers).get("authorization")).toBe("Bearer synthetic-stored-token")
+  const forwarded = JSON.parse(String(request?.body))
+  expect(forwarded).toEqual(
+    JSON.parse('{"__proto__":{"literal":true},"constructor":"value","channel":"C1"}'),
+  )
+  expect(Object.hasOwn(forwarded, "token")).toBe(false)
+  expect(Object.hasOwn(forwarded, "__proto__")).toBe(true)
+  expect(JSON.stringify(body)).toBe(original)
+})

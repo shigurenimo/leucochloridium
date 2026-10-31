@@ -26,12 +26,19 @@
     "lib/non-bun-stub.js",
     "!lib/**/*.test.ts",
     "!lib/**/*.bun-test.ts",
+    "!lib/{clipboard,engine/codex,storage,maintenance,secrets}/memory-*.ts",
+    "!lib/memory-diagnostic-output.ts",
+    "!lib/connectors/slack/leuco-memory-*.ts",
+    "!lib/cli/render-cli-docs.ts",
     "dist/types/**/*.d.ts",
     "CHANGELOG.md",
     "SECURITY.md",
     "tsconfig.json",
     "README.md",
     "CLI.md",
+    ".docs/reliability.md",
+    ".docs/reliability-design.md",
+    ".docs/reliability-verification.md",
     "skills/leuco-cli/SKILL.md"
   ],
   "type": "module",
@@ -54,16 +61,15 @@
     "build:types": "rm -rf dist/types && tsc -p tsconfig.types.json && bun run scripts/rewrite-declaration-imports.ts",
     "check": "vp check",
     "dev": "bun run lib/index.ts",
-    "package:check": "bun run build:types && publint && bun pm pack --dry-run",
+    "package:check": "bun pm pack --dry-run && publint",
     "prepare": "bun run build:types",
-    "prepack": "bun run build:types",
     "test": "vp test run && bun run test:bun",
     "test:bun": "bun test ./lib/events/leuco-event-log.bun-test.ts",
     "test:coverage": "vp test run --coverage",
     "test:package": "bun run scripts/verify-packed-package.ts",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.scripts.json --pretty false",
     "verify": "bun run check && bun run docs:check && bun run typecheck && bun run test && bun run test:cli && bun run package:check && bun run test:package",
-    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts && bun run scripts/verify-cli-contract.ts && bun run scripts/verify-noninteractive.ts && bun run scripts/verify-maintenance.ts && bun run scripts/verify-reliability.ts && bun run scripts/verify-clipboard.ts && bun run scripts/verify-linked-cli.ts",
+    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts && bun run scripts/verify-slack-http.ts && bun run scripts/verify-slack-sockets.ts && bun run scripts/verify-diagnostic-output.ts && bun run scripts/verify-event-log-concurrency.ts && bun run scripts/verify-cli-contract.ts && bun run scripts/verify-noninteractive.ts && bun run scripts/verify-maintenance.ts && bun run scripts/verify-reliability.ts && bun run scripts/verify-storage-cleanup.ts && bun run scripts/verify-clipboard.ts && bun run scripts/verify-linked-cli.ts",
     "docs:cli": "bun run scripts/generate-cli-docs.ts",
     "docs:check": "bun run scripts/generate-cli-docs.ts --check"
   },
@@ -78,11 +84,6 @@
     "typescript": "7.0.2",
     "vite-plus": "1.4.0",
     "vitest": "5.0.5"
-  },
-  "overrides": {
-    "@hono/node-server": "2.0.12",
-    "body-parser": "2.3.0",
-    "fast-uri": "4.1.1"
   },
   "engines": {
     "bun": ">=1.4.4"

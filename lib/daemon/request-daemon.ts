@@ -1,5 +1,6 @@
-import { requestDaemonResponse } from "@/daemon/request-daemon-response"
-import type { DaemonRequest } from "@/daemon/request-daemon-response"
+import { DaemonHttpRequest } from "@/daemon/daemon-http-request"
+import type { DaemonRequest } from "@/daemon/daemon-http-request"
+
 export async function requestDaemon(props: DaemonRequest): Promise<unknown> {
-  return (await requestDaemonResponse(props)).json()
+  return new DaemonHttpRequest(props).getJson()
 }

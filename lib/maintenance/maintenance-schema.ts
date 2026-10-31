@@ -1,13 +1,13 @@
+import { filesystemPathSchema } from "@/config/filesystem-path-schema"
 import { errorDetailsSchema } from "@/error-details-schema"
 import { z } from "zod"
+import { isAbsolute } from "node:path"
 
 export const launchSchema = z.strictObject({
-  workingDirectory: z.string(),
-  codexHome: z.string().nullable(),
-  cwd: z.string().optional(),
-  soul: z.string().nullable().optional(),
-  model: z.string().nullable().optional(),
-  codexBin: z.string().optional(),
+  workingDirectory: filesystemPathSchema.refine(isAbsolute, "workingDirectory must be absolute"),
+  codexHome: filesystemPathSchema.nullable(),
+  cwd: filesystemPathSchema.refine(isAbsolute, "cwd must be absolute").optional(),
+  soul: filesystemPathSchema.refine(isAbsolute, "soul must be absolute").nullable().optional(),
 })
 export const operationSchema = z.strictObject({
   id: z.uuid(),
@@ -22,6 +22,7 @@ export const operationSchema = z.strictObject({
   error: z.string().nullable(),
   causes: errorDetailsSchema.optional(),
   eventLogError: z.string().nullable().optional(),
+  eventLogCauses: errorDetailsSchema.optional(),
   launch: launchSchema,
 })
 export type LaunchConfiguration = z.infer<typeof launchSchema>

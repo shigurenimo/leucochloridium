@@ -1,5 +1,6 @@
-import { readRegularText } from "@/fs/read-regular-text"
-import { existsSync, chmodSync, mkdirSync } from "node:fs"
+import { readRegularJson } from "@/fs/read-regular-json"
+import { readRegularBytes } from "@/fs/read-regular-bytes"
+import { lstatSync, chmodSync, mkdirSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { settingsSchema, stateSchema } from "@/config/config-schema"
 import type { LeucoSettings, LeucoState } from "@/config/config-schema"
@@ -18,8 +19,8 @@ export class NodeLeucoStore extends LeucoStore {
 
   loadSettings(): LeucoSettings {
     const path = join(this.home, "settings.json")
-    if (!existsSync(path)) return settingsSchema.parse({})
-    const document: unknown = JSON.parse(readRegularText(path))
+    if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return settingsSchema.parse({})
+    const document: unknown = readRegularJson(path)
     return settingsSchema.parse(document)
   }
 
@@ -36,8 +37,8 @@ export class NodeLeucoStore extends LeucoStore {
 
   loadState(): LeucoState {
     const path = join(this.home, "state.json")
-    if (!existsSync(path)) return stateSchema.parse({})
-    return stateSchema.parse(JSON.parse(readRegularText(path)))
+    if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return stateSchema.parse({})
+    return stateSchema.parse(readRegularJson(path))
   }
 
   updateState(transform: (state: LeucoState) => LeucoState): void {
@@ -52,7 +53,12 @@ export class NodeLeucoStore extends LeucoStore {
   }
 
   readInstructions(path: string): string {
-    return readRegularText(path, 256 * 1024)
+    const bytes = readRegularBytes(path, 256 * 1024)
+    try {
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
+    } catch (cause) {
+      throw new Error(`SOUL file is not valid UTF-8: ${path}`, { cause })
+    }
   }
 
   ensureHome(): void {

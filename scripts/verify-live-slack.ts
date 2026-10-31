@@ -1,5 +1,4 @@
-import { resolve, join } from "node:path"
-import { homedir } from "node:os"
+import { leucoHomeSchema } from "@/config/leuco-home-schema"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { BunCredentialStore } from "@/secrets/bun-credential-store"
 import { loadSlackCredentials } from "@/secrets/load-slack-credentials"
@@ -9,7 +8,7 @@ import { LeucoEventLog } from "@/events/leuco-event-log"
 import { errorDetails } from "@/error-details"
 
 /** Explicit live check only: authenticates and receives socket events, never runs an agent or posts messages. */
-const home = resolve(process.env.LEUCO_HOME ?? join(homedir(), ".leuco"))
+const home = leucoHomeSchema.parse(process.env.LEUCO_HOME)
 const events = new LeucoEventLog()
 const resources: {
   source: LeucoFlumeSlackEventSource | null

@@ -1,4 +1,8 @@
+import { getCodexProtocolLimits } from "@/engine/codex/get-codex-protocol-limits"
+import { CodexRpcError } from "@/engine/codex/codex-rpc-error"
 import { jsonRpcIncomingSchema } from "@/engine/codex/codex-schemas"
+import { redactPublicText } from "@/secrets/redact-public-text"
+import { sliceTextPrefix } from "@/slice-text-prefix"
 import { errorMessage } from "@/error-message"
 
 type Pending = {
@@ -6,15 +10,16 @@ type Pending = {
   reject: (err: Error) => void
 }
 
-export type CodexNotificationHandler = (method: string, params: unknown) => void
+type CodexNotificationHandler = (method: string, params: unknown) => void
 
-export type CodexLineWriter = (line: string) => void
+type CodexLineWriter = (line: string) => void
 
-export type LeucoCodexProtocolProps = {
+type LeucoCodexProtocolProps = {
   writer: CodexLineWriter
   onLog?: (line: string) => void
   maxFrameChars?: number
   logPreviewChars?: number
+  redactLogText?: (text: string) => string
 }
 
 /**
@@ -37,6 +42,7 @@ export class LeucoCodexProtocol {
   private readonly writer: CodexLineWriter
   private readonly onLog: (line: string) => void
   private readonly maxFrameChars: number
+  private readonly redactLogText: (text: string) => string
   private readonly logPreviewChars: number
   private readonly pending = new Map<string | number, Pending>()
   private buffer = ""
@@ -46,14 +52,10 @@ export class LeucoCodexProtocol {
   constructor(props: LeucoCodexProtocolProps) {
     this.writer = props.writer
     this.onLog = props.onLog ?? (() => undefined)
-    this.maxFrameChars = props.maxFrameChars ?? MAX_CODEX_PROTOCOL_FRAME_CHARS
-    this.logPreviewChars = props.logPreviewChars ?? MAX_CODEX_PROTOCOL_LOG_PREVIEW_CHARS
-    if (!Number.isSafeInteger(this.maxFrameChars) || this.maxFrameChars < 64) {
-      throw new Error("maxFrameChars must be an integer >= 64")
-    }
-    if (!Number.isSafeInteger(this.logPreviewChars) || this.logPreviewChars < 64) {
-      throw new Error("logPreviewChars must be an integer >= 64")
-    }
+    const limits = getCodexProtocolLimits(props)
+    this.maxFrameChars = limits.maxFrameChars
+    this.logPreviewChars = limits.logPreviewChars
+    this.redactLogText = props.redactLogText ?? redactPublicText
   }
 
   onNotification(handler: CodexNotificationHandler | null): void {
@@ -69,7 +71,7 @@ export class LeucoCodexProtocol {
       // `writer` is `child.stdin.write` in production; if stdin is already
       // closed (race with codex exit) it throws synchronously. Without this
       // catch the pending entry would never settle and the awaiting caller
-      // would hang until project runtime's wall-clock timeout fires.
+      // would hang until Leuco runtime's wall-clock timeout fires.
       try {
         this.writer(`${payload}\n`)
       } catch (err) {
@@ -133,7 +135,7 @@ export class LeucoCodexProtocol {
       if (!pending) return
       this.pending.delete(msg.id)
       if ("error" in msg) {
-        pending.reject(new Error(`${msg.error.message} (code ${msg.error.code})`))
+        pending.reject(new CodexRpcError(msg.error.code, msg.error.message))
         return
       }
       pending.resolve(msg.result)
@@ -165,25 +167,30 @@ export class LeucoCodexProtocol {
   }
 
   private toLogPreview(line: string): string {
-    if (line.length <= this.logPreviewChars) return line
+    const safe = this.redactLogText(line)
+    if (safe.length <= this.logPreviewChars) return safe
 
-    const suffix = `… [${line.length} chars]`
+    const suffix = `… [${safe.length} chars]`
     const prefixChars = Math.max(0, this.logPreviewChars - suffix.length)
-    return `${line.slice(0, prefixChars)}${suffix}`
+    return `${sliceTextPrefix(safe, prefixChars)}${suffix}`
   }
 
   /**
    * codex may send server→client requests (approval prompts etc.). leuco has
    * no terminal to answer them, and silently dropping the frame would leave
    * codex waiting forever — reply with a JSON-RPC error so the turn can fail
-   * fast instead of stalling until the project runtime wall-clock timeout.
+   * fast instead of stalling until the Leuco runtime wall-clock timeout.
    */
   private rejectServerRequest(id: string | number, method: string): void {
-    this.onLog(`[codex server request rejected] ${method} (id ${id})`)
+    const context = JSON.stringify({
+      method: this.redactLogText(method),
+      id: this.redactLogText(String(id)),
+    })
+    this.onLog(`[codex server request rejected] ${this.toLogPreview(context)}`)
     const payload = JSON.stringify({
       jsonrpc: "2.0",
       id,
-      error: { code: -32601, message: `leuco cannot answer server request "${method}"` },
+      error: { code: -32601, message: "leuco cannot answer server requests" },
     })
     try {
       this.writer(`${payload}\n`)
@@ -192,9 +199,6 @@ export class LeucoCodexProtocol {
     }
   }
 }
-
-const MAX_CODEX_PROTOCOL_FRAME_CHARS = 8 * 1024 * 1024
-const MAX_CODEX_PROTOCOL_LOG_PREVIEW_CHARS = 2_000
 
 const tryParse = (line: string): unknown => {
   try {

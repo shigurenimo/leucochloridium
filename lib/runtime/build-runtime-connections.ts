@@ -16,8 +16,6 @@ export function buildRuntimeConnections(props: Props): Connector[] {
   if (slack !== null && credentials !== null)
     connections.push(
       new LeucoSlackConnector({
-        name: "slack",
-        usesUserToken: credentials.botToken.startsWith("xoxp-"),
         ackMode: slack.ackMode,
         webClient: new LeucoFetchSlackWebClient({ botToken: credentials.botToken }),
         eventSource: new LeucoFlumeSlackEventSource({
@@ -26,22 +24,52 @@ export function buildRuntimeConnections(props: Props): Connector[] {
         }),
       }),
     )
+  const attempts: {
+    snapshot: { fired: Record<string, number>; scheduled: Record<string, string> } | null
+  } = { snapshot: null }
   connections.push(
     new LeucoScheduleConnector({
-      name: "schedule",
       store: {
-        listEntries: () => props.store.loadSettings().schedules,
-        removeEntry: (id) =>
-          props.store.updateSettings((settings) => ({
-            ...settings,
-            schedules: settings.schedules.filter((entry) => entry.id !== id),
-          })),
-        getLastFiredAt: (id) => props.store.loadState().scheduleLastFiredAt[id] ?? null,
-        markFired: (id, timestamp) =>
+        listEntries: () => {
+          attempts.snapshot = null
+          return props.store.loadSettings().schedules
+        },
+        removeEntry: (id, expectedRunAt) => {
+          const removal = { removed: false }
+          props.store.updateSettings((settings) => {
+            const schedules = settings.schedules.filter(
+              (entry) => entry.id !== id || entry.runAt !== expectedRunAt,
+            )
+            removal.removed = schedules.length < settings.schedules.length
+            return { ...settings, schedules }
+          })
+          return removal.removed
+        },
+        getLastAttempt: (id) => {
+          if (attempts.snapshot === null) {
+            const state = props.store.loadState()
+            attempts.snapshot = {
+              fired: state.scheduleLastFiredAt,
+              scheduled: state.scheduleLastRunAt ?? {},
+            }
+          }
+          const snapshot = attempts.snapshot
+          const timestamp = Object.hasOwn(snapshot.fired, id) ? snapshot.fired[id] : undefined
+          if (timestamp === undefined) return null
+          const scheduledTimes = snapshot.scheduled
+          return {
+            firedAt: timestamp,
+            runAt: Object.hasOwn(scheduledTimes, id) ? (scheduledTimes[id] ?? null) : null,
+          }
+        },
+        markFired: (id, timestamp, runAt) => {
+          attempts.snapshot = null
           props.store.updateState((state) => ({
             ...state,
             scheduleLastFiredAt: { ...state.scheduleLastFiredAt, [id]: timestamp },
-          })),
+            scheduleLastRunAt: { ...state.scheduleLastRunAt, [id]: runAt },
+          }))
+        },
       },
     }),
   )

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { codexThreadIdSchema } from "@/codex-thread-id-schema"
 
 /** JSON-RPC 2.0 envelopes (NDJSON over stdio). */
 
@@ -22,9 +23,9 @@ const errorResponseSchema = z.object({
   error: jsonRpcErrorSchema,
 })
 
-export const jsonRpcResponseSchema = z.union([successResponseSchema, errorResponseSchema])
+const jsonRpcResponseSchema = z.union([successResponseSchema, errorResponseSchema])
 
-export const jsonRpcNotificationSchema = z.object({
+const jsonRpcNotificationSchema = z.object({
   jsonrpc: z.literal("2.0").optional(),
   method: z.string(),
   params: z.unknown().optional(),
@@ -34,7 +35,7 @@ export const jsonRpcNotificationSchema = z.object({
 // sit before the notification schema in the union: the notification schema
 // also matches these frames but strips `id`, and a dropped `id` means codex
 // waits forever for a reply.
-export const jsonRpcServerRequestSchema = z.object({
+const jsonRpcServerRequestSchema = z.object({
   jsonrpc: z.literal("2.0").optional(),
   id: z.union([z.string(), z.number()]),
   method: z.string(),
@@ -49,31 +50,25 @@ export const jsonRpcIncomingSchema = z.union([
 
 /** Codex domain shapes. */
 
-export const codexThreadSchema = z.object({
-  id: z.string(),
-  preview: z.string().optional(),
-  modelProvider: z.string().optional(),
-  createdAt: z.number().optional(),
+const codexThreadSchema = z.object({
+  id: codexThreadIdSchema,
 })
 
 export const threadStartResultSchema = z.object({
   thread: codexThreadSchema,
 })
 
+const codexTurnIdSchema = z.string().regex(/\S/, "Codex turn ID must not be blank")
+
 /** `turn/start` response. */
 export const turnStartResultSchema = z.object({
-  turn: z
-    .object({
-      id: z.string(),
-    })
-    .passthrough(),
+  turn: z.object({ id: codexTurnIdSchema }),
 })
 
 /** `item/agentMessage/delta` notification params. */
 export const agentMessageDeltaSchema = z.object({
   threadId: z.string(),
-  turnId: z.string(),
-  itemId: z.string(),
+  turnId: codexTurnIdSchema,
   delta: z.string(),
 })
 
@@ -86,44 +81,51 @@ export const commandExecutionOutputDeltaSchema = z.object({
 /** `item/completed` — only the agentMessage variant carries the final text we care about. */
 export const itemCompletedSchema = z.object({
   threadId: z.string(),
-  turnId: z.string(),
-  item: z
-    .object({
-      type: z.string(),
-      id: z.string().optional(),
-      text: z.string().optional(),
-      phase: z.string().nullable().optional(),
-    })
-    .passthrough(),
+  turnId: codexTurnIdSchema,
+  item: z.object({
+    type: z.string(),
+    text: z.string().optional(),
+    phase: z.string().nullable().optional(),
+  }),
 })
 
 export const turnCompletedSchema = z.object({
   threadId: z.string(),
-  turn: z
-    .object({
-      id: z.string(),
-      status: z.string(),
-      error: z.unknown().nullable().optional(),
-    })
-    .passthrough(),
+  turn: z.object({
+    id: codexTurnIdSchema,
+    status: z.string(),
+    error: z.unknown().nullable().optional(),
+  }),
 })
 
 export const turnCompletedIdentitySchema = z.object({
   threadId: z.string(),
-  turn: z.object({ id: z.string() }),
+  turn: z.object({ id: codexTurnIdSchema }),
 })
 
 /** Common identities carried by notifications belonging to a running turn. */
-export const turnNotificationIdentitySchema = z.union([
-  z.object({
+export const turnNotificationIdentitySchema = z
+  .object({
     threadId: z.string(),
-    turnId: z.string(),
-  }),
-  turnCompletedIdentitySchema,
-])
+    turnId: codexTurnIdSchema.optional(),
+    turn: z.object({ id: codexTurnIdSchema }).optional(),
+  })
+  .transform((identity, context) => {
+    const turnId = identity.turnId ?? identity.turn?.id
+    if (
+      turnId === undefined ||
+      (identity.turnId !== undefined &&
+        identity.turn !== undefined &&
+        identity.turnId !== identity.turn.id)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Codex notification must identify one unambiguous turn",
+      })
+      return z.NEVER
+    }
+    return { threadId: identity.threadId, turnId }
+  })
 
-export type JsonRpcResponse = z.infer<typeof jsonRpcResponseSchema>
-export type JsonRpcNotification = z.infer<typeof jsonRpcNotificationSchema>
-export type JsonRpcIncoming = z.infer<typeof jsonRpcIncomingSchema>
 export type ThreadStartResult = z.infer<typeof threadStartResultSchema>
 export type TurnStartResult = z.infer<typeof turnStartResultSchema>

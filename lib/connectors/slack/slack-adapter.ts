@@ -1,24 +1,15 @@
 import type { LeucoSlackWebClient } from "@/connectors/slack/leuco-slack-web-client"
-import type { SlackReply } from "@/connectors/slack/slack-types"
 import { errorMessage } from "@/error-message"
 
-export type LeucoSlackAdapterProps = {
+type LeucoSlackAdapterProps = {
   client: LeucoSlackWebClient
   onLog?: (line: string) => void
 }
 
-/** Thin wrapper around the outbound Slack API used by the connector. */
+/** Connector acknowledgement reactions; message sends use explicit Slack CLI actions. */
 export class LeucoSlackAdapter {
   constructor(private readonly props: LeucoSlackAdapterProps) {
     Object.freeze(this)
-  }
-
-  async postReply(reply: SlackReply): Promise<void> {
-    await this.props.client.chatPostMessage({
-      channel: reply.channel,
-      threadTs: reply.threadTs,
-      text: reply.text,
-    })
   }
 
   async addReaction(channel: string, ts: string, name: string): Promise<void> {

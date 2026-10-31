@@ -1,3 +1,4 @@
+import { sliceTextPrefix } from "@/slice-text-prefix"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 
 const MAX_TURN_TEXT_CHARS = 16_000
@@ -5,11 +6,11 @@ const MAX_NOTIFICATION_CHARS = 8_000
 
 export function compactLeucoEvent(event: LeucoEvent): LeucoEvent {
   if (event.type === "log" && event.line.length > 16000)
-    return { ...event, line: `${event.line.slice(0, 16000)} [truncated]` }
+    return { ...event, line: `${sliceTextPrefix(event.line, MAX_TURN_TEXT_CHARS)} [truncated]` }
   if (event.type === "turn.start" && event.input.length > MAX_TURN_TEXT_CHARS) {
     return {
       ...event,
-      input: event.input.slice(0, MAX_TURN_TEXT_CHARS),
+      input: sliceTextPrefix(event.input, MAX_TURN_TEXT_CHARS),
       inputChars: event.input.length,
       inputTruncated: true,
     }
@@ -18,7 +19,7 @@ export function compactLeucoEvent(event: LeucoEvent): LeucoEvent {
   if (event.type === "turn.complete" && event.reply.length > MAX_TURN_TEXT_CHARS) {
     return {
       ...event,
-      reply: event.reply.slice(0, MAX_TURN_TEXT_CHARS),
+      reply: sliceTextPrefix(event.reply, MAX_TURN_TEXT_CHARS),
       replyChars: event.reply.length,
       replyTruncated: true,
     }
@@ -34,7 +35,7 @@ export function compactLeucoEvent(event: LeucoEvent): LeucoEvent {
     params: {
       truncated: true,
       originalChars: serialized.length,
-      preview: serialized.slice(0, MAX_NOTIFICATION_CHARS),
+      preview: sliceTextPrefix(serialized, MAX_NOTIFICATION_CHARS),
     },
   }
 }

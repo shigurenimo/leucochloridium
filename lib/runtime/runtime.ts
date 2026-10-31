@@ -1,4 +1,7 @@
+import { LeucoLogConsumer } from "@/runtime/leuco-log-consumer"
+import { MAX_THREAD_KEY_CHARACTERS, MAX_TURN_INPUT_BYTES } from "@/turn-input-limits"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
+import type { LogLevel } from "@/log-level"
 import { LeucoConversations } from "@/runtime/leuco-conversations"
 import { buildRuntimeConnections } from "@/runtime/build-runtime-connections"
 import { errorDetails } from "@/error-details"
@@ -15,6 +18,7 @@ import { toBoundedCodexNotification } from "@/engine/codex/to-bounded-codex-noti
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { errorMessage } from "@/error-message"
 import { buildCodexChildEnv } from "@/runtime/build-codex-child-env"
+import { leucoHomeSchema } from "@/config/leuco-home-schema"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import type { LeucoStore } from "@/storage/leuco-store"
 
@@ -24,18 +28,21 @@ import type { SlackCredentials } from "@/secrets/slack-credentials"
 import { loadSlackCredentials } from "@/secrets/load-slack-credentials"
 import { executeSlackCommand } from "@/actions/slack/execute-slack-command"
 import type { CliArguments } from "@/cli/parse-arguments"
-import { validateCommand } from "@/cli/validate-command"
+import { validateSlackCommand } from "@/cli/validate-slack-command"
+import type { SlackCommandOptions } from "@/runtime/slack-command-options"
+import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { assertSlackReplyActive } from "@/runtime/assert-slack-reply-active"
 
 export type LeucoRuntimeProps = {
   cwd?: string
   home?: string
   env?: NodeJS.ProcessEnv
   soul?: string | null
-  model?: string | null
   codexBin?: string
-  onLog?: (line: string) => void
+  onLog?: (line: string, level?: LogLevel, requestId?: string) => void
   store?: LeucoStore
   codex?: CodexClientPort
+  /** Caller-owned when supplied; close it after all users finish shutdown. */
   eventLog?: LeucoEventLog
   connections?: Connector[]
   credentials?: CredentialStore
@@ -44,6 +51,7 @@ export type LeucoRuntimeProps = {
 type PendingTurn = {
   requestId: string
   enqueuedAt: number
+  enqueuedTick: number
   key: string
   text: string
   bytes: number
@@ -58,10 +66,25 @@ export class LeucoRuntime {
   private readonly settings: LeucoSettings
   private readonly codex: CodexClientPort
   private readonly eventLog: LeucoEventLog
+  private readonly ownsEventLog: boolean
+  private readonly logConsumer: LeucoLogConsumer
   private readonly connections: Connector[]
+  private readonly credentialStore: CredentialStore
+  private readonly usesDefaultConnections: boolean
   private readonly conversations: LeucoConversations
   private readonly pending: PendingTurn[] = []
   private slackCredentials: SlackCredentials | null = null
+  private readonly slackShutdown = new AbortController()
+  private readonly slackOperations = new Map<
+    Promise<unknown>,
+    {
+      requestId: string
+      action: string
+      startedAt: number
+      startedTick: number
+      signal: AbortSignal
+    }
+  >()
   private activeRequest: {
     requestId: string
     threadKey: string
@@ -82,29 +105,35 @@ export class LeucoRuntime {
   private readonly shutdown = Promise.withResolvers<Error>()
   private generation = 0
 
-  private constructor(private readonly props: LeucoRuntimeProps) {
+  private constructor(props: LeucoRuntimeProps) {
     const env = props.env ?? process.env
-    this.home = resolve(props.home ?? env.LEUCO_HOME ?? join(homedir(), ".leuco"))
+    this.credentialStore = props.credentials ?? new BunCredentialStore()
+    this.home = leucoHomeSchema.parse(props.home ?? env.LEUCO_HOME)
     this.store = props.store ?? new NodeLeucoStore(this.home)
     this.settings = settingsSchema.parse(this.store.loadSettings())
     this.cwd = resolve(props.cwd ?? this.settings.cwd ?? process.cwd())
+    this.ownsEventLog = props.eventLog === undefined
     this.eventLog = props.eventLog ?? new LeucoEventLog()
     this.eventLog.setInstanceId(this.instanceId)
+    this.logConsumer = new LeucoLogConsumer({ eventLog: this.eventLog, onLog: props.onLog })
     this.codex =
       props.codex ??
       new LeucoCodexClient({
         cwd: this.cwd,
         bin: props.codexBin,
         env: buildCodexChildEnv({ env, home: this.home }),
-        onLog: (line) => this.log(line),
-        onAnyNotification: (method, params) => {
-          const bounded = toBoundedCodexNotification(method, params)
+        onLog: (line, level) => this.log(line, level),
+        redactLogText: (line) => this.eventLog.redactText(line),
+        onAnyNotification: (method, params, requestId) => {
+          const bounded = toBoundedCodexNotification(method, params, {
+            text: (value) => this.eventLog.redactText(value),
+            value: (value) => this.eventLog.redactValue(value),
+          })
           if (bounded !== null)
             this.eventLog.append({
               ts: Date.now(),
               type: "codex.notification",
-              requestId: this.activeRequest?.requestId,
-              runtime: "leuco",
+              requestId,
               ...bounded,
             })
         },
@@ -115,25 +144,38 @@ export class LeucoRuntime {
       cwd: this.cwd,
       codexHome: env.CODEX_HOME ?? join(homedir(), ".codex"),
       soul: props.soul === undefined ? this.settings.soul : props.soul,
-      model: props.model ?? this.settings.model,
+      model: this.settings.model,
       eventLog: this.eventLog,
     })
-    this.connections = [...(props.connections ?? [])]
+    const connections = props.connections
+    this.usesDefaultConnections = connections === undefined
+    this.connections = [...(connections ?? [])]
   }
 
   getStatus() {
     return {
       instanceId: this.instanceId,
       logs: this.eventLog.getHealth(),
+      logConsumer: this.logConsumer.getHealth(),
       lifecycle: this.lifecycle,
       codexRunning: this.codex.isRunning(),
-      codex: this.codex.getStatus?.() ?? null,
+      codex: structuredClone(this.codex.getStatus?.() ?? null),
       active: this.activeRequest === null ? null : { ...this.activeRequest },
+      slack: {
+        active: this.slackOperations.size,
+        requests: Array.from(this.slackOperations.values(), (operation) => ({
+          requestId: operation.requestId,
+          action: operation.action,
+          startedAt: operation.startedAt,
+          elapsedMs: Math.max(0, Math.round(performance.now() - operation.startedTick)),
+          cancellationRequested: operation.signal.aborted,
+        })),
+      },
       queue: {
         waiting: this.pending.length,
         bytes: this.pendingBytes,
         maxWaiting: 64,
-        maxBytes: 256 * 1024,
+        maxBytes: MAX_TURN_INPUT_BYTES,
         requests: this.pending.map((entry) => ({
           requestId: entry.requestId,
           threadKey: entry.key,
@@ -143,14 +185,14 @@ export class LeucoRuntime {
       lastFailure: this.lastFailure === null ? null : { ...this.lastFailure },
       connections: this.connections.map((connection) => ({
         ...connection.getIdentity(),
-        ...(connection.getStatus ? { health: connection.getStatus() } : {}),
+        ...(connection.getStatus ? { health: structuredClone(connection.getStatus()) } : {}),
       })),
     }
   }
 
   getVolatileEvents(query: LeucoEventQuery) {
-    if (this.eventLog.getHealth().mode !== "memory-fallback")
-      throw new Error("Volatile history is only available while event persistence is unavailable")
+    if (this.eventLog.getHealth().mode === "sqlite")
+      throw new Error("Volatile history is only available for memory event storage")
     return [...this.eventLog.query({ ...query, order: "desc" })].reverse()
   }
 
@@ -164,17 +206,12 @@ export class LeucoRuntime {
     try {
       const slack = this.settings.slack
       const credentials =
-        slack === null
-          ? null
-          : await loadSlackCredentials(
-              this.props.credentials ?? new BunCredentialStore(),
-              slack.credential,
-            )
+        slack === null ? null : await loadSlackCredentials(this.credentialStore, slack.credential)
       if (this.lifecycle !== "starting") throw new Error("Runtime stopped during startup")
       this.slackCredentials = credentials
       if (credentials !== null)
-        this.eventLog.setRedactionSecrets([credentials.botToken, credentials.appToken])
-      if (this.props.connections === undefined)
+        this.eventLog.addRedactionSecrets([credentials.botToken, credentials.appToken])
+      if (this.usesDefaultConnections)
         this.connections.push(
           ...buildRuntimeConnections({ settings: this.settings, credentials, store: this.store }),
         )
@@ -186,10 +223,10 @@ export class LeucoRuntime {
       for (const connection of this.connections) {
         if (this.lifecycle !== "running") throw new Error("Runtime stopped during startup")
         await connection.start({
-          cwd: this.cwd,
-          runtimeName: "leuco",
           eventLog: this.eventLog,
-          onLog: (line) => this.log(line),
+          onLog: (line, level, requestId) => this.log(line, level, requestId ?? null),
+          onTextLog: (line, level = "info", requestId) =>
+            this.logConsumer.write(this.eventLog.redactText(line), level, requestId ?? null),
           runTextTurn: (key, text, requestId) => this.runTextTurn(key, text, requestId),
         })
         if (this.lifecycle !== "running") {
@@ -197,13 +234,14 @@ export class LeucoRuntime {
           throw new Error("Runtime stopped during startup")
         }
       }
-      this.eventLog.append({ ts: Date.now(), type: "runtime.started", runtime: "leuco" })
+      this.eventLog.append({ ts: Date.now(), type: "runtime.started" })
+      if (this.lifecycle !== "running") throw new Error("Runtime stopped during startup")
     } catch (error) {
       this.lastFailure = {
         ts: Date.now(),
         requestId: null,
         phase: "startup",
-        message: this.eventLog.redactText(errorMessage(error)),
+        message: this.eventLog.redactError(error).message,
       }
       this.eventLog.error(`Runtime startup failed: ${this.lastFailure.message}`, error)
       try {
@@ -219,54 +257,81 @@ export class LeucoRuntime {
     }
   }
 
-  async runSlackCommand(
-    parsed: CliArguments,
-    upload?: Uint8Array,
-    requestId: string = randomUUID(),
-  ): Promise<unknown> {
-    validateCommand(parsed)
-    if (
-      parsed.words[0] !== "slack" ||
-      !["call", "upload-file", "download-file"].includes(parsed.words[1] ?? "")
+  runSlackCommand(parsed: CliArguments, options: SlackCommandOptions = {}): Promise<unknown> {
+    const context = {
+      ...options,
+      requestId: options.requestId ?? randomUUID(),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, this.slackShutdown.signal])
+        : this.slackShutdown.signal,
+    }
+    const startedAt = Date.now()
+    const startedTick = performance.now()
+    const operation = this.performSlackCommand(parsed, context)
+    this.slackOperations.set(operation, {
+      requestId: context.requestId,
+      action: ["call", "upload-file", "download-file"].includes(parsed.words[1] ?? "")
+        ? parsed.words[1]!
+        : "invalid",
+      startedAt,
+      startedTick,
+      signal: context.signal,
+    })
+    void operation.then(
+      () => this.slackOperations.delete(operation),
+      () => this.slackOperations.delete(operation),
     )
-      throw new Error("Unsupported Slack operation")
+    return operation
+  }
+
+  private async performSlackCommand(
+    parsed: CliArguments,
+    options: SlackCommandOptions & { requestId: string; signal: AbortSignal },
+  ): Promise<unknown> {
+    const requestId = options.requestId
+    const signal = options.signal
+    validateSlackCommand(parsed)
     if (this.lifecycle !== "running") throw new Error("Runtime is not running")
     if (this.slackCredentials === null)
       throw new Error(
         "Slack is not configured; stop Leuco, copy each token, and run leuco slack login bot / leuco slack login app",
       )
-    const startedAt = Date.now()
+    const startedTick = performance.now()
     this.eventLog.log(
       "info",
       `Slack operation started: ${parsed.words.slice(1).join(" ")}`,
       requestId,
     )
     try {
+      signal.throwIfAborted()
       const reply = await executeSlackCommand({
         parsed,
         botToken: this.slackCredentials.botToken,
-        upload,
+        upload: options.upload,
+        signal,
       })
-      if (this.lifecycle !== "running") {
-        if (reply instanceof Response) await reply.body?.cancel().catch(() => {})
-        throw new Error("Runtime stopped during Slack operation")
-      }
-      return reply instanceof Response
-        ? reply
-        : JSON.parse(this.eventLog.redactText(JSON.stringify(reply)))
+      await assertSlackReplyActive(reply, signal)
+      return reply instanceof Response ? reply : this.eventLog.redactValue(reply)
     } catch (error) {
-      const message = this.eventLog.redactText(errorMessage(error))
+      const failure = signal.aborted
+        ? new Error(
+            "Slack operation cancelled; external effects may already have been accepted; inspect before replaying",
+            { cause: error },
+          )
+        : error
+      const safeFailure = this.eventLog.redactError(failure)
+      const message = safeFailure.message
       this.lastFailure = { ts: Date.now(), requestId, phase: "slack", message }
       this.eventLog.error(
-        `Slack operation failed after ${Date.now() - startedAt} ms: ${message}`,
-        error,
+        `Slack operation failed after ${Math.max(0, Math.round(performance.now() - startedTick))} ms: ${message}`,
+        safeFailure,
         requestId,
       )
-      throw new Error(message, { cause: error })
+      throw new Error(message, { cause: safeFailure })
     } finally {
       this.eventLog.log(
         "info",
-        `Slack operation finished after ${Date.now() - startedAt} ms`,
+        `Slack operation finished after ${Math.max(0, Math.round(performance.now() - startedTick))} ms`,
         requestId,
       )
     }
@@ -277,20 +342,27 @@ export class LeucoRuntime {
     text: string,
     requestId: string = randomUUID(),
   ): Promise<string | Error> {
+    if (text.trim().length === 0)
+      return Promise.resolve(new Error("Turn input must contain non-whitespace text"))
+    if (!key || key.length > MAX_THREAD_KEY_CHARACTERS)
+      return Promise.resolve(
+        new Error(`Thread key must contain 1-${MAX_THREAD_KEY_CHARACTERS} UTF-16 code units`),
+      )
     const bytes = Buffer.byteLength(text, "utf8")
     const rejected =
       this.lifecycle !== "running"
         ? "runtime_stopped"
-        : this.pending.length >= 64
-          ? "queue_count_limit"
-          : this.pendingBytes + bytes > 256 * 1024
-            ? "queue_bytes_limit"
-            : null
+        : bytes > MAX_TURN_INPUT_BYTES
+          ? "input_bytes_limit"
+          : this.pending.length >= 64
+            ? "queue_count_limit"
+            : this.pendingBytes + bytes > MAX_TURN_INPUT_BYTES
+              ? "queue_bytes_limit"
+              : null
     if (rejected !== null) {
       this.eventLog.append({
         ts: Date.now(),
         type: "turn.rejected",
-        runtime: "leuco",
         threadKey: key,
         requestId,
         reason: rejected,
@@ -298,18 +370,18 @@ export class LeucoRuntime {
         queueBytes: this.pendingBytes,
         inputBytes: bytes,
         maxQueueDepth: 64,
-        maxQueueBytes: 256 * 1024,
+        maxQueueBytes: MAX_TURN_INPUT_BYTES,
       })
       return Promise.resolve(
         new Error(
           rejected === "runtime_stopped"
             ? "Runtime is not running"
-            : "Turn queue is full; retry after the current work finishes",
+            : rejected === "input_bytes_limit"
+              ? `Turn input exceeds ${MAX_TURN_INPUT_BYTES} UTF-8 bytes; reduce the input`
+              : "Turn queue is full; retry after the current work finishes",
         ),
       )
     }
-    if (!key || key.length > 512)
-      return Promise.resolve(new Error("Thread key must contain 1-512 characters"))
     return new Promise((resolveReply) => {
       this.pending.push({
         key,
@@ -317,25 +389,29 @@ export class LeucoRuntime {
         bytes,
         requestId,
         enqueuedAt: Date.now(),
+        enqueuedTick: performance.now(),
         resolve: resolveReply,
       })
+      this.pendingBytes += bytes
       this.eventLog.append({
         ts: Date.now(),
         type: "turn.queued",
-        runtime: "leuco",
         threadKey: key,
         requestId,
         queueDepth: this.pending.length,
-        queueBytes: this.pendingBytes + bytes,
+        queueBytes: this.pendingBytes,
       })
-      this.pendingBytes += bytes
       this.drain()
     })
   }
 
   stop(): Promise<void> {
     if (this.stopping !== null) return this.stopping
+    // Diagnostic callbacks may synchronously request stop again.
+    const stopped = Promise.withResolvers<void>()
+    this.stopping = stopped.promise
     this.lifecycle = "stopping"
+    this.slackShutdown.abort(new Error("Runtime stopped during Slack operation"))
     this.shutdown.resolve(new Error("Runtime stopped"))
     this.generation += 1
     for (const turn of this.pending.splice(0)) {
@@ -343,7 +419,6 @@ export class LeucoRuntime {
         ts: Date.now(),
         type: "turn.error",
         requestId: turn.requestId,
-        runtime: "leuco",
         threadKey: turn.key,
         error: "Runtime stopped before execution",
         cancelled: true,
@@ -351,7 +426,7 @@ export class LeucoRuntime {
       turn.resolve(new Error("Runtime stopped"))
     }
     this.pendingBytes = 0
-    this.stopping = this.close()
+    stopped.resolve(this.close())
     return this.stopping
   }
 
@@ -364,6 +439,16 @@ export class LeucoRuntime {
         close: () => connection.stop(),
       })),
       { name: "active request", close: () => this.active },
+      {
+        name: "Slack operations",
+        close: async () => {
+          await awaitBoundedCleanup(
+            Promise.allSettled(this.slackOperations.keys()),
+            "Slack operations shutdown",
+            1500,
+          )
+        },
+      },
     ]
     const outcomes = await Promise.allSettled(
       resources.map((resource) => Promise.resolve().then(resource.close)),
@@ -381,16 +466,17 @@ export class LeucoRuntime {
           ts: Date.now(),
           requestId: null,
           phase: "shutdown",
-          message: this.eventLog.redactText(failure.message),
+          message: this.eventLog.redactError(failure).message,
         }
       }
     }
     this.slackCredentials = null
     this.connections.splice(0)
+    await this.logConsumer.close()
     this.lifecycle = "stopped"
-    this.eventLog.append({ ts: Date.now(), type: "runtime.stopped", runtime: "leuco" })
+    this.eventLog.append({ ts: Date.now(), type: "runtime.stopped" })
     try {
-      this.eventLog.close()
+      if (this.ownsEventLog) this.eventLog.close()
     } catch (error) {
       failures.push(new Error(`Event log close failed: ${errorMessage(error)}`, { cause: error }))
     }
@@ -409,7 +495,9 @@ export class LeucoRuntime {
     const turn = this.pending.shift()
     if (turn === undefined) return
     this.pendingBytes -= turn.bytes
-    this.active = this.execute(turn)
+    // Reserve the serial queue before execution can invoke diagnostic callbacks.
+    const execution = Promise.withResolvers<string | Error>()
+    this.active = execution.promise
       .then(turn.resolve, (error: unknown) => {
         this.eventLog.error("Unexpected turn lifecycle failure", error, turn.requestId)
         turn.resolve(error instanceof Error ? error : new Error(errorMessage(error)))
@@ -418,6 +506,7 @@ export class LeucoRuntime {
         this.active = null
         this.drain()
       })
+    execution.resolve(this.execute(turn))
   }
 
   private async execute(turn: PendingTurn): Promise<string | Error> {
@@ -427,6 +516,7 @@ export class LeucoRuntime {
       clock: { setTimeout, clearTimeout },
     })
     const startedAt = Date.now()
+    const startedTick = performance.now()
     this.activeRequest = {
       requestId: turn.requestId,
       threadKey: turn.key,
@@ -438,8 +528,7 @@ export class LeucoRuntime {
       ts: startedAt,
       type: "turn.start",
       requestId: turn.requestId,
-      queueWaitMs: startedAt - turn.enqueuedAt,
-      runtime: "leuco",
+      queueWaitMs: Math.max(0, Math.round(startedTick - turn.enqueuedTick)),
       threadKey: turn.key,
       input: turn.text,
     })
@@ -453,24 +542,24 @@ export class LeucoRuntime {
         error instanceof Error ? error : new Error(errorMessage(error)),
       )
       if (reply instanceof Error) {
+        const failure = this.eventLog.redactError(reply)
         this.generation += 1
         if (this.lifecycle === "running")
           this.lastFailure = {
             ts: Date.now(),
             requestId: turn.requestId,
             phase: "turn",
-            message: this.eventLog.redactText(reply.message),
+            message: failure.message,
           }
         this.eventLog.append({
           ts: Date.now(),
           type: "turn.error",
           cancelled: this.lifecycle !== "running",
           requestId: turn.requestId,
-          durationMs: Date.now() - startedAt,
-          runtime: "leuco",
+          durationMs: Math.max(0, Math.round(performance.now() - startedTick)),
           threadKey: turn.key,
-          error: reply.message,
-          causes: errorDetails(reply),
+          error: failure.message,
+          causes: errorDetails(failure),
           phase: this.activeRequest?.lastActivity,
         })
         if (this.lifecycle === "running") {
@@ -495,10 +584,9 @@ export class LeucoRuntime {
           ts: Date.now(),
           type: "turn.complete",
           requestId: turn.requestId,
-          runtime: "leuco",
           threadKey: turn.key,
           reply,
-          durationMs: Date.now() - startedAt,
+          durationMs: Math.max(0, Math.round(performance.now() - startedTick)),
         })
       }
       return reply
@@ -513,20 +601,28 @@ export class LeucoRuntime {
     timeouts: LeucoTurnTimeouts,
     generation: number,
   ): Promise<string | Error> {
+    const isCurrent = () => generation === this.generation && this.lifecycle === "running"
+    if (!isCurrent()) return new Error("Runtime stopped or turn cancelled")
     if (!this.codex.isRunning()) {
       this.eventLog.log(
         "info",
         "Reconnecting Codex for the next request; previous work is not replayed",
         turn.requestId,
       )
+      if (!isCurrent()) return new Error("Runtime stopped or turn cancelled")
       await this.codex.start()
+      if (!isCurrent()) return new Error("Runtime stopped or turn cancelled")
       this.conversations.clearLiveThreads()
-      if (this.lifecycle !== "running") return new Error("Runtime stopped")
+      if (this.activeRequest?.requestId === turn.requestId) {
+        this.activeRequest.lastActivity = "reading Codex instructions after reconnect"
+        this.activeRequest.lastActivityAt = Date.now()
+      }
+      await this.conversations.refreshNativeInstructions(isCurrent)
     }
-    if (generation !== this.generation) return new Error("Turn was cancelled")
+    if (!isCurrent()) return new Error("Runtime stopped or turn cancelled")
     const threadId = await this.conversations.ensure(turn.key, {
       requestId: turn.requestId,
-      isCurrent: () => generation === this.generation && this.lifecycle === "running",
+      isCurrent,
       activity: (phase) => {
         if (this.activeRequest?.requestId === turn.requestId) {
           this.activeRequest.lastActivity = phase
@@ -535,34 +631,29 @@ export class LeucoRuntime {
       },
     })
     if (threadId instanceof Error) return threadId
-    if (this.lifecycle !== "running" || generation !== this.generation)
-      return new Error("Runtime stopped or turn cancelled")
+    if (!isCurrent()) return new Error("Runtime stopped or turn cancelled")
     timeouts.startIdle()
-    if (this.activeRequest) this.activeRequest.lastActivity = "executing Codex turn"
+    const activeRequest = this.activeRequest
+    if (activeRequest !== null) activeRequest.lastActivity = "executing Codex turn"
     return this.codex.runTextTurn(threadId, turn.text, {
       cwd: this.cwd,
+      requestId: turn.requestId,
       onActivity: (method) => {
+        if (!isCurrent() || activeRequest === null || this.activeRequest !== activeRequest) return
         timeouts.activity()
-        if (this.activeRequest?.requestId === turn.requestId) {
-          this.activeRequest.lastActivityAt = Date.now()
-          this.activeRequest.lastActivity = method
-        }
+        activeRequest.lastActivityAt = Date.now()
+        activeRequest.lastActivity = method
       },
     })
   }
 
-  private log(line: string): void {
+  private log(
+    line: string,
+    level: LogLevel = "info",
+    requestId: string | null = this.activeRequest?.requestId ?? null,
+  ): void {
     const safe = this.eventLog.redactText(line)
-    this.eventLog.log("info", safe, this.activeRequest?.requestId)
-    try {
-      this.props.onLog?.(safe)
-    } catch (error) {
-      this.eventLog.error(
-        `Log consumer failed: ${errorMessage(error)}`,
-        error,
-        this.activeRequest?.requestId,
-      )
-      process.stderr.write("leuco: log consumer failed; inspect structured events\n")
-    }
+    this.eventLog.log(level, safe, requestId ?? undefined)
+    this.logConsumer.write(safe, level, requestId)
   }
 }

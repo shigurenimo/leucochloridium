@@ -1,3 +1,6 @@
+import { assertRecordedDaemonsStopped } from "@/maintenance/assert-recorded-daemons-stopped"
+import { recordRestartSpawnFailure } from "@/maintenance/record-restart-spawn-failure"
+import { errorDetails } from "@/error-details"
 import { getRecoveryWindow } from "@/maintenance/get-recovery-window"
 import { CliError } from "@/cli/cli-error"
 import { getDaemonLeaseId } from "@/daemon/get-daemon-lease-id"
@@ -9,15 +12,36 @@ import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import type { LaunchConfiguration, MaintenanceOperation } from "@/maintenance/maintenance-schema"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { withFileLock } from "@/fs/with-file-lock"
+import type { DaemonLease } from "@/daemon/daemon-lease"
 import { readDaemonLease, isProcessAlive } from "@/daemon/daemon-lease"
 
 export function scheduleRestart(
   home: string,
   overrides: Partial<LaunchConfiguration> = {},
-  context: { requestId?: string; automatic?: boolean } = {},
+  context: { requestId?: string; automatic?: boolean; expectedLease?: DaemonLease | null } = {},
 ) {
   new NodeLeucoStore(home).ensureHome()
   return withFileLock({ lockPath: join(home, "maintenance-schedule.lock") }, () => {
+    const lease = readDaemonLease(home)
+    const expected = context.expectedLease
+    if (
+      expected !== undefined &&
+      (expected === null
+        ? lease !== null
+        : lease === null || expected.pid !== lease.pid || expected.token !== lease.token)
+    )
+      throw new CliError(
+        "STATE_CONFLICT",
+        "Daemon ownership changed before restart scheduling; no recovery request was created. Inspect status before retrying.",
+        {
+          phase: "identity",
+          executionStarted: false,
+          expectedPid: expected?.pid ?? null,
+          actualPid: lease?.pid ?? null,
+          expectedLeaseId: expected === null ? null : getDaemonLeaseId(expected),
+          actualLeaseId: lease === null ? null : getDaemonLeaseId(lease),
+        },
+      )
     const store = new NodeMaintenanceStore(home)
     const previous = store.readOperation()
     if (
@@ -26,6 +50,8 @@ export function scheduleRestart(
       ["accepted", "stopping", "starting"].includes(previous.status)
     )
       return previous
+    if (lease === null || !isProcessAlive(lease.pid))
+      assertRecordedDaemonsStopped(previous, isProcessAlive)
     const launch = {
       ...(store.readLaunch() ?? {
         workingDirectory: process.cwd(),
@@ -33,7 +59,6 @@ export function scheduleRestart(
       }),
       ...overrides,
     }
-    const lease = readDaemonLease(home)
     const operation: MaintenanceOperation = {
       id: context.requestId ?? randomUUID(),
       status: "accepted",
@@ -56,35 +81,47 @@ export function scheduleRestart(
       throw new CliError("STATE_CONFLICT", message)
     }
     recordMaintenanceOperation(home, { ...operation, status: "accepted" })
-    const child = spawn(
-      process.execPath,
-      [resolve(import.meta.dir, "restart-worker.ts"), operation.id],
-      {
-        detached: true,
-        cwd: process.cwd(),
-        env: { ...process.env, LEUCO_HOME: home },
-        stdio: "ignore",
-      },
-    )
+    const child = (() => {
+      try {
+        return spawn(
+          process.execPath,
+          [resolve(import.meta.dir, "restart-worker.ts"), operation.id],
+          {
+            detached: true,
+            cwd: process.cwd(),
+            env: { ...process.env, LEUCO_HOME: home },
+            stdio: "ignore",
+          },
+        )
+      } catch (error) {
+        recordRestartSpawnFailure(home, operation, error)
+        throw error
+      }
+    })()
     const accepted: MaintenanceOperation = {
       ...operation,
       status: "accepted",
       workerPid: child.pid ?? null,
     }
-    recordMaintenanceOperation(home, accepted, operation.id)
-    child.on("error", () =>
-      recordMaintenanceOperation(
-        home,
-        {
-          ...accepted,
-          status: "failed",
-          updatedAt: Date.now(),
-          error: "Unable to spawn detached restart worker",
-        },
-        operation.id,
-      ),
-    )
+    child.on("error", (error) => recordRestartSpawnFailure(home, accepted, error))
     child.unref()
+    try {
+      if (!recordMaintenanceOperation(home, accepted, operation.id))
+        throw new Error("Restart operation ownership changed before worker publication")
+    } catch (cause) {
+      const failure = new CliError(
+        "STATE_UNCERTAIN",
+        `Restart worker spawn was requested (PID ${accepted.workerPid ?? "unknown"}), but its publication was not verified. Inspect maintenance status before another restart.`,
+        {
+          phase: "worker-publication",
+          operationId: operation.id,
+          workerPid: accepted.workerPid,
+          causes: errorDetails(cause),
+        },
+      )
+      failure.cause = cause
+      throw failure
+    }
     return accepted
   })
 }

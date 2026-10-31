@@ -21,11 +21,3 @@ export type SlackReactionEvent = {
 }
 
 export type SlackEvent = SlackMessageEvent | SlackReactionEvent
-
-export type SlackMessage = SlackMessageEvent
-
-export type SlackReply = {
-  channel: string
-  threadTs: string
-  text: string
-}

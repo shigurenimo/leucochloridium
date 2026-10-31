@@ -59,6 +59,26 @@ describe("daemon Slack actions without local filesystem access", () => {
     if (!(reply instanceof Response)) throw new Error("Response expected")
     expect(await reply.text()).toBe("provided file")
     expect(reply.headers.get("authorization")).toBeNull()
-    expect(fetchSlackFile).toHaveBeenCalledWith("https://files.slack.com/file", "bot-secret")
+    expect(fetchSlackFile).toHaveBeenCalledWith(
+      "https://files.slack.com/file",
+      "bot-secret",
+      60000,
+      undefined,
+    )
   })
+})
+
+it("preserves literal JSON keys while validating the Slack command body", async () => {
+  const call = vi
+    .spyOn(LeucoFetchSlackWebClient.prototype, "apiCall")
+    .mockResolvedValue({ ok: true })
+  const encoded = '{"__proto__":{"literal":true},"constructor":"value","channel":"C1"}'
+  await executeSlackCommand({
+    botToken: "synthetic-bot-token",
+    parsed: { words: ["slack", "call", "chat.postMessage"], flags: { body: encoded } },
+  })
+  const forwarded = call.mock.calls[0]?.[1]
+  expect(forwarded).toEqual(JSON.parse(encoded))
+  expect(Object.hasOwn(forwarded!, "__proto__")).toBe(true)
+  expect(Object.getPrototypeOf(forwarded)).toBe(Object.prototype)
 })

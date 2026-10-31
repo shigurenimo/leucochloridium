@@ -1,4 +1,5 @@
 import { errorMessage } from "@/error-message"
+import { sliceTextPrefix } from "@/slice-text-prefix"
 
 export const MAX_CODEX_NOTIFICATION_PARAMS_CHARS = 16_000
 
@@ -28,9 +29,10 @@ export const toBoundedJsonValue = (
     }
     const emptyEnvelope = JSON.stringify({ _leuco: metadata, preview: "" })
     const previewChars = Math.max(0, Math.floor((maxChars - emptyEnvelope.length - 256) / 2))
+    const preview = sliceTextPrefix(serialized, previewChars)
     const envelope = {
-      _leuco: { ...metadata, previewChars },
-      preview: serialized.slice(0, previewChars),
+      _leuco: { ...metadata, previewChars: preview.length },
+      preview,
     }
     if (JSON.stringify(envelope).length <= maxChars) return envelope
 

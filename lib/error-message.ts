@@ -1,4 +1,7 @@
-export const errorMessage = (err: unknown): string => {
-  if (err instanceof Error) return err.message
-  return String(err)
+export function errorMessage(error: unknown): string {
+  try {
+    return String(error instanceof Error ? error.message : error)
+  } catch {
+    return "[unprintable thrown value]"
+  }
 }

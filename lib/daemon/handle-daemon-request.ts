@@ -1,18 +1,45 @@
+import { MAX_FILE_TRANSFER_BYTES } from "@/file-transfer-limits"
+import { createLiteralRecordSchema } from "@/config/create-literal-record-schema"
+import { MAX_THREAD_KEY_CHARACTERS, MAX_TURN_INPUT_BYTES } from "@/turn-input-limits"
+import { readControlMultipart } from "@/daemon/read-control-multipart"
+import { CliError } from "@/cli/cli-error"
+import { daemonRejectionResponse } from "@/daemon/daemon-rejection-response"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
 import { daemonErrorResponse } from "@/daemon/daemon-error-response"
 import { launchSchema } from "@/maintenance/maintenance-schema"
 import type { LaunchConfiguration } from "@/maintenance/maintenance-schema"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
-import { validateCommand } from "@/cli/validate-command"
+import { validateSlackCommand } from "@/cli/validate-slack-command"
 import type { CliArguments } from "@/cli/parse-arguments"
+import type { SlackCommandOptions } from "@/runtime/slack-command-options"
+import { readControlJson } from "@/daemon/read-control-json"
+import { parseMultipartCommand } from "@/daemon/parse-multipart-command"
+import { parseControlInput } from "@/daemon/parse-control-input"
 
-const turnSchema = z.object({
-  key: z.string().min(1).max(512).default("cli"),
+const decimalIntegerSchema = z
+  .string()
+  .regex(/^[0-9]+$/)
+  .transform(Number)
+  .pipe(z.number().int())
+
+const turnSchema = z.strictObject({
+  key: z
+    .string()
+    .min(1)
+    .max(
+      MAX_THREAD_KEY_CHARACTERS,
+      `Thread key must not exceed ${MAX_THREAD_KEY_CHARACTERS} UTF-16 code units`,
+    )
+    .default("cli"),
   text: z
     .string()
     .min(1)
-    .max(256 * 1024),
+    .regex(/\S/, "Turn input must contain non-whitespace text")
+    .refine(
+      (text) => Buffer.byteLength(text, "utf8") <= MAX_TURN_INPUT_BYTES,
+      `Turn input exceeds ${MAX_TURN_INPUT_BYTES} UTF-8 bytes; reduce the input`,
+    ),
 })
 type Props = {
   token: string
@@ -24,11 +51,7 @@ type Props = {
   getRuntimeStatus?: () => unknown
   isReady: () => boolean
   runTextTurn: (key: string, text: string, requestId?: string) => Promise<string | Error>
-  runSlackCommand?: (
-    parsed: CliArguments,
-    upload?: Uint8Array,
-    requestId?: string,
-  ) => Promise<unknown>
+  runSlackCommand?: (parsed: CliArguments, options?: SlackCommandOptions) => Promise<unknown>
   stop: (requestId: string) => void
   awaitStop?: () => Promise<void>
   ownsProcess?: boolean
@@ -36,115 +59,186 @@ type Props = {
 
 export function handleDaemonRequest(props: Props): (request: Request) => Promise<Response> {
   return async (request) => {
-    if (request.headers.get("authorization") !== `Bearer ${props.token}`)
-      return Response.json({ error: "Unauthorized" }, { status: 401 })
-    const path = new URL(request.url).pathname
     const requestId = z.uuid().safeParse(request.headers.get("x-leuco-request-id")).success
       ? request.headers.get("x-leuco-request-id")!
       : randomUUID()
-    if (request.method === "GET" && path === "/status")
-      return Response.json({
-        running: true,
-        ready: props.isReady(),
-        pid: process.pid,
-        cwd: props.cwd,
-        ...(props.getMaintenance ? { maintenance: props.getMaintenance() } : {}),
-        ...(props.getRuntimeStatus ? { runtime: props.getRuntimeStatus() } : {}),
+    if (request.headers.get("authorization") !== `Bearer ${props.token}`)
+      return daemonRejectionResponse({
+        status: 401,
+        phase: "authorization",
+        message: "Unauthorized",
+        requestId,
       })
-    if (request.method === "GET" && path === "/events") {
-      const query = new URL(request.url).searchParams
-      const filters = z
-        .object({
-          limit: z.coerce.number().int().min(1).max(10000).default(100),
-          sinceTs: z.coerce.number().nonnegative().optional(),
-          type: z.string().optional(),
-          requestId: z.string().max(512).optional(),
-        })
-        .parse(Object.fromEntries(query))
-      if (!props.getVolatileEvents) throw new Error("Volatile history is unavailable")
-      return Response.json(props.getVolatileEvents(filters))
-    }
-    if (request.method === "POST" && path === "/restart") {
-      if (props.restart === undefined)
-        return Response.json({ error: "Restart is unavailable" }, { status: 503 })
-      try {
-        const overrides = launchSchema
-          .pick({ cwd: true, soul: true, model: true, codexBin: true })
-          .parse(await request.json())
-        return Response.json(props.restart(overrides, requestId))
-      } catch (error) {
-        return daemonErrorResponse({
-          error,
-          status: 422,
-          requestId,
-          reportError: props.reportError,
-        })
-      }
-    }
-    if (request.method === "POST" && path === "/stop") {
-      props.stop(requestId)
-      if (props.awaitStop) await props.awaitStop()
-      return Response.json({
-        stopping: true,
-        stopped: props.awaitStop !== undefined,
-        processWillExit: props.ownsProcess ?? false,
-      })
-    }
-    if (request.method === "POST" && path === "/slack") {
-      if (!props.isReady())
-        return Response.json({ error: "Leuco is starting or stopping" }, { status: 503 })
-      try {
-        const multipart = request.headers.get("content-type")?.startsWith("multipart/form-data")
-          ? await request.formData()
-          : null
-        const raw: unknown =
-          multipart === null ? await request.json() : JSON.parse(String(multipart.get("command")))
-        const parsed = z
-          .strictObject({
-            words: z.array(z.string()),
-            flags: z.record(z.string(), z.union([z.string(), z.literal(true)])),
-          })
-          .parse(raw)
-        const file = multipart?.get("file")
-        if (file instanceof Blob && file.size > 100 * 1024 * 1024)
-          throw new Error("Upload exceeds 100 MiB")
-        const upload = file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : undefined
-        validateCommand(parsed)
-        if (
-          parsed.words[0] !== "slack" ||
-          !["call", "upload-file", "download-file"].includes(parsed.words[1] ?? "")
-        )
-          throw new Error("Unsupported Slack operation")
-        if (props.runSlackCommand === undefined) throw new Error("Slack is unavailable")
-        const reply = await props.runSlackCommand(parsed, upload, requestId)
-        return reply instanceof Response ? reply : Response.json(reply)
-      } catch (error) {
-        return daemonErrorResponse({
-          error,
-          status: 422,
-          requestId,
-          reportError: props.reportError,
-          fallback: "Slack operation failed. Inspect events for this requestId.",
-        })
-      }
-    }
-    if (request.method !== "POST" || path !== "/turn")
-      return Response.json({ error: "Not found" }, { status: 404 })
-    if (!props.isReady())
-      return Response.json({ error: "Leuco is starting or stopping" }, { status: 503 })
+    const url = new URL(request.url)
+    const path = url.pathname
     try {
-      const turn = turnSchema.parse(await request.json())
-      const reply = await props.runTextTurn(turn.key, turn.text, requestId)
-      if (reply instanceof Error)
+      if (path !== "/events" && url.searchParams.size > 0)
+        throw new CliError("USAGE", "This control endpoint does not accept query parameters", {
+          phase: "validation",
+          executionStarted: false,
+        })
+      if (request.method === "GET" && path === "/status")
+        return Response.json({
+          running: true,
+          ready: props.isReady(),
+          pid: process.pid,
+          cwd: props.cwd,
+          ...(props.getMaintenance ? { maintenance: props.getMaintenance() } : {}),
+          ...(props.getRuntimeStatus ? { runtime: props.getRuntimeStatus() } : {}),
+        })
+      if (request.method === "GET" && path === "/events") {
+        const query = url.searchParams
+        const filters = parseControlInput(
+          z.strictObject({
+            limit: decimalIntegerSchema.pipe(z.number().min(1).max(10000)).default(100),
+            sinceTs: decimalIntegerSchema.pipe(z.number().nonnegative()).optional(),
+            type: z.string().min(1).optional(),
+            requestId: z.string().min(1).optional(),
+            summary: z
+              .enum(["true", "false"])
+              .transform((value) => value === "true")
+              .optional(),
+          }),
+          Object.fromEntries(
+            Array.from(query.keys(), (key) => {
+              const values = query.getAll(key)
+              return [key, values.length === 1 ? values[0] : values]
+            }),
+          ),
+          [props.token],
+        )
+        if (!props.getVolatileEvents) throw new Error("Volatile history is unavailable")
+        return Response.json(props.getVolatileEvents(filters))
+      }
+      if (request.method === "POST" && path === "/restart") {
+        if (props.restart === undefined)
+          return daemonRejectionResponse({
+            status: 503,
+            phase: "availability",
+            message: "Restart is unavailable",
+            requestId,
+          })
+        try {
+          const overrides = parseControlInput(
+            launchSchema.pick({ cwd: true, soul: true }),
+            await readControlJson(request),
+            [props.token],
+          )
+          return Response.json(props.restart(overrides, requestId))
+        } catch (error) {
+          return daemonErrorResponse({
+            error,
+            status: 422,
+            requestId,
+            reportError: props.reportError,
+            redactionSecrets: [props.token],
+          })
+        }
+      }
+      if (request.method === "POST" && path === "/stop") {
+        const input = request.body === null ? {} : await readControlJson(request)
+        parseControlInput(z.strictObject({}), input, [props.token])
+        props.stop(requestId)
+        if (props.awaitStop) await props.awaitStop()
+        return Response.json({
+          stopping: true,
+          stopped: props.awaitStop !== undefined,
+          processWillExit: props.ownsProcess ?? false,
+        })
+      }
+      if (request.method === "POST" && path === "/slack") {
+        if (!props.isReady())
+          return daemonRejectionResponse({
+            status: 503,
+            phase: "readiness",
+            message: "Leuco is starting or stopping",
+            requestId,
+          })
+        try {
+          const multipart = request.headers.get("content-type")?.startsWith("multipart/form-data")
+            ? await readControlMultipart(request)
+            : null
+          const raw: unknown =
+            multipart === null ? await readControlJson(request) : parseMultipartCommand(multipart)
+          const parsed = parseControlInput(
+            z.strictObject({
+              words: z.array(z.string()),
+              flags: createLiteralRecordSchema(z.union([z.string(), z.literal(true)])),
+            }),
+            raw,
+            [props.token],
+          )
+          validateSlackCommand(parsed)
+          if (multipart !== null && parsed.words[1] !== "upload-file")
+            throw new CliError("USAGE", "Multipart input is only supported for Slack uploads", {
+              phase: "validation",
+              executionStarted: false,
+            })
+          if (props.runSlackCommand === undefined) throw new Error("Slack is unavailable")
+          const file = multipart?.get("file")
+          if (parsed.words[1] === "upload-file" && !(file instanceof Blob))
+            throw new CliError("USAGE", "Slack uploads require a multipart file body", {
+              phase: "validation",
+              executionStarted: false,
+            })
+          if (file instanceof Blob && file.size > MAX_FILE_TRANSFER_BYTES)
+            throw new Error("Upload exceeds 100 MiB")
+          const upload = file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : undefined
+          const reply = await props.runSlackCommand(parsed, {
+            upload,
+            requestId,
+            signal: request.signal,
+          })
+          return reply instanceof Response ? reply : Response.json(reply)
+        } catch (error) {
+          return daemonErrorResponse({
+            error,
+            status: 422,
+            requestId,
+            reportError: props.reportError,
+            redactionSecrets: [props.token],
+            fallback: "Slack operation failed. Inspect events for this requestId.",
+          })
+        }
+      }
+      if (request.method !== "POST" || path !== "/turn")
+        return Response.json({ error: "Not found" }, { status: 404 })
+      if (!props.isReady())
+        return daemonRejectionResponse({
+          status: 503,
+          phase: "readiness",
+          message: "Leuco is starting or stopping",
+          requestId,
+        })
+      try {
+        const turn = parseControlInput(turnSchema, await readControlJson(request), [props.token])
+        const reply = await props.runTextTurn(turn.key, turn.text, requestId)
+        if (reply instanceof Error)
+          return daemonErrorResponse({
+            error: reply,
+            status: 422,
+            requestId,
+            reportError: props.reportError,
+            redactionSecrets: [props.token],
+          })
+        return Response.json({ reply })
+      } catch (error) {
         return daemonErrorResponse({
-          error: reply,
-          status: 422,
+          error,
+          status: 400,
           requestId,
           reportError: props.reportError,
+          redactionSecrets: [props.token],
         })
-      return Response.json({ reply })
+      }
     } catch (error) {
-      return daemonErrorResponse({ error, status: 400, requestId, reportError: props.reportError })
+      return daemonErrorResponse({
+        error,
+        status: error instanceof CliError && error.code === "USAGE" ? 400 : 500,
+        requestId,
+        reportError: props.reportError,
+        redactionSecrets: [props.token],
+      })
     }
   }
 }

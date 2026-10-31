@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest"
 import { errorMessage } from "@/error-message"
 
 describe("errorMessage", () => {
+  it("keeps diagnostics alive for thrown values that cannot be converted to text", () => {
+    const opaque = Object.create(null)
+    const conversionFailure = {
+      toString: () => {
+        throw new Error("private conversion failure")
+      },
+    }
+    expect(errorMessage(opaque)).toBe("[unprintable thrown value]")
+    expect(errorMessage(conversionFailure)).toBe("[unprintable thrown value]")
+  })
   it("returns Error.message for Error instances", () => {
     expect(errorMessage(new Error("boom"))).toBe("boom")
   })

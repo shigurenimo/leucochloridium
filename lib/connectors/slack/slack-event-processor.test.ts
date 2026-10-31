@@ -292,3 +292,45 @@ describe("LeucoSlackEventProcessor dedup scoping", () => {
     expect(second.skip).toBe(false)
   })
 })
+
+it("identifies invalid message and reaction fields without retaining event content", () => {
+  const processor = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+  const message = processor.processMessage({ channel: 42, text: "private message body", ts: "1" })
+  const reaction = processor.processReaction({
+    type: "reaction_added",
+    user: "U1",
+    reaction: "ok",
+    event_ts: "2",
+  })
+  expect(message).toMatchObject({ skip: true, reason: expect.stringContaining("channel") })
+  expect(reaction).toMatchObject({ skip: true, reason: expect.stringContaining("item") })
+  expect(JSON.stringify(message)).not.toContain("private message body")
+})
+
+it.each<["processMessage" | "processAppMention" | "processReaction", Record<string, unknown>]>([
+  ["processMessage", baseMessage({ channel: "" })],
+  ["processMessage", baseMessage({ ts: "" })],
+  ["processMessage", baseMessage({ thread_ts: " " })],
+  ["processMessage", baseMessage({ user: "" })],
+  ["processAppMention", baseMention({ channel: " " })],
+  ["processAppMention", baseMention({ ts: "" })],
+  ["processReaction", baseReaction({ user: "" })],
+  ["processReaction", baseReaction({ reaction: " " })],
+  ["processReaction", baseReaction({ event_ts: "" })],
+  ["processReaction", baseReaction({ item: { type: "message", channel: "", ts: "1" } })],
+])("rejects empty routing fields in %s: %j", (method, event) => {
+  const processor = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+  expect(processor[method](event)).toMatchObject({ skip: true })
+})
+
+it.each(["reaction_added", "reaction_removed"])(
+  "scopes %s deduplication to its channel",
+  (type) => {
+    const processor = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
+    const first = baseReaction({ type, item: { type: "message", channel: "C1", ts: "9.9" } })
+    const second = baseReaction({ type, item: { type: "message", channel: "C2", ts: "9.9" } })
+    expect(processor.processReaction(first).skip).toBe(false)
+    expect(processor.processReaction(second).skip).toBe(false)
+    expect(processor.processReaction(first).skip).toBe(true)
+  },
+)

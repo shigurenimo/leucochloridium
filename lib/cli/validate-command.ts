@@ -16,17 +16,18 @@ export function validateCommand(parsed: CliArguments): void {
         `--${name} is not supported by ${definition.name}. Run leuco ${definition.name} --help`,
       )
     validateParameter(parameter, parsed.flags[name])
-    if (parameter.conflicts?.some((other) => parsed.flags[other] !== undefined))
-      throw new CliError("USAGE", `--${name} conflicts with another supplied option`)
+    const conflicts =
+      parameter.conflicts?.filter((other) => parsed.flags[other] !== undefined) ?? []
+    if (conflicts.length > 0)
+      throw new CliError(
+        "USAGE",
+        `--${name} conflicts with ${conflicts.map((other) => `--${other}`).join(", ")}`,
+        { parameter: name, conflictsWith: conflicts },
+      )
   }
   for (const parameter of definition.options)
     if (parameter.required && parsed.flags[parameter.name] === undefined)
       throw new CliError("USAGE", `--${parameter.name} is required by ${definition.name}`)
-  if (definition.name === "run" && parsed.flags.prompt === undefined && !parsed.flags.foreground)
-    throw new CliError(
-      "USAGE",
-      "run requires --prompt for one-shot execution, or explicit --foreground for a human-managed daemon. Automation should use start.",
-    )
   if (definition.name === "config set" && resolved.arguments[1] === "-")
     throw new CliError(
       "USAGE",
@@ -43,13 +44,10 @@ export function validateCommand(parsed: CliArguments): void {
     )
   for (const [index, parameter] of definition.arguments.entries())
     if (resolved.arguments[index] !== undefined)
-      validateParameter(parameter, resolved.arguments[index])
-  if (
-    definition.name === "run" &&
-    parsed.flags.thread !== undefined &&
-    parsed.flags.prompt === undefined
-  )
-    throw new CliError("USAGE", "run --thread requires --prompt")
+      validateParameter(
+        parameter,
+        parameter.variadic ? resolved.arguments.slice(index).join(" ") : resolved.arguments[index],
+      )
 }
 
 function validateParameter(parameter: Parameter, value: string | true | undefined): void {
@@ -64,7 +62,11 @@ function validateParameter(parameter: Parameter, value: string | true | undefine
   if (parameter.maxLength !== undefined && value.length > parameter.maxLength)
     throw new CliError("USAGE", `${parameter.name} is too long`)
   if (parameter.choices && !parameter.choices.includes(value))
-    throw new CliError("USAGE", `Unsupported ${parameter.name}; inspect leuco --help --json`)
+    throw new CliError(
+      "USAGE",
+      `Unsupported ${parameter.name}; choose one of: ${parameter.choices.join(", ")}`,
+      { parameter: parameter.name, choices: parameter.choices },
+    )
   if (parameter.type === "integer") {
     const number = Number(value)
     if (
@@ -78,7 +80,7 @@ function validateParameter(parameter: Parameter, value: string | true | undefine
         `${parameter.name} must be an integer from ${parameter.minimum} to ${parameter.maximum}`,
       )
   }
-  if ((parameter.type === "json" && value !== "-") || parameter.type === "json-object") {
+  if (parameter.type === "json" || parameter.type === "json-object") {
     try {
       const decoded: unknown = JSON.parse(value)
       if (

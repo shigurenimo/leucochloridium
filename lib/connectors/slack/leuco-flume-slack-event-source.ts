@@ -1,5 +1,15 @@
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { Flume } from "@interactive-inc/flume"
+import { copyRedactedError } from "@/secrets/copy-redacted-error"
+import { formatLogLine } from "@/format-log-line"
+import { logDeliveryHealthSchema } from "@/log-delivery-health-schema"
+import { errorDetails } from "@/error-details"
+import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
+import { NodeDiagnosticOutput } from "@/node-diagnostic-output"
+import type { DiagnosticOutput } from "@/diagnostic-output"
+import { Flume, createFlumeDefaultDeps } from "@interactive-inc/flume"
+import { LeucoNodeSlackSockets } from "@/connectors/slack/leuco-node-slack-sockets"
+import type { LeucoSlackSockets } from "@/connectors/slack/leuco-slack-sockets"
+import { withAsyncCleanup } from "@/fs/with-async-cleanup"
+import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import type {
   FlumeEvent,
   FlumeLog,
@@ -18,7 +28,8 @@ import {
   leucoSlackSourceStatusSchema,
 } from "@/connectors/slack/leuco-slack-event-source"
 
-export type LeucoFlumeSlackEventSourceProps = {
+type LeucoFlumeSlackEventSourceProps = {
+  diagnosticOutput?: DiagnosticOutput
   botToken: string
   appToken: string
   startTimeoutMs?: number
@@ -28,6 +39,7 @@ export type LeucoFlumeSlackEventSourceProps = {
   wakeDriftThresholdMs?: number
   /** Clock/timer injection for deterministic lifecycle tests. */
   wakeClock?: LeucoSlackWakeClock
+  createSockets?: () => LeucoSlackSockets
 }
 
 type StartProps = {
@@ -37,6 +49,7 @@ type StartProps = {
 }
 
 type SlackSession = {
+  sockets: LeucoSlackSockets
   controller: AbortController
   running: FlumeRunning | null
   closing: Promise<void> | null
@@ -56,6 +69,9 @@ const SYSTEM_WAKE_CLOCK = new LeucoNodeSlackWakeClock()
  * from flume.
  */
 export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
+  private readonly diagnosticOutput: DiagnosticOutput
+  private readonly logHealth = logDeliveryHealthSchema.parse({ healthy: true, lastFailure: null })
+  private logFailureVersion = 0
   private lifecycleController: AbortController | null = null
   private session: SlackSession | null = null
   private sourceLog: StartProps["onLog"] = undefined
@@ -83,7 +99,15 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       "wakeDriftThresholdMs",
       props.wakeDriftThresholdMs ?? DEFAULT_WAKE_DRIFT_THRESHOLD_MS,
     )
+    for (const timer of [
+      { name: "startTimeoutMs", value: this.startTimeoutMs },
+      { name: "wakeCheckIntervalMs", value: this.wakeCheckIntervalMs },
+    ]) {
+      if (timer.value > MAX_TIMER_DELAY_MS)
+        throw new Error(`${timer.name} must not exceed ${MAX_TIMER_DELAY_MS}ms`)
+    }
     this.wakeClock = props.wakeClock ?? SYSTEM_WAKE_CLOCK
+    this.diagnosticOutput = props.diagnosticOutput ?? new NodeDiagnosticOutput()
   }
 
   async start(props: StartProps): Promise<void> {
@@ -97,8 +121,8 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       )
     this.sourceLog = props.onLog
     const controller = new AbortController()
-    this.lifecycleController = controller
     const session = this.createSession(controller)
+    this.lifecycleController = controller
     this.session = session
 
     try {
@@ -127,7 +151,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       if (failures.length > 1)
         throw new AggregateError(
           failures,
-          `Slack startup failed: ${normalizeError(error).message}; cleanup also failed`,
+          `Slack startup failed: ${this.normalizeError(error).message}; cleanup also failed`,
           { cause: error },
         )
       throw error
@@ -173,7 +197,12 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     return this.currentStatus
   }
 
-  private buildFlume(props: StartProps, controller: AbortController): Flume {
+  getLogHealth() {
+    return logDeliveryHealthSchema.parse(this.logHealth)
+  }
+
+  private buildFlume(props: StartProps, session: SlackSession): Flume {
+    const controller = session.controller
     const source = new FlumeSlackSource({
       appToken: this.props.appToken,
       botToken: this.props.botToken,
@@ -183,6 +212,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
 
     const onLog = props.onLog
     return new Flume({
+      deps: { ...createFlumeDefaultDeps(), WebSocket: session.sockets.WebSocket },
       sources: [source],
       signal: controller.signal,
       // Enable flume's built-in reconnect supervisor. Without this, a single
@@ -202,6 +232,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   }
 
   private createSession(lifecycleController: AbortController): SlackSession {
+    const sockets = this.props.createSockets?.() ?? new LeucoNodeSlackSockets()
     const controller = new AbortController()
     const onLifecycleAbort = (): void => {
       if (!controller.signal.aborted) {
@@ -214,6 +245,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       lifecycleController.signal.addEventListener("abort", onLifecycleAbort, { once: true })
     }
     return {
+      sockets,
       controller,
       running: null,
       closing: null,
@@ -222,7 +254,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   }
 
   private async openSession(session: SlackSession, props: StartProps): Promise<FlumeRunning> {
-    const flume = this.buildFlume(props, session.controller)
+    const flume = this.buildFlume(props, session)
     return await this.openWithinDeadline(flume, session, props.onLog)
   }
 
@@ -232,24 +264,42 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     if (!session.controller.signal.aborted)
       session.controller.abort(new Error("Slack socket session replaced"))
     const running = session.running
-    if (running === null) return
     const closing = Promise.resolve()
-      .then(() => running.close())
-      .then((closed) => {
-        const failures = closed.errors().map((failure) =>
-          Object.assign(
-            new Error(`${failure.source} cleanup failed: ${failure.error.message}`, {
-              cause: failure.error,
-            }),
-            { code: failure.errorCode },
-          ),
-        )
-        if (failures.length > 0)
-          throw new AggregateError(
-            failures,
-            `Slack socket cleanup failed: ${failures.map((failure) => failure.message).join("; ")}`,
-            { cause: failures[0] },
-          )
+      .then(() =>
+        withAsyncCleanup(
+          async () => {
+            if (running === null) return
+            const closed = await awaitBoundedCleanup(running.close(), "Slack event source shutdown")
+            const failures = closed.errors().map((failure) =>
+              Object.assign(
+                new Error(`${failure.source} cleanup failed: ${failure.error.message}`, {
+                  cause: failure.error,
+                }),
+                { code: failure.errorCode },
+              ),
+            )
+            if (failures.length > 0)
+              throw new AggregateError(
+                failures,
+                `Slack socket cleanup failed: ${failures.map((failure) => failure.message).join("; ")}`,
+                { cause: failures[0] },
+              )
+          },
+          async () => {
+            const forcedCloses = await session.sockets.close()
+            if (forcedCloses > 0)
+              this.emitSourceLog(this.sourceLog, {
+                level: "warn",
+                action: "socket.close.forced",
+                message: `Terminated ${forcedCloses} Slack sockets after their close deadline`,
+                error: null,
+                detail: { forcedCloses },
+                timestamp: this.wakeClock.now(),
+              })
+          },
+        ),
+      )
+      .then(() => {
         session.running = null
       })
     session.closing = closing
@@ -310,7 +360,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       return null
     } catch (error) {
       this.reportFailure(this.sourceLog, "wake.watchdog.cancel.failed", error)
-      return normalizeError(error)
+      return this.normalizeError(error)
     }
   }
 
@@ -340,7 +390,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
 
     const reconnecting = this.reconnectAfterWake(controller, props).catch((error: unknown) => {
       if (controller.signal.aborted || this.lifecycleController !== controller) return
-      const normalized = normalizeError(error)
+      const normalized = this.normalizeError(error)
       this.wakeReconnectNeeded = true
       this.publishStatus("disconnected", props.onStatus, props.onLog)
       this.emitSourceLog(props.onLog, {
@@ -367,7 +417,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         await this.closeSession(previous)
         if (this.session === previous) this.session = null
       } catch (error) {
-        const normalized = normalizeError(error)
+        const normalized = this.normalizeError(error)
         this.emitSourceLog(props.onLog, {
           level: "error",
           action: "wake.close.failed",
@@ -472,7 +522,7 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
   }
 
   private reportFailure(onLog: StartProps["onLog"], action: string, error: unknown): void {
-    const normalized = normalizeError(error)
+    const normalized = this.normalizeError(error)
     this.emitSourceLog(onLog, {
       level: "error",
       action,
@@ -483,28 +533,81 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     })
   }
 
-  private writeDiagnostic(action: string, error: unknown): void {
-    const message = [this.props.botToken, this.props.appToken]
-      .filter(Boolean)
-      .reduce((text, token) => text.split(token).join("[redacted]"), normalizeError(error).message)
-    process.stderr.write(`[leuco slack ${action}] ${redactPublicText(message).slice(0, 4000)}\n`)
+  private async writeDiagnostic(action: string, error: unknown): Promise<void> {
+    const message = this.normalizeError(error).message
+    await awaitBoundedCleanup(
+      this.diagnosticOutput.write(`${formatLogLine(`[leuco slack ${action}] ${message}`)}\n`),
+      "Slack diagnostic output",
+    )
+  }
+
+  private normalizeError(error: unknown): Error {
+    return copyRedactedError(error, [this.props.botToken, this.props.appToken])
   }
 
   private emitSourceLog(onLog: StartProps["onLog"], log: LeucoSlackSourceLog): void {
+    const failureVersion = this.logFailureVersion
     if (!onLog) {
-      if (log.level === "error") this.writeDiagnostic(log.action, log.error ?? log.message)
+      if (log.level !== "error") return
+      void this.writeDiagnostic(log.action, log.error ?? log.message).then(
+        () => {
+          if (failureVersion === this.logFailureVersion) this.logHealth.healthy = true
+        },
+        (error) => {
+          this.recordLogFailure(
+            new AggregateError(
+              [log.error ?? log.message, error],
+              "Slack fallback log delivery failed",
+              { cause: error },
+            ),
+          )
+        },
+      )
       return
     }
     try {
-      void Promise.resolve(onLog(log)).catch((error) => this.reportLogConsumerFailure(log, error))
+      void awaitBoundedCleanup(Promise.resolve(onLog(log)), "Slack log delivery").then(
+        () => {
+          if (failureVersion === this.logFailureVersion) this.logHealth.healthy = true
+        },
+        (error) => this.reportLogConsumerFailure(log, error),
+      )
     } catch (error) {
-      this.reportLogConsumerFailure(log, error)
+      void this.reportLogConsumerFailure(log, error)
     }
   }
 
-  private reportLogConsumerFailure(log: LeucoSlackSourceLog, error: unknown): void {
-    this.writeDiagnostic(log.action, log.error ?? log.message)
-    this.writeDiagnostic("log.consumer.failed", error)
+  private async reportLogConsumerFailure(log: LeucoSlackSourceLog, error: unknown): Promise<void> {
+    const failures: unknown[] = [log.error ?? log.message, error]
+    this.recordLogFailure(
+      new AggregateError(failures, "Slack log delivery failed", { cause: error }),
+    )
+    for (const diagnostic of [
+      { action: log.action, error: log.error ?? log.message },
+      { action: "log.consumer.failed", error },
+    ]) {
+      try {
+        await this.writeDiagnostic(diagnostic.action, diagnostic.error)
+      } catch (reporting) {
+        failures.push(reporting)
+        this.recordLogFailure(
+          new AggregateError(failures, "Slack log delivery and fallback output failed", {
+            cause: error,
+          }),
+        )
+      }
+    }
+  }
+
+  private recordLogFailure(error: unknown): void {
+    const safe = this.normalizeError(error)
+    this.logHealth.healthy = false
+    this.logFailureVersion += 1
+    this.logHealth.lastFailure = {
+      ts: this.wakeClock.now(),
+      message: safe.message,
+      causes: errorDetails(safe),
+    }
   }
 }
 
@@ -553,8 +656,4 @@ const positiveInteger = (name: string, value: number): number => {
     throw new Error(`${name} must be a positive integer`)
   }
   return value
-}
-
-const normalizeError = (error: unknown): Error => {
-  return error instanceof Error ? error : new Error(String(error))
 }

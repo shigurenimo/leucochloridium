@@ -8,11 +8,11 @@ const SLACK_HOST_SUFFIX = ".slack.com"
  * coax it into downloading an arbitrary URL and exfiltrate the token via the
  * `Authorization` header. Only `https://*.slack.com` hosts are allowed.
  */
-export const assertSlackFileUrl = (url: string): URL => {
-  const parsed = parseUrl(url)
+export const assertSlackFileUrl = (url: string, base?: URL): URL => {
+  const parsed = parseUrl(url, base)
 
   if (parsed.protocol !== "https:") {
-    throw new Error(`download url must be https, got ${parsed.protocol}`)
+    throw new Error("download url must be https")
   }
 
   const host = parsed.hostname.toLowerCase()
@@ -21,13 +21,16 @@ export const assertSlackFileUrl = (url: string): URL => {
     throw new Error(`refusing to send slack token to non-slack host: ${host}`)
   }
 
+  if (parsed.username || parsed.password)
+    throw new Error("download url must not contain credentials")
+
   return parsed
 }
 
-const parseUrl = (url: string): URL => {
+const parseUrl = (url: string, base?: URL): URL => {
   try {
-    return new URL(url)
+    return new URL(url, base)
   } catch {
-    throw new Error(`invalid download url: ${url}`)
+    throw new Error(`invalid download url (${url.length} characters)`)
   }
 }

@@ -1,3 +1,5 @@
+import { redactPublicText } from "@/secrets/redact-public-text"
+import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
 import assert from "node:assert/strict"
 import {
   existsSync,
@@ -31,8 +33,15 @@ try {
   const register = Bun.spawnSync([process.execPath, "link", `--config=${config}`], {
     cwd: repository,
     env,
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
   })
-  assert.equal(register.exitCode, 0, register.stderr.toString())
+  assert.equal(
+    register.success,
+    true,
+    `bun link failed: exitCode=${register.exitCode}, signal=${register.signalCode}; ${truncateDiagnosticText(redactPublicText(register.stderr.toString()), 16000)}`,
+  )
   const executable = join(bin, "leuco")
   assert.ok(existsSync(executable), "bun link did not expose the CLI binary")
   assert.equal(
@@ -43,8 +52,15 @@ try {
   const help = Bun.spawnSync([executable, "slack", "login", "--help", "--json"], {
     cwd: workspace,
     env,
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
   })
-  assert.equal(help.exitCode, 0, help.stderr.toString())
+  assert.equal(
+    help.success,
+    true,
+    `Linked help failed: exitCode=${help.exitCode}, signal=${help.signalCode}; ${truncateDiagnosticText(redactPublicText(help.stderr.toString()), 16000)}`,
+  )
   const specification = JSON.parse(help.stdout.toString())
   assert.equal(specification.commands[0].name, "slack login")
   assert.equal(specification.commands[0].options.length, 0)

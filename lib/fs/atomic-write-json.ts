@@ -1,4 +1,6 @@
+import { encodeLocalJson } from "@/fs/encode-local-json"
 import { randomUUID } from "node:crypto"
+import { withSyncCleanup } from "@/fs/with-sync-cleanup"
 import {
   chmodSync,
   closeSync,
@@ -25,40 +27,38 @@ type Props = {
  * Write a JSON file atomically: serialise into a temp file in the same
  * directory, fsync it, optionally chmod it, then `renameSync` over the
  * destination. The rename protects against a crash mid-write; the fsync
- * protects against power loss, where the rename's metadata could otherwise
- * hit disk before the temp file's data blocks — leaving an empty or torn
- * settings.json (configuration and credential references).
+ * flushes the temporary file contents. Directory-entry durability across
+ * sudden power loss remains filesystem-dependent.
  *
  * Used wherever a partial write would lose data, including settings.json
  * (configuration and credential references) and state.json. Same-directory
  * temp files are important because `rename` is only atomic within a filesystem.
  */
 export const atomicWriteJson = (props: Props): string => {
+  const encoded = encodeLocalJson(props.data)
   const dir = dirname(props.path)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 
   const tempPath = `${props.path}.${process.pid}.${randomUUID()}.tmp`
-  try {
-    // Create with the restrictive mode so the temp file never exists with
-    // world-readable bits before the chmod — configuration and state are private.
-    // The explicit chmodSync still runs to override umask, which can clear bits
-    // off the open() mode.
-    const fd = openSync(tempPath, "wx", props.mode)
-    try {
-      writeFileSync(fd, `${JSON.stringify(props.data, null, 2)}\n`, { encoding: "utf8" })
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
-    }
-    if (props.mode !== undefined) chmodSync(tempPath, props.mode)
-    renameSync(tempPath, props.path)
-    return props.path
-  } catch (error) {
-    try {
-      rmSync(tempPath, { force: true })
-    } catch {
-      // best-effort cleanup
-    }
-    throw error
-  }
+  const temporary = { created: false }
+  return withSyncCleanup(
+    () => {
+      const fd = openSync(tempPath, "wx", props.mode)
+      temporary.created = true
+      withSyncCleanup(
+        () => {
+          writeFileSync(fd, encoded, { encoding: "utf8" })
+          fsyncSync(fd)
+        },
+        () => closeSync(fd),
+      )
+      if (props.mode !== undefined) chmodSync(tempPath, props.mode)
+      renameSync(tempPath, props.path)
+      temporary.created = false
+      return props.path
+    },
+    () => {
+      if (temporary.created) rmSync(tempPath, { force: true })
+    },
+  )
 }

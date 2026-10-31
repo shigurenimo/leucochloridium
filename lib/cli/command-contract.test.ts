@@ -6,6 +6,33 @@ import { getCliSpecification } from "@/cli/get-cli-specification"
 import { renderCliHelp } from "@/cli/render-cli-help"
 
 describe("executable CLI documentation", () => {
+  it("publishes foreground as required for run", () => {
+    const run = getCliSpecification(["run"]).commands[0]
+    expect(run?.options.find((option) => option.name === "foreground")?.required).toBe(true)
+    expect(renderCliHelp(["run"])).toContain("--foreground (boolean, required)")
+    expect(renderCliHelp()).toContain("leuco run --foreground")
+    expect(renderCliHelp(["run"])).toContain("leuco run --foreground")
+    expect(renderCliHelp()).toContain("leuco slack call <method> --body <body>")
+  })
+  it.each<[string, string[]]>([
+    ["slack login", []],
+    ["status", []],
+    ["ask", []],
+    ["config set", ["settings"]],
+    ["config show", ["settings"]],
+    ["schedules list", ["schedule"]],
+    ["events", ["event"]],
+    ["doctor", ["event"]],
+  ])("publishes only relevant schemas for %s", (command, schemas) => {
+    expect(Object.keys(getCliSpecification(command.split(" ")).inputSchemas)).toEqual(schemas)
+  })
+  it("retains every schema in the full specification", () => {
+    expect(Object.keys(getCliSpecification().inputSchemas)).toEqual([
+      "event",
+      "settings",
+      "schedule",
+    ])
+  })
   for (const definition of COMMANDS) {
     it(`accepts every published argv example for ${definition.name}`, () => {
       for (const example of definition.examples)
@@ -43,7 +70,7 @@ describe("executable CLI documentation", () => {
     expect(specification.commands.find((entry) => entry.name === "slack login")?.automation).toBe(
       "human-required",
     )
-    expect(specification.invariants.join(" ")).toContain("No automatic retry")
+    expect(specification.invariants.join(" ")).toContain("No automatic replay")
     expect(
       specification.commands.every(
         (entry) => entry.description && entry.result && entry.examples.length,
@@ -52,6 +79,13 @@ describe("executable CLI documentation", () => {
   })
   it("selects command groups and rejects guessed paths", () => {
     expect(getCliSpecification(["slack"]).commands).toHaveLength(5)
+    for (const group of ["config", "schedules", "session"]) {
+      const commands = getCliSpecification([group]).commands
+      expect(commands.map((entry) => entry.name)).toEqual(
+        COMMANDS.filter((entry) => entry.name.startsWith(`${group} `)).map((entry) => entry.name),
+      )
+      for (const command of commands) expect(renderCliHelp([group])).toContain(command.name)
+    }
     expect(() => getCliSpecification(["projects"])).toThrow("Unknown help")
     expect(() => renderCliHelp(["not-real"])).toThrow("Unknown help")
   })

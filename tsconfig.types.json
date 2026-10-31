@@ -9,6 +9,5 @@
     "rootDir": "./lib",
     "tsBuildInfoFile": "./dist/types.tsbuildinfo"
   },
-  "include": ["lib/**/*.ts"],
-  "exclude": ["lib/**/*.test.ts", "lib/**/*.bun-test.ts"]
+  "include": ["lib/api.ts"]
 }

@@ -1,3 +1,4 @@
+import { withSyncCleanup } from "@/fs/with-sync-cleanup"
 import { Database } from "bun:sqlite"
 
 type Props = {
@@ -30,21 +31,25 @@ export function maintainLeucoEventLog(props: Props): void {
 
   const database = new Database(props.path)
 
-  try {
-    const table = database
-      .prepare<NameRow, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'logs'")
-      .get()
+  withSyncCleanup(
+    () => {
+      database.run("PRAGMA busy_timeout = 250")
+      const table = database
+        .prepare<NameRow, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'logs'",
+        )
+        .get()
 
-    if (table === null) return
+      if (table === null) return
 
-    trimRows(database, props.maxRows)
-    database
-      .prepare<unknown, [number]>("DELETE FROM logs WHERE ts < ?")
-      .run(props.now() - props.maxAgeMs)
-    trimBytes(database, props)
-  } finally {
-    database.close()
-  }
+      trimRows(database, props.maxRows)
+      database
+        .prepare<unknown, [number]>("DELETE FROM logs WHERE ts < ?")
+        .run(props.now() - props.maxAgeMs)
+      trimBytes(database, props)
+    },
+    () => database.close(true),
+  )
 }
 
 function trimRows(database: Database, maxRows: number): void {

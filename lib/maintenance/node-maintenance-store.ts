@@ -1,5 +1,5 @@
-import { readRegularText } from "@/fs/read-regular-text"
-import { existsSync } from "node:fs"
+import { readRegularJson } from "@/fs/read-regular-json"
+import { lstatSync } from "node:fs"
 import { join } from "node:path"
 import { MaintenanceStore } from "@/maintenance/maintenance-store"
 import { launchSchema, operationSchema } from "@/maintenance/maintenance-schema"
@@ -13,7 +13,9 @@ export class NodeMaintenanceStore extends MaintenanceStore {
   }
   readLaunch(): LaunchConfiguration | null {
     const path = join(this.home, "launch.json")
-    return existsSync(path) ? launchSchema.parse(JSON.parse(readRegularText(path))) : null
+    return lstatSync(path, { throwIfNoEntry: false }) !== undefined
+      ? launchSchema.parse(readRegularJson(path))
+      : null
   }
   writeLaunch(launch: LaunchConfiguration): void {
     atomicWriteJson({
@@ -24,7 +26,9 @@ export class NodeMaintenanceStore extends MaintenanceStore {
   }
   readOperation(): MaintenanceOperation | null {
     const path = join(this.home, "maintenance.json")
-    return existsSync(path) ? operationSchema.parse(JSON.parse(readRegularText(path))) : null
+    return lstatSync(path, { throwIfNoEntry: false }) !== undefined
+      ? operationSchema.parse(readRegularJson(path))
+      : null
   }
   writeOperation(operation: MaintenanceOperation): void {
     withFileLock({ lockPath: join(this.home, "maintenance.lock") }, () =>

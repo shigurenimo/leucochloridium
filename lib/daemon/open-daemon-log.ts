@@ -1,5 +1,6 @@
 import { openSync, fstatSync, closeSync, constants, fchmodSync } from "node:fs"
 import { join } from "node:path"
+import { withSyncCleanup } from "@/fs/with-sync-cleanup"
 export function openDaemonLog(home: string): number {
   const descriptor = openSync(
     join(home, "daemon.log"),
@@ -16,7 +17,11 @@ export function openDaemonLog(home: string): number {
     fchmodSync(descriptor, 0o600)
     return descriptor
   } catch (error) {
-    closeSync(descriptor)
-    throw error
+    return withSyncCleanup(
+      (): never => {
+        throw error
+      },
+      () => closeSync(descriptor),
+    )
   }
 }

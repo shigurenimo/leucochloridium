@@ -1,0 +1,1 @@
+export const DEFAULT_LOCAL_DATA_MAX_BYTES = 16 * 1024 * 1024

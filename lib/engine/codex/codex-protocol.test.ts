@@ -233,3 +233,108 @@ describe("LeucoCodexProtocol server-initiated requests", () => {
     await expect(promise).resolves.toBe("ok")
   })
 })
+
+it("masks standard tokens before clipping malformed stdout previews", () => {
+  const logs: string[] = []
+  const protocol = new LeucoCodexProtocol({
+    writer: () => {},
+    onLog: (line) => logs.push(line),
+    logPreviewChars: 64,
+  })
+  protocol.feedChunk(`${"x".repeat(28)} xoxb-synthetic-preview-token ${"y".repeat(1000)}\n`)
+  expect(logs[0]).toContain("[redacted]")
+  expect(logs[0]).not.toContain("synthetic")
+})
+it("masks complete owner secrets before clipping malformed and unknown stdout", () => {
+  const secret = "control-0123456789-abcdefghijklmnop"
+  const logs: string[] = []
+  const protocol = new LeucoCodexProtocol({
+    writer: () => {},
+    onLog: (line) => logs.push(line),
+    logPreviewChars: 96,
+    redactLogText: (line) => line.split(secret).join("[redacted]"),
+  })
+  protocol.feedChunk(`${"x".repeat(60)} ${secret} ${"y".repeat(1000)}\n`)
+  protocol.feedChunk(
+    `${JSON.stringify({ unknown: `${"x".repeat(47)} ${secret} ${"y".repeat(1000)}` })}\n`,
+  )
+  expect(logs).toHaveLength(2)
+  for (const line of logs) {
+    expect(line).toContain("[redacted]")
+    expect(line).not.toContain("control-")
+  }
+})
+it("does not split Unicode at the protocol diagnostic preview boundary", () => {
+  const logs: string[] = []
+  const suffix = "… [256 chars]"
+  const prefix = 64 - suffix.length
+  const line = `${"x".repeat(prefix - 1)}😀${"y".repeat(256 - prefix - 1)}`
+  const protocol = new LeucoCodexProtocol({
+    writer: () => {},
+    onLog: (text) => logs.push(text),
+    logPreviewChars: 64,
+  })
+  protocol.feedChunk(`${line}\n`)
+  expect(logs).toEqual([`[codex non-json] ${"x".repeat(prefix - 1)}${suffix}`])
+})
+it("does not redact valid protocol result values intended for the caller", async () => {
+  const redactions: string[] = []
+  const protocol = new LeucoCodexProtocol({
+    writer: () => {},
+    redactLogText: (line) => {
+      redactions.push(line)
+      return "[redacted]"
+    },
+  })
+  const pending = protocol.request("probe")
+  protocol.feedChunk('{"id":1,"result":{"value":"original"}}\n')
+  await expect(pending).resolves.toEqual({ value: "original" })
+  expect(redactions).toEqual([])
+})
+
+it("bounds and masks rejected server-request diagnostics while preserving the reply id", () => {
+  const written: string[] = []
+  const logs: string[] = []
+  const secret = "private-approval-secret"
+  const id = `approval\n\u001b[2J${secret}${"i".repeat(4000)}`
+  const method = `exec\n\u001b[2J xoxb-synthetic-approval ${secret}${"m".repeat(4000)}`
+  const protocol = new LeucoCodexProtocol({
+    writer: (line) => written.push(line),
+    onLog: (line) => logs.push(line),
+    logPreviewChars: 128,
+    redactLogText: (line) => line.split(secret).join("[redacted]"),
+  })
+  protocol.feedChunk(`${JSON.stringify({ jsonrpc: "2.0", id, method })}\n`)
+  expect(logs).toHaveLength(1)
+  expect(logs[0]!.length).toBeLessThanOrEqual("[codex server request rejected] ".length + 128)
+  expect(logs[0]).not.toContain(secret)
+  expect(logs[0]).not.toContain("\n")
+  expect(logs[0]).not.toContain("\u001b")
+  const reply = JSON.parse(written[0]!)
+  expect(reply.id).toBe(id)
+  expect(reply.error).toEqual({ code: -32601, message: "leuco cannot answer server requests" })
+})
+
+it("masks standard tokens in server-request diagnostics without an injected redactor", () => {
+  const logs: string[] = []
+  const protocol = new LeucoCodexProtocol({ writer: () => {}, onLog: (line) => logs.push(line) })
+  protocol.feedChunk(
+    `${JSON.stringify({ id: "xapp-synthetic-approval", method: "xoxb-synthetic-approval" })}\n`,
+  )
+  expect(logs[0]).not.toContain("synthetic")
+  expect(logs[0]).toContain("[redacted]")
+})
+
+it("masks secrets before escaping their JSON control characters", () => {
+  const secret = 'private-secret-"\n-tail'
+  const logs: string[] = []
+  const protocol = new LeucoCodexProtocol({
+    writer: () => {},
+    onLog: (line) => logs.push(line),
+    redactLogText: (line) => line.split(secret).join("[redacted]"),
+  })
+  protocol.feedChunk(`${JSON.stringify({ id: secret, method: secret })}\n`)
+  expect(logs).toEqual([
+    '[codex server request rejected] {"method":"[redacted]","id":"[redacted]"}',
+  ])
+})

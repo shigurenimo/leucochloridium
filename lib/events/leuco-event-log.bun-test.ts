@@ -1,3 +1,5 @@
+import { Database } from "bun:sqlite"
+import { readLeucoEvents } from "@/events/read-leuco-events"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -26,6 +28,41 @@ describe("LeucoEventLog", () => {
       expect.objectContaining({ type: "log", line: "hello" }),
       expect.objectContaining({ type: "log", line: "world" }),
     ])
+  })
+
+  test("filters normalized legacy event types before applying the limit", () => {
+    const path = join(dir, "legacy-runtime.db")
+    const legacy = new SqliteEventLog<
+      { ts: number; type: "tenant.started"; project: string },
+      ["runtime"]
+    >({ path, indexes: ["runtime"], extractIndexes: () => ({ runtime: null }) })
+    legacy.insert({
+      ts: Date.now(),
+      event: { ts: Date.now(), type: "tenant.started", project: "alpha" },
+    })
+    legacy.close()
+    const saved = new LeucoEventLog({ eventLogPath: path })
+    const memory = new LeucoEventLog()
+    memory.append({ ts: Date.now(), type: "runtime.started", runtime: "alpha" })
+    try {
+      for (const index of Array.from({ length: 20 }).keys()) {
+        saved.append({ ts: Date.now() + index, type: "runtime.stopped", runtime: "beta" })
+        memory.append({ ts: Date.now() + index, type: "runtime.stopped", runtime: "beta" })
+      }
+      for (const order of ["asc", "desc"] satisfies Array<"asc" | "desc">) {
+        const query = { type: "runtime.started", limit: 1, order }
+        expect(saved.query(query).map((entry) => entry.seq)).toEqual(
+          memory.query(query).map((entry) => entry.seq),
+        )
+        expect(saved.query(query)[0]?.event).toMatchObject({
+          type: "runtime.started",
+          runtime: "alpha",
+        })
+      }
+    } finally {
+      saved.close()
+      memory.close()
+    }
   })
 
   test("persists events to SQLite", () => {
@@ -111,22 +148,6 @@ describe("LeucoEventLog", () => {
     eventLog.close()
   })
 
-  test("indexes the project column", () => {
-    const path = join(dir, "events.db")
-    const eventLog = new LeucoEventLog({ eventLogPath: path })
-
-    eventLog.append({ ts: Date.now(), type: "runtime.started", runtime: "alpha" })
-    eventLog.append({ ts: Date.now(), type: "runtime.started", runtime: "beta" })
-    eventLog.append({ ts: Date.now(), type: "log", level: "info", line: "no project" })
-
-    const alphaOnly = eventLog.query({ runtime: "alpha" })
-
-    expect(alphaOnly).toHaveLength(1)
-    expect(alphaOnly[0]!.event).toMatchObject({ type: "runtime.started", runtime: "alpha" })
-
-    eventLog.close()
-  })
-
   test("retains only the configured number of newest rows", () => {
     const path = join(dir, "events.db")
     const eventLog = new LeucoEventLog({ eventLogPath: path, maxRows: 2 })
@@ -195,6 +216,26 @@ describe("LeucoEventLog", () => {
       })
     }
     eventLog.close()
+  })
+
+  test("masks decoded legacy JSON tokens without changing stored rows", () => {
+    const path = join(dir, "escaped-legacy.db")
+    const seeded = new LeucoEventLog({ eventLogPath: path })
+    seeded.log("warn", "placeholder")
+    seeded.close()
+    const database = new Database(path)
+    const encoded =
+      '{"ts":1,"type":"log","level":"warn","line":"token xoxb-synthetic\\u002dreader-tail"}'
+    try {
+      database.query("UPDATE logs SET event = ?").run(encoded)
+      expect(readLeucoEvents(path, 10)[0]?.event).toMatchObject({
+        type: "log",
+        line: "token [redacted]",
+      })
+      expect(database.query("SELECT event FROM logs").get()).toMatchObject({ event: encoded })
+    } finally {
+      database.close()
+    }
   })
 
   test("close is idempotent", () => {

@@ -1,70 +1,133 @@
 import { assertSlackFileUrl } from "@/actions/slack/assert-slack-file-url"
+import { awaitAbortableOperation } from "@/await-abortable-operation"
+import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { errorMessage } from "@/error-message"
+import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 
-const MAX_REDIRECT_HOPS = 3
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
-
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
-
-/**
- * Fetch a Slack-hosted file with the bearer token, following redirects
- * manually. Automatic following would rely on the runtime to strip the
- * Authorization header cross-origin; instead every hop's Location is resolved
- * against the current URL and re-validated with `assertSlackFileUrl` before
- * the token is sent again.
- */
+/** Validate every redirect before attaching a token; share one deadline across all response headers. */
 export const fetchSlackFile = async (
   url: string,
   botToken: string,
-  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  timeoutMs = 60_000,
   signal?: AbortSignal,
-): Promise<Response> => {
-  return await followSlackRedirects(url, botToken, MAX_REDIRECT_HOPS, timeoutMs, signal)
-}
+): Promise<Response> => new SlackFileFetch({ url, botToken, timeoutMs, signal }).run()
 
-const followSlackRedirects = async (
-  url: string,
-  botToken: string,
-  remainingHops: number,
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<Response> => {
-  const safeUrl = assertSlackFileUrl(url)
+type Props = { url: string; botToken: string; timeoutMs: number; signal?: AbortSignal }
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
-  const controller = signal === undefined ? new AbortController() : null
-  const requestSignal = signal ?? controller?.signal
-  const timer = controller === null ? null : setTimeout(() => controller.abort(), timeoutMs)
-  let response: Response
-  try {
-    response = await fetch(safeUrl, {
-      headers: {
-        Authorization: `Bearer ${botToken}`,
-      },
-      redirect: "manual",
-      signal: requestSignal,
-    })
-  } catch (err) {
-    if (controller?.signal.aborted === true) {
-      throw new Error(`slack file download timed out after ${timeoutMs}ms: ${safeUrl.hostname}`)
+/** One response owner and one deadline across all authenticated redirect hops. */
+class SlackFileFetch {
+  private readonly controller = new AbortController()
+  private readonly signal: AbortSignal
+  private readonly current: {
+    url: string
+    remainingHops: number
+    response: Response | null
+    cancellation: Promise<void> | null
+  }
+
+  constructor(private readonly props: Props) {
+    this.signal = props.signal
+      ? AbortSignal.any([props.signal, this.controller.signal])
+      : this.controller.signal
+    this.current = {
+      url: props.url,
+      remainingHops: 3,
+      response: null,
+      cancellation: null,
     }
-    throw err
-  } finally {
-    if (timer !== null) clearTimeout(timer)
+    Object.freeze(this)
   }
 
-  if (!REDIRECT_STATUSES.has(response.status)) return response
-
-  if (remainingHops === 0) {
-    await response.body?.cancel().catch(() => undefined)
-    throw new Error(`too many redirects downloading slack file: ${url}`)
+  async run(): Promise<Response> {
+    if (
+      !Number.isSafeInteger(this.props.timeoutMs) ||
+      this.props.timeoutMs < 1 ||
+      this.props.timeoutMs > MAX_TIMER_DELAY_MS
+    )
+      throw new Error(
+        `Slack file timeout must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
+      )
+    const timer = setTimeout(
+      () =>
+        this.controller.abort(
+          new Error(`slack file download timed out after ${this.props.timeoutMs}ms`),
+        ),
+      this.props.timeoutMs,
+    )
+    try {
+      return await this.followRedirects()
+    } catch (error) {
+      clearTimeout(timer)
+      const primary = this.signal.aborted ? this.signal.reason : error
+      const failures: unknown[] = [primary]
+      if (error !== primary) failures.push(error)
+      try {
+        await this.cancelCurrentBody()
+      } catch (cleanup) {
+        failures.push(cleanup)
+      }
+      const unique = [...new Set(failures)]
+      if (unique.length === 1) throw primary
+      throw new AggregateError(
+        unique,
+        `${errorMessage(primary)}; additional redirect or cleanup failure`,
+        { cause: primary },
+      )
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
-  const location = response.headers.get("location")
-  if (location === null) {
-    await response.body?.cancel().catch(() => undefined)
-    throw new Error(`redirect ${response.status} without location header: ${url}`)
+  private async followRedirects(): Promise<Response> {
+    while (true) {
+      this.signal.throwIfAborted()
+      const url = assertSlackFileUrl(this.current.url)
+      const response = await awaitAbortableOperation(
+        fetch(url, {
+          headers: { Authorization: `Bearer ${this.props.botToken}` },
+          redirect: "manual",
+          signal: this.signal,
+        }),
+        this.signal,
+      )
+      this.current.response = response
+      this.current.cancellation = null
+      if (!REDIRECT_STATUSES.has(response.status)) {
+        this.current.response = null
+        return response
+      }
+      const next = this.nextUrl(response, url)
+      await awaitAbortableOperation(this.cancelCurrentBody(), this.signal)
+      this.signal.throwIfAborted()
+      this.current.response = null
+      this.current.cancellation = null
+      this.current.url = next
+      this.current.remainingHops -= 1
+    }
   }
 
-  const nextUrl = new URL(location, safeUrl).toString()
-  await response.body?.cancel().catch(() => undefined)
-  return await followSlackRedirects(nextUrl, botToken, remainingHops - 1, timeoutMs, signal)
+  private nextUrl(response: Response, url: URL): string {
+    if (this.current.remainingHops === 0)
+      throw new Error(`too many redirects downloading slack file: ${url.origin}${url.pathname}`)
+    const location = response.headers.get("location")
+    if (location === null)
+      throw new Error(
+        `redirect ${response.status} without location header: ${url.origin}${url.pathname}`,
+      )
+    return assertSlackFileUrl(location, url).toString()
+  }
+
+  private async cancelCurrentBody(): Promise<void> {
+    const response = this.current.response
+    if (response === null) return
+    if (this.current.cancellation === null)
+      this.current.cancellation = awaitBoundedCleanup(
+        Promise.resolve().then(async () => {
+          await response.body?.cancel()
+        }),
+        "redirect body cancellation",
+      )
+    await this.current.cancellation
+  }
 }

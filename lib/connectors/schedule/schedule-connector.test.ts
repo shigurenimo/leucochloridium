@@ -24,14 +24,12 @@ const makeCtx = (): { ctx: ConnectorContext; captured: Captured } => {
   }
 
   const ctx: ConnectorContext = {
-    cwd: "/tmp/demo",
     onLog: (line) => captured.logs.push(line),
     runTextTurn: async (threadKey, text) => {
       captured.turns.push({ threadKey, text })
       return ""
     },
     eventLog: captured.eventLog,
-    runtimeName: "demo",
   }
   return { ctx, captured }
 }
@@ -45,19 +43,24 @@ const makeStore = (
   const store = {
     entries,
     lastFiredAt: {} as Record<string, number>,
+    lastRunAt: new Map<string, string>(),
     listEntries() {
       return store.entries
     },
-    removeEntry(entryId: string) {
+    removeEntry(entryId: string, expectedRunAt: string) {
       const before = store.entries.length
-      store.entries = store.entries.filter((e) => e.id !== entryId)
-      if (store.entries.length === before) throw new Error(`not found: ${entryId}`)
+      store.entries = store.entries.filter((e) => e.id !== entryId || e.runAt !== expectedRunAt)
+      return store.entries.length < before
     },
-    getLastFiredAt(entryId: string): number | null {
-      return store.lastFiredAt[entryId] ?? null
+    getLastAttempt(entryId: string) {
+      const timestamp = store.lastFiredAt[entryId]
+      return timestamp === undefined
+        ? null
+        : { firedAt: timestamp, runAt: store.lastRunAt.get(entryId) ?? null }
     },
-    markFired(entryId: string, firedAt: number): void {
+    markFired(entryId: string, firedAt: number, runAt: string): void {
       store.lastFiredAt[entryId] = firedAt
+      store.lastRunAt.set(entryId, runAt)
     },
   }
   return store
@@ -69,7 +72,6 @@ const buildConnector = (
 ): LeucoScheduleConnector => {
   const now = typeof clock === "function" ? clock : () => clock
   return new LeucoScheduleConnector({
-    name: "cron",
     store,
     now,
     setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
@@ -108,6 +110,12 @@ describe("LeucoScheduleConnector", () => {
     expect(captured.turns[0]!.threadKey).toBe("schedule:11111111-1111-4111-8111-111111111111")
     expect(captured.turns[0]!.text).toContain("ping")
     expect(captured.events.some((e) => e.type === "schedule.fired")).toBe(true)
+    expect(captured.events.find((event) => event.type === "schedule.fired")).not.toHaveProperty(
+      "connector",
+    )
+    expect(captured.events.find((event) => event.type === "schedule.fired")).toHaveProperty(
+      "entryId",
+    )
   })
 
   it("does not fire a cron entry whose expression does not match", async () => {
@@ -228,6 +236,15 @@ describe("LeucoScheduleConnector", () => {
 
     expect(calls).toBe(2)
     expect(captured.turns).toHaveLength(1)
+    const fired = captured.eventLog
+      .query()
+      .find((entry) => entry.event.type === "schedule.fired" && entry.event.entryName === "fails")
+    expect(typeof fired?.event.requestId).toBe("string")
+    expect(
+      captured.eventLog
+        .query({ requestId: fired?.event.requestId })
+        .some((entry) => entry.event.type === "log" && entry.event.level === "error"),
+    ).toBe(true)
   })
 
   it("catches up a cron fire that was missed during daemon downtime", async () => {
@@ -248,9 +265,9 @@ describe("LeucoScheduleConnector", () => {
     )
   })
 
-  it("does not catch up entries that have never fired", async () => {
+  it("does not catch up never-fired occurrences before the starting tick", async () => {
     // No `lastFiredAt` and no evaluated pass yet → the connector treats this as
-    // a fresh agent and only evaluates the current minute on its first pass.
+    // a fresh schedule and only considers occurrences from its starting minute.
     const store = makeStore([cronEntry({ runAt: "30 9 * * *" })])
     const connector = buildConnector(store, () => new Date(2026, 4, 7, 12, 0))
 
@@ -386,14 +403,14 @@ describe("LeucoScheduleConnector failure containment", () => {
     const clock = { nowMs: new Date(2026, 4, 7, 9, 30).getTime() }
     const guardedStore: ScheduleStorePort = {
       listEntries: () => store.listEntries(),
-      removeEntry: (entryId) => store.removeEntry(entryId),
-      getLastFiredAt: (entryId) => store.getLastFiredAt(entryId),
-      markFired: (entryId, firedAt) => {
+      removeEntry: (entryId, expectedRunAt) => store.removeEntry(entryId, expectedRunAt),
+      getLastAttempt: (entryId) => store.getLastAttempt(entryId),
+      markFired: (entryId, firedAt, runAt) => {
         if (markerFailures.remaining > 0) {
           markerFailures.remaining -= 1
           throw new Error("disk unavailable")
         }
-        store.markFired(entryId, firedAt)
+        store.markFired(entryId, firedAt, runAt)
       },
     }
     const connector = buildConnector(guardedStore, () => new Date(clock.nowMs))
@@ -404,7 +421,7 @@ describe("LeucoScheduleConnector failure containment", () => {
 
     expect(captured.turns).toEqual([])
     expect(captured.logs).toContain(
-      "[cron] entry every-minute not fired because durable mark failed: disk unavailable",
+      "[schedule] entry every-minute not fired because durable mark failed: disk unavailable",
     )
 
     clock.nowMs += 60_000
@@ -427,14 +444,14 @@ describe("LeucoScheduleConnector failure containment", () => {
     const clock = { nowMs: new Date(2026, 4, 7, 12, 0).getTime() }
     const guardedStore: ScheduleStorePort = {
       listEntries: () => store.listEntries(),
-      removeEntry: (entryId) => store.removeEntry(entryId),
-      getLastFiredAt: (entryId) => store.getLastFiredAt(entryId),
-      markFired: (entryId, firedAt) => {
+      removeEntry: (entryId, expectedRunAt) => store.removeEntry(entryId, expectedRunAt),
+      getLastAttempt: (entryId) => store.getLastAttempt(entryId),
+      markFired: (entryId, firedAt, runAt) => {
         if (markerFailures.remaining > 0) {
           markerFailures.remaining -= 1
           throw new Error("disk unavailable")
         }
-        store.markFired(entryId, firedAt)
+        store.markFired(entryId, firedAt, runAt)
       },
     }
     const connector = buildConnector(guardedStore, () => new Date(clock.nowMs))
@@ -472,6 +489,10 @@ describe("LeucoScheduleConnector failure containment", () => {
     expect(
       captured.logs.some((line) => line.includes("turn failed: External write result unknown")),
     ).toBe(true)
+    expect(captured.logs.some((line) => line.includes("delivered and removed"))).toBe(false)
+    expect(
+      captured.logs.some((line) => line.includes("removed after recorded attempt; no replay")),
+    ).toBe(true)
   })
 
   it("caps cleanup retry delay without repeating the accepted one-shot", async () => {
@@ -479,7 +500,6 @@ describe("LeucoScheduleConnector failure containment", () => {
     const store = makeStore([entry])
     const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
     const connector = new LeucoScheduleConnector({
-      name: "cron",
       store,
       now: () => new Date(clock.nowMs),
       setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
@@ -521,14 +541,13 @@ describe("LeucoScheduleConnector failure containment", () => {
     const store = makeStore([entry])
     const removeEntry = store.removeEntry
     const removal = { calls: 0 }
-    store.removeEntry = (entryId) => {
+    store.removeEntry = (entryId, expectedRunAt) => {
       removal.calls++
       if (removal.calls === 1) throw new Error("settings busy")
-      removeEntry(entryId)
+      return removeEntry(entryId, expectedRunAt)
     }
     const clock = { nowMs: new Date("2026-05-07T09:01:00Z").getTime() }
     const connector = new LeucoScheduleConnector({
-      name: "cron",
       store,
       now: () => new Date(clock.nowMs),
       setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
@@ -556,10 +575,10 @@ describe("LeucoScheduleConnector failure containment", () => {
     const store = makeStore([entry])
     const removeEntry = store.removeEntry
     const removal = { calls: 0 }
-    store.removeEntry = (entryId) => {
+    store.removeEntry = (entryId, expectedRunAt) => {
       removal.calls++
       if (removal.calls === 1) throw new Error("settings busy")
-      removeEntry(entryId)
+      return removeEntry(entryId, expectedRunAt)
     }
     const now = new Date("2026-05-07T09:01:00Z")
     const firstConnector = buildConnector(store, now)
@@ -592,7 +611,6 @@ describe("LeucoScheduleConnector failure containment", () => {
 
     let now = new Date(2026, 4, 7, 9, 30)
     const connector = new LeucoScheduleConnector({
-      name: "cron",
       store,
       now: () => now,
       setIntervalFn: () => 0 as unknown as ReturnType<typeof setInterval>,
@@ -622,7 +640,7 @@ describe("LeucoScheduleConnector failure containment", () => {
 
   it("contains store errors thrown inside the catch-up path", async () => {
     const store = makeStore([cronEntry()])
-    store.getLastFiredAt = () => {
+    store.getLastAttempt = () => {
       throw new Error("project removed mid-tick")
     }
 
@@ -635,4 +653,47 @@ describe("LeucoScheduleConnector failure containment", () => {
     expect(captured.turns).toEqual([])
     expect(captured.logs.some((line) => line.includes("tick failed"))).toBe(true)
   })
+})
+
+it("does not mark or consume a one-shot whose formatted input cannot be dispatched", async () => {
+  const entry = isoEntry({ prompt: "x".repeat(256 * 1024) })
+  const store = makeStore([entry])
+  const connector = buildConnector(store, new Date("2026-05-07T09:01:00Z"))
+  const fixture = makeCtx()
+  await connector.start(fixture.ctx)
+  await connector.waitForStartupTick()
+  expect(store.lastFiredAt).toEqual({})
+  expect(store.entries).toEqual([entry])
+  expect(fixture.captured.turns).toEqual([])
+  expect(fixture.captured.events.some((event) => event.type === "schedule.fired")).toBe(false)
+  expect(fixture.captured.logs.join("\n")).toContain("UTF-8 bytes")
+  await connector.stop()
+})
+
+it("keeps an oversized schedule failure inspectable within the status message budget", async () => {
+  const setup = makeCtx()
+  const secret = "synthetic-schedule-status-credential"
+  setup.ctx.eventLog.addRedactionSecrets([secret])
+  const failure = Object.assign(new Error(`${"p".repeat(3980)}${secret}${"q".repeat(20000)}`), {
+    code: "ESCHEDULE",
+  })
+  const store = makeStore([cronEntry()])
+  store.markFired = () => {
+    throw failure
+  }
+  const connector = buildConnector(store, new Date(2026, 4, 7, 9, 30))
+  try {
+    await connector.start(setup.ctx)
+    await connector.waitForStartupTick()
+    const message = connector.getStatus().lastFailure?.message
+    expect(message?.length).toBeLessThanOrEqual(4000)
+    expect(message).toContain("[truncated]")
+    expect(message).not.toContain(secret.slice(0, 8))
+    expect(setup.captured.turns).toEqual([])
+    expect(JSON.stringify(setup.captured.events)).toContain("ESCHEDULE")
+    expect(failure.message).toContain(secret)
+  } finally {
+    await connector.stop()
+    setup.ctx.eventLog.close()
+  }
 })

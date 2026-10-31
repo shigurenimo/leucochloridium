@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest"
 import { handleDaemonRequest } from "@/daemon/handle-daemon-request"
+import type { SlackCommandOptions } from "@/runtime/slack-command-options"
 
 function fixture() {
   const runSlackCommand = vi.fn(
-    async (_parsed: unknown, _upload?: Uint8Array): Promise<unknown> => ({ ok: true }),
+    async (_parsed: unknown, _options?: SlackCommandOptions): Promise<unknown> => ({ ok: true }),
   )
   const handler = handleDaemonRequest({
     token: "control-secret",
@@ -37,11 +38,11 @@ describe("authenticated Slack proxy", () => {
   it("forwards explicit actions and suppresses sensitive backend exceptions", async () => {
     const test = fixture()
     expect(await (await test.request(command)).json()).toEqual({ ok: true })
-    expect(test.runSlackCommand).toHaveBeenCalledWith(
-      command,
-      undefined,
-      "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
-    )
+    expect(test.runSlackCommand).toHaveBeenCalledWith(command, {
+      upload: undefined,
+      requestId: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+      signal: expect.any(AbortSignal),
+    })
     test.runSlackCommand.mockRejectedValueOnce(new Error("raw-bot-secret"))
     const response = await test.request(command)
     expect(response.status).toBe(422)
@@ -75,11 +76,11 @@ describe("authenticated Slack proxy", () => {
       }),
     )
     expect(response.status).toBe(200)
-    expect(test.runSlackCommand).toHaveBeenCalledWith(
-      parsed,
-      new TextEncoder().encode("content"),
-      "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
-    )
+    expect(test.runSlackCommand).toHaveBeenCalledWith(parsed, {
+      upload: new TextEncoder().encode("content"),
+      requestId: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+      signal: expect.any(AbortSignal),
+    })
   })
   it("returns the safe original reason and correlation ID when the daemon supplies a reporter", async () => {
     const reportError = vi.fn(

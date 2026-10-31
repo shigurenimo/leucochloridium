@@ -1,5 +1,7 @@
-import { parseCron } from "@interactive-inc/flume/time"
-import { isCronSchedule } from "@/connectors/schedule/is-cron-schedule"
+import { parseScheduleRunAt } from "@/connectors/schedule/parse-schedule-run-at"
+import { z } from "zod"
+
+const ONE_SHOT_DATE_SCHEMA = z.iso.date()
 
 /**
  * Grace window for one-shot timestamps. "Run it now" flows often produce a
@@ -15,29 +17,15 @@ const PAST_GRACE_MS = 60_000
  * `now` is injectable for tests and defaults to the real clock.
  */
 export const validateRunAt = (runAt: string, now: () => number = () => Date.now()): string => {
-  if (isCronSchedule(runAt)) {
-    const parsed = parseCron(runAt)
-    if (parsed instanceof Error) {
-      // A space-separated timestamp like "2026-07-03 10:00" contains
-      // whitespace, so it lands in the cron branch and would otherwise die
-      // with a confusing "must have 5 fields". Point at the ISO form instead.
-      if (!Number.isNaN(Date.parse(runAt))) {
-        const suggested = runAt.trim().replace(/\s+/, "T")
-        throw new Error(
-          `runAt looks like a timestamp with a space separator: '${runAt}'. Use ISO 8601 with a 'T' separator, e.g. '${suggested}'`,
-        )
-      }
-      throw parsed
-    }
-    return runAt
-  }
-
-  const ts = Date.parse(runAt)
-  if (Number.isNaN(ts)) {
+  const ts = parseScheduleRunAt(runAt)
+  if (ts === null) return runAt
+  if (
+    !/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:?\d{2})$/i.test(runAt) ||
+    !ONE_SHOT_DATE_SCHEMA.safeParse(runAt.slice(0, 10)).success
+  )
     throw new Error(
-      `runAt is neither a 5-field cron expression nor an ISO 8601 timestamp: '${runAt}'`,
+      "runAt must be a real ISO 8601 date-time with Z or a numeric UTC offset, e.g. '2050-01-01T09:00:00+09:00'",
     )
-  }
 
   if (ts < now() - PAST_GRACE_MS) {
     throw new Error(`runAt timestamp is in the past: '${runAt}'`)

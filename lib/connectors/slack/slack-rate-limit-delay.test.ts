@@ -26,3 +26,16 @@ describe("slackRateLimitDelayMs", () => {
     expect(slackRateLimitDelayMs("-3")).toBe(1_000)
   })
 })
+
+it.each(["", " ", " \t "])("uses the default delay for a blank header %j", (header) => {
+  expect(slackRateLimitDelayMs(header)).toBe(1_000)
+})
+
+it.each(["0x10", "1e2", "0.5", "+2"])("uses the default delay for invalid seconds %j", (header) => {
+  expect(slackRateLimitDelayMs(header)).toBe(1_000)
+})
+
+it("caps a valid decimal delay even when it exceeds the numeric range", () => {
+  expect(slackRateLimitDelayMs("9".repeat(400))).toBe(30_000)
+  expect(slackRateLimitDelayMs(`${"0".repeat(400)}5`)).toBe(5_000)
+})

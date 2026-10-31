@@ -4,11 +4,30 @@ import { LeucoRuntime } from "@/runtime/runtime"
 import { MemoryLeucoStore } from "@/storage/memory-leuco-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import { LeucoEventLog } from "@/events/leuco-event-log"
+import { MAX_THREAD_KEY_CHARACTERS } from "@/turn-input-limits"
 
 const active: LeucoRuntime[] = []
 afterEach(async () => {
   for (const runtime of active.splice(0)) await runtime.stop()
   vi.useRealTimers()
+})
+
+it.each(["", "   ", "\n\t", "　"])("does not enqueue a blank SDK prompt: %j", async (text) => {
+  const fixture = create()
+  await fixture.runtime.start()
+  const before = fixture.runtime.getStatus().queue
+  expect(await fixture.runtime.runTextTurn("cli", text)).toBeInstanceOf(Error)
+  expect(fixture.codex.turns).toEqual([])
+  expect(fixture.codex.starts).toEqual([])
+  expect(fixture.runtime.getStatus().queue).toEqual(before)
+})
+
+it("preserves whitespace in a meaningful SDK prompt", async () => {
+  const fixture = create()
+  await fixture.runtime.start()
+  const text = "  code\n\tline　 "
+  expect(await fixture.runtime.runTextTurn("cli", text)).toBe("done")
+  expect(fixture.codex.turns[0]?.text).toBe(text)
 })
 
 function create(
@@ -254,4 +273,115 @@ describe("single companion runtime", () => {
       (await Promise.all([running, ...waiting])).every((reply) => reply instanceof Error),
     ).toBe(true)
   })
+})
+
+it("distinguishes an impossible input size from temporary queue congestion", async () => {
+  const fixture = create()
+  await fixture.runtime.start()
+  const reply = await fixture.runtime.runTextTurn(
+    "large",
+    "x".repeat(256 * 1024 + 1),
+    "oversized-request",
+  )
+  expect(String(reply)).toContain("input exceeds")
+  expect(fixture.codex.turns).toHaveLength(0)
+  expect(fixture.runtime.getStatus().queue.waiting).toBe(0)
+})
+
+it.each(["__proto__", "constructor", "toString"])(
+  "persists and reuses the literal conversation key %s",
+  async (key) => {
+    const fixture = create()
+    await fixture.runtime.start()
+    expect(await fixture.runtime.runTextTurn(key, "first")).toBe("done")
+    expect(await fixture.runtime.runTextTurn(key, "second")).toBe("done")
+    expect(fixture.codex.starts).toHaveLength(1)
+    expect(Object.hasOwn(fixture.store.loadState().threads, key)).toBe(true)
+    await fixture.runtime.stop()
+    const resumed = create(fixture.store)
+    await resumed.runtime.start()
+    expect(await resumed.runtime.runTextTurn(key, "third")).toBe("done")
+    expect(resumed.codex.starts).toHaveLength(0)
+    expect(resumed.codex.resumes).toHaveLength(1)
+  },
+)
+
+it.each(["new", "running", "stopped"])(
+  "rejects invalid SDK thread keys before diagnostics while %s",
+  async (phase) => {
+    const fixture = create()
+    if (phase !== "new") await fixture.runtime.start()
+    if (phase === "stopped") await fixture.runtime.stop()
+    const append = vi.spyOn(fixture.eventLog, "append")
+    for (const key of ["", "x".repeat(MAX_THREAD_KEY_CHARACTERS + 1)]) {
+      const failure = await fixture.runtime.runTextTurn(key, "valid prompt")
+      expect(failure).toBeInstanceOf(Error)
+      expect(String(failure)).toContain("Thread key must contain")
+    }
+    expect(append).not.toHaveBeenCalled()
+    expect(fixture.codex.starts).toHaveLength(0)
+    expect(fixture.codex.turns).toHaveLength(0)
+    expect(fixture.store.loadState().threads).toEqual({})
+  },
+)
+
+it.each(["completed", "timed out"])(
+  "ignores late activity from a %s turn when the next turn reuses its request ID",
+  async (outcome) => {
+    vi.useFakeTimers()
+    const fixture = create(new MemoryLeucoStore({ idleTimeoutMs: 20, turnTimeoutMs: 100 }))
+    const firstReply = Promise.withResolvers<string | Error>()
+    const activity: { notify: ((method: string) => void) | null } = { notify: null }
+    vi.spyOn(fixture.codex, "runTextTurn").mockImplementationOnce((_thread, _text, options) => {
+      activity.notify = options?.onActivity ?? null
+      return firstReply.promise
+    })
+    fixture.codex.hold = true
+    await fixture.runtime.start()
+    const first = fixture.runtime.runTextTurn("cli", "first", "shared-request")
+    await flush()
+    expect(activity.notify).not.toBeNull()
+    if (outcome === "completed") firstReply.resolve("first done")
+    else await vi.advanceTimersByTimeAsync(21)
+    const firstResult = await first
+    if (outcome === "completed") expect(firstResult).toBe("first done")
+    else expect(String(firstResult)).toContain("idle timeout")
+    const second = fixture.runtime.runTextTurn("cli", "second", "shared-request")
+    await flush()
+    const before = fixture.runtime.getStatus().active
+    expect(before).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    activity.notify?.("late first activity")
+    expect(fixture.runtime.getStatus().active).toEqual(before)
+    fixture.codex.complete("second done")
+    expect(await second).toBe("second done")
+    firstReply.resolve("late first completion")
+    await vi.advanceTimersByTimeAsync(200)
+    expect(fixture.runtime.getStatus().active).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  },
+)
+
+it("uses instance and request identity without a fixed runtime label in new events", async () => {
+  const fixture = create()
+  await fixture.runtime.start()
+  expect(await fixture.runtime.runTextTurn("cli", "probe", "request-identity")).toBe("done")
+  await fixture.runtime.stop()
+  const events = fixture.eventLog.query().map((record) => record.event)
+  expect(events.map((event) => event.type)).toEqual(
+    expect.arrayContaining([
+      "runtime.started",
+      "turn.queued",
+      "turn.start",
+      "turn.complete",
+      "runtime.stopped",
+    ]),
+  )
+  for (const event of events) {
+    expect(Object.hasOwn(event, "runtime")).toBe(false)
+    expect(event.instanceId).toBe(fixture.runtime.getStatus().instanceId)
+  }
+  expect(
+    fixture.eventLog.query({ requestId: "request-identity", type: "turn.complete" }),
+  ).toHaveLength(1)
 })

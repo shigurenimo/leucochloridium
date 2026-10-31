@@ -50,7 +50,7 @@ export class MemoryCodexClient implements CodexClientPort {
   async runTextTurn(
     threadId: string,
     text: string,
-    _options?: string | CodexTurnOptions,
+    _options?: CodexTurnOptions,
   ): Promise<string | Error> {
     this.turns.push({ threadId, text })
     if (this.hold) return new Promise((resolve) => this.held.push(resolve))

@@ -1,51 +1,14 @@
 import {
   LeucoSlackWebClient,
   type SlackAuthTest,
-  type SlackConversationInfo,
-  type SlackConversationList,
   type SlackFileUpload,
-  type SlackHistorySlice,
-  type SlackSearchMessages,
 } from "@/connectors/slack/leuco-slack-web-client"
 
-export type SlackMemoryResponder<T, A> = ((args: A) => Promise<T> | T) | T
+type SlackMemoryResponder<T, A> = ((args: A) => Promise<T> | T) | T
 
-export type LeucoMemorySlackWebClientProps = {
-  chatPostMessage?: SlackMemoryResponder<
-    void,
-    { channel: string; threadTs: string | null; text: string }
-  >
+type LeucoMemorySlackWebClientProps = {
   reactionsAdd?: SlackMemoryResponder<void, { channel: string; timestamp: string; name: string }>
   reactionsRemove?: SlackMemoryResponder<void, { channel: string; timestamp: string; name: string }>
-  conversationsInfo?: SlackMemoryResponder<SlackConversationInfo, { channel: string }>
-  conversationsReplies?: SlackMemoryResponder<
-    SlackHistorySlice,
-    {
-      channel: string
-      ts: string
-      oldest: string | null
-      inclusive: boolean | null
-      limit: number | null
-      cursor: string | null
-    }
-  >
-  conversationsList?: SlackMemoryResponder<
-    SlackConversationList,
-    { types: string; limit: number | null; cursor?: string | null }
-  >
-  conversationsHistory?: SlackMemoryResponder<
-    SlackHistorySlice,
-    { channel: string; oldest: string | null; inclusive: boolean | null; limit: number | null }
-  >
-  searchMessages?: SlackMemoryResponder<
-    SlackSearchMessages,
-    {
-      query: string
-      sort: "timestamp" | "score" | null
-      sortDir: "asc" | "desc" | null
-      count: number | null
-    }
-  >
   authTest?: SlackMemoryResponder<SlackAuthTest, void>
   filesUpload?: SlackMemoryResponder<{ fileId: string }, SlackFileUpload>
   apiCall?: SlackMemoryResponder<unknown, { method: string; body: Record<string, unknown> }>
@@ -58,31 +21,8 @@ export type LeucoMemorySlackWebClientProps = {
  */
 export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
   readonly calls: {
-    chatPostMessage: Array<{ channel: string; threadTs: string | null; text: string }>
     reactionsAdd: Array<{ channel: string; timestamp: string; name: string }>
     reactionsRemove: Array<{ channel: string; timestamp: string; name: string }>
-    conversationsInfo: Array<{ channel: string }>
-    conversationsReplies: Array<{
-      channel: string
-      ts: string
-      oldest: string | null
-      inclusive: boolean | null
-      limit: number | null
-      cursor: string | null
-    }>
-    conversationsList: Array<{ types: string; limit: number | null; cursor?: string | null }>
-    conversationsHistory: Array<{
-      channel: string
-      oldest: string | null
-      inclusive: boolean | null
-      limit: number | null
-    }>
-    searchMessages: Array<{
-      query: string
-      sort: "timestamp" | "score" | null
-      sortDir: "asc" | "desc" | null
-      count: number | null
-    }>
     authTest: Array<void>
     filesUpload: SlackFileUpload[]
     apiCall: Array<{ method: string; body: Record<string, unknown> }>
@@ -91,28 +31,12 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
   constructor(private readonly props: LeucoMemorySlackWebClientProps = {}) {
     super()
     this.calls = {
-      chatPostMessage: [],
       reactionsAdd: [],
       reactionsRemove: [],
-      conversationsInfo: [],
-      conversationsReplies: [],
-      conversationsList: [],
-      conversationsHistory: [],
-      searchMessages: [],
       authTest: [],
       filesUpload: [],
       apiCall: [],
     }
-  }
-
-  async chatPostMessage(args: {
-    channel: string
-    threadTs: string | null
-    text: string
-  }): Promise<void> {
-    this.calls.chatPostMessage.push(args)
-
-    return this.invoke(this.props.chatPostMessage, args, undefined as void)
   }
 
   async reactionsAdd(args: { channel: string; timestamp: string; name: string }): Promise<void> {
@@ -127,57 +51,6 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
     return this.invoke(this.props.reactionsRemove, args, undefined as void)
   }
 
-  async conversationsInfo(args: { channel: string }): Promise<SlackConversationInfo> {
-    this.calls.conversationsInfo.push(args)
-
-    return this.invoke(this.props.conversationsInfo, args, { isMember: true })
-  }
-
-  async conversationsReplies(args: {
-    channel: string
-    ts: string
-    oldest: string | null
-    inclusive: boolean | null
-    limit: number | null
-    cursor: string | null
-  }): Promise<SlackHistorySlice> {
-    this.calls.conversationsReplies.push(args)
-
-    return this.invoke(this.props.conversationsReplies, args, { messages: [] })
-  }
-
-  async conversationsList(args: {
-    types: string
-    limit: number | null
-    cursor?: string | null
-  }): Promise<SlackConversationList> {
-    this.calls.conversationsList.push(args)
-
-    return this.invoke(this.props.conversationsList, args, { channels: [] })
-  }
-
-  async conversationsHistory(args: {
-    channel: string
-    oldest: string | null
-    inclusive: boolean | null
-    limit: number | null
-  }): Promise<SlackHistorySlice> {
-    this.calls.conversationsHistory.push(args)
-
-    return this.invoke(this.props.conversationsHistory, args, { messages: [] })
-  }
-
-  async searchMessages(args: {
-    query: string
-    sort: "timestamp" | "score" | null
-    sortDir: "asc" | "desc" | null
-    count: number | null
-  }): Promise<SlackSearchMessages> {
-    this.calls.searchMessages.push(args)
-
-    return this.invoke(this.props.searchMessages, args, { matches: [] })
-  }
-
   async authTest(): Promise<SlackAuthTest> {
     this.calls.authTest.push(undefined as void)
 
@@ -185,9 +58,10 @@ export class LeucoMemorySlackWebClient extends LeucoSlackWebClient {
   }
 
   async filesUpload(args: SlackFileUpload): Promise<{ fileId: string }> {
-    this.calls.filesUpload.push(args)
+    const file = { ...args, content: new Uint8Array(args.content) }
+    this.calls.filesUpload.push(file)
 
-    return this.invoke(this.props.filesUpload, args, { fileId: "F-memory" })
+    return this.invoke(this.props.filesUpload, file, { fileId: "F-memory" })
   }
 
   async apiCall(method: string, body: Record<string, unknown>): Promise<unknown> {

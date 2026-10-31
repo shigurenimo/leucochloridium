@@ -6,5 +6,5 @@ const STORED_TYPE_ALIASES: Readonly<Record<string, ReadonlyArray<string>>> = {
 }
 
 export function storedLeucoEventTypes(type: string): ReadonlyArray<string> {
-  return STORED_TYPE_ALIASES[type] ?? [type]
+  return Object.hasOwn(STORED_TYPE_ALIASES, type) ? (STORED_TYPE_ALIASES[type] ?? [type]) : [type]
 }

@@ -1,8 +1,12 @@
+import { MAX_CONTROL_MULTIPART_BYTES } from "@/daemon/control-input-limits"
+import { reportDaemonRequestFailure } from "@/daemon/report-daemon-request-failure"
+import { formatLogLine } from "@/format-log-line"
 import { errorMessage } from "@/error-message"
+import type { LogLevel } from "@/log-level"
 import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { readMaintenance } from "@/maintenance/read-maintenance"
 import { scheduleRestart } from "@/maintenance/schedule-restart"
-import { appendDaemonLog } from "@/daemon/append-daemon-log"
+import { DaemonTextLog } from "@/daemon/daemon-text-log"
 import { chmodSync, existsSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { LeucoRuntime } from "@/runtime/runtime"
@@ -11,16 +15,14 @@ import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { acquireDaemonLease, releaseDaemonLease } from "@/daemon/daemon-lease"
 import { handleDaemonRequest } from "@/daemon/handle-daemon-request"
+import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { errorDetails } from "@/error-details"
 
-type Props = LeucoRuntimeProps & {
+type Props = Omit<LeucoRuntimeProps, "store" | "eventLog" | "onLog"> & {
   home: string
-  prompt?: string
   requestId?: string
-  thread?: string
   signal?: AbortSignal
-  quiet?: boolean
   ownsProcess?: boolean
-  onReply?: (reply: string) => void
 }
 
 export async function runDaemon(props: Props): Promise<void> {
@@ -30,12 +32,19 @@ export async function runDaemon(props: Props): Promise<void> {
   const cwd = props.cwd ?? settings.cwd ?? process.cwd()
   if (!statSync(cwd).isDirectory()) throw new Error("Working directory is not a directory")
   const lease = acquireDaemonLease(props.home)
-  const state: { stop: boolean; ready: boolean; resolve: () => void } = {
+  const state: {
+    stop: boolean
+    ready: boolean
+    resolve: () => void
+    shutdownRequestId: string | undefined
+  } = {
     stop: false,
     ready: false,
     resolve: () => {},
+    shutdownRequestId: undefined,
   }
   const failures: unknown[] = []
+  const textLog = new DaemonTextLog({ home: props.home })
   const stopped = new Promise<void>((resolve) => {
     state.resolve = resolve
   })
@@ -43,8 +52,9 @@ export async function runDaemon(props: Props): Promise<void> {
     if (state.stop) return
     const message = `Daemon shutdown requested: ${reason}`
     resources.eventLog?.log("info", message, requestId)
-    appendDaemonLog(props.home, `${message}${requestId ? ` requestId=${requestId}` : ""}`)
+    textLog.write(`${message}${requestId ? ` requestId=${requestId}` : ""}`)
     state.stop = true
+    state.shutdownRequestId = requestId
     state.ready = false
     state.resolve()
   }
@@ -68,13 +78,16 @@ export async function runDaemon(props: Props): Promise<void> {
         new Error(`Daemon fatal asynchronous failure: ${errorMessage(error)}`, { cause: error }),
       )
     resources.eventLog?.error("Daemon fatal asynchronous failure", error, props.requestId)
-    appendDaemonLog(
-      props.home,
+    textLog.write(
       `Fatal asynchronous failure: ${resources.eventLog?.redactText(errorMessage(error)) ?? errorMessage(error)}`,
     )
     if (props.ownsProcess && !state.stop) {
       try {
-        scheduleRestart(props.home, {}, { requestId: props.requestId, automatic: true })
+        scheduleRestart(
+          props.home,
+          {},
+          { requestId: props.requestId, automatic: true, expectedLease: lease },
+        )
       } catch (recoveryError) {
         failures.push(recoveryError)
         resources.eventLog?.error(
@@ -89,40 +102,33 @@ export async function runDaemon(props: Props): Promise<void> {
   process.on("unhandledRejection", fatal)
   process.on("uncaughtException", fatal)
   props.signal?.addEventListener("abort", onAbort, { once: true })
-  const textLog: { healthy: boolean; lastErrorAt: number | null } = {
-    healthy: true,
-    lastErrorAt: null,
-  }
   try {
     new NodeMaintenanceStore(props.home).writeLaunch({
       workingDirectory: process.cwd(),
       codexHome: (props.env ?? process.env).CODEX_HOME ?? null,
       ...(props.cwd === undefined ? {} : { cwd: props.cwd }),
       ...(props.soul === undefined ? {} : { soul: props.soul }),
-      ...(props.model === undefined ? {} : { model: props.model }),
-      ...(props.codexBin === undefined ? {} : { codexBin: props.codexBin }),
     })
-    const log = (line: string): void => {
-      textLog.healthy = appendDaemonLog(props.home, line)
-      if (!textLog.healthy) {
-        textLog.lastErrorAt = Date.now()
-        resources.eventLog?.log(
-          "error",
-          "Text log persistence failed; check filesystem space and permissions",
+    const log = (line: string, level: LogLevel = "info", requestId?: string): void => {
+      const record = `[${level}]${requestId ? ` requestId=${requestId}` : ""} ${line}`
+      const failure = textLog.write(record)
+      if (failure !== null)
+        resources.eventLog?.error(
+          "Text log persistence failed; inspect runtime.textLog.lastFailure",
+          failure,
+          requestId,
         )
-      }
-      if (!props.quiet && process.stderr.isTTY) process.stderr.write(`${line}\n`)
+      if (process.stderr.isTTY) process.stderr.write(`${formatLogLine(record)}\n`)
     }
     resources.eventLog = new LeucoEventLog({
       eventLogPath: join(props.home, "events.db"),
       onFallback: (event) => {
-        textLog.healthy = appendDaemonLog(props.home, JSON.stringify(event))
-        if (!textLog.healthy) {
-          textLog.lastErrorAt = Date.now()
-          throw new Error("Text event fallback persistence failed")
-        }
+        const failure = textLog.write(JSON.stringify(event))
+        if (failure !== null)
+          throw new Error("Text event fallback persistence failed", { cause: failure })
       },
     })
+    resources.eventLog.addRedactionSecrets([lease.token])
     for (const suffix of ["", "-wal", "-shm"]) {
       const path = join(props.home, `events.db${suffix}`)
       if (existsSync(path)) chmodSync(path, 0o600)
@@ -137,33 +143,36 @@ export async function runDaemon(props: Props): Promise<void> {
     resources.runtime = runtime
     const handler = handleDaemonRequest({
       token: lease.token,
-      reportError: (error, requestId) => {
-        resources.eventLog?.error(`Daemon request failed: ${errorMessage(error)}`, error, requestId)
-        return (
-          resources.eventLog?.redactText(errorMessage(error)) ??
-          "Daemon request failed; inspect logs"
-        )
-      },
+      reportError: (error, requestId) =>
+        resources.eventLog
+          ? reportDaemonRequestFailure(resources.eventLog, error, requestId)
+          : "Daemon request failed; inspect logs",
       cwd,
       isReady: () => state.ready,
       getVolatileEvents: (query) => runtime.getVolatileEvents(query),
-      getRuntimeStatus: () => ({ ...runtime.getStatus(), textLog: { ...textLog } }),
+      getRuntimeStatus: () => ({
+        ...runtime.getStatus(),
+        textLog: textLog.getHealth(),
+        control: { pendingRequests: resources.server?.pendingRequests ?? 0 },
+      }),
       getMaintenance: () => readMaintenance(props.home),
       restart: (overrides, requestId) => {
-        const operation = scheduleRestart(props.home, overrides, { requestId })
+        const operation = scheduleRestart(props.home, overrides, {
+          requestId,
+          expectedLease: lease,
+        })
         resources.eventLog?.log("info", `Restart operation accepted: ${operation.id}`, requestId)
         return operation
       },
       runTextTurn: (key, text, requestId) => runtime.runTextTurn(key, text, requestId),
-      runSlackCommand: (parsed, upload, requestId) =>
-        runtime.runSlackCommand(parsed, upload, requestId),
+      runSlackCommand: (parsed, options) => runtime.runSlackCommand(parsed, options),
       stop: (requestId) => stop("control request", requestId),
       awaitStop: () => runtime.stop(),
       ownsProcess: props.ownsProcess,
     })
     resources.server = Bun.serve<undefined>({
       unix: join(props.home, "control.sock"),
-      maxRequestBodySize: 101 * 1024 * 1024,
+      maxRequestBodySize: MAX_CONTROL_MULTIPART_BYTES,
       fetch(request, server) {
         server.timeout(request, 0)
         return handler(request).catch((error: unknown) => {
@@ -178,18 +187,6 @@ export async function runDaemon(props: Props): Promise<void> {
     await runtime.start()
     if (!state.stop) state.ready = true
     log("ready")
-    if (props.prompt !== undefined && !state.stop) {
-      const reply = await Promise.race([
-        runtime.runTextTurn(props.thread ?? "cli", props.prompt, props.requestId),
-        stopped.then(() => null),
-      ])
-      if (reply instanceof Error) throw reply
-      if (reply !== null) {
-        if (props.onReply) props.onReply(reply)
-        else process.stdout.write(`${reply}\n`)
-      }
-      stop("one-shot complete", props.requestId)
-    }
     await stopped
   } catch (error) {
     failures.push(
@@ -198,17 +195,43 @@ export async function runDaemon(props: Props): Promise<void> {
         : new Error(`Daemon execution failed: ${errorMessage(error)}`, { cause: error }),
     )
     resources.eventLog?.error("Daemon execution failed", error, props.requestId)
-    appendDaemonLog(
-      props.home,
+    textLog.write(
       `Daemon execution failed: ${resources.eventLog?.redactText(errorMessage(error)) ?? errorMessage(error)}`,
     )
   } finally {
     state.ready = false
     const failureCountBeforeCleanup = failures.length
+    const closeControlServer = async (): Promise<void> => {
+      const server = resources.server
+      if (server === null) return
+      try {
+        await awaitBoundedCleanup(server.stop(false), "Control server graceful drain", 1000)
+      } catch (drain) {
+        const pendingRequests = server.pendingRequests
+        try {
+          await awaitBoundedCleanup(server.stop(true), "Control server forced shutdown", 1000)
+        } catch (forced) {
+          throw new AggregateError([drain, forced], "Control server shutdown was not confirmed", {
+            cause: drain,
+          })
+        }
+        const requestId = state.shutdownRequestId ?? props.requestId
+        const message = `Control server force-closed ${pendingRequests} pending requests after graceful drain failed: ${errorMessage(drain)}`
+        resources.eventLog?.append({
+          ts: Date.now(),
+          type: "log",
+          level: "warn",
+          line: message,
+          causes: errorDetails(drain),
+          requestId,
+        })
+        textLog.write(`${message}${requestId ? ` requestId=${requestId}` : ""}`)
+      }
+    }
     for (const close of [
       () => resources.runtime?.stop(),
+      closeControlServer,
       () => resources.eventLog?.close(),
-      () => resources.server?.stop(false),
     ]) {
       try {
         await close()
@@ -219,8 +242,7 @@ export async function runDaemon(props: Props): Promise<void> {
     try {
       if (failures.length === failureCountBeforeCleanup) releaseDaemonLease(props.home, lease)
       else
-        appendDaemonLog(
-          props.home,
+        textLog.write(
           "Shutdown incomplete; lease retained until the process exits. Do not start a duplicate.",
         )
     } catch (error) {

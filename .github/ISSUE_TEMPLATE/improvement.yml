@@ -1,42 +1,31 @@
 name: Improvement
-description: Code-quality / architecture / bug / convention issue surfaced by review.
-title: "<area>: <one-line summary>"
+description: Report a bug or propose a focused improvement.
 labels: ["improvement"]
 body:
-  - type: dropdown
-    id: priority
+  - type: textarea
+    id: problem
     attributes:
-      label: Priority
-      options:
-        - High
-        - Medium
-        - Low
+      label: Problem or improvement
+      description: Describe the trigger, expected behavior and actual result, or the design issue.
     validations:
       required: true
   - type: textarea
     id: location
     attributes:
-      label: Location
-      description: file_path:line_number references.
-      placeholder: lib/engine/tenant.ts:207
-    validations:
-      required: true
-  - type: textarea
-    id: problem
-    attributes:
-      label: Problem
-      description: What's wrong, in one or two sentences.
-    validations:
-      required: true
+      label: Source location
+      description: Source references, if known.
+      placeholder: lib/runtime/runtime.ts:344
   - type: textarea
     id: fix
     attributes:
       label: Proposed fix
-      description: How to address it, in one or two sentences.
-    validations:
-      required: true
+      description: Suggested change, if known.
   - type: textarea
-    id: notes
+    id: diagnostics
     attributes:
-      label: Notes
-      description: Constraints, related rules, dependencies on other issues.
+      label: Runtime diagnostics
+      description: Version, requestId and relevant output for runtime problems. Omit tokens and private conversation content.
+      placeholder: |
+        leuco --version
+        leuco doctor --json
+        leuco events --request <requestId> --limit 30 --json
