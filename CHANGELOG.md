@@ -2,6 +2,14 @@
 
 All notable changes to Leuco are documented here.
 
+## 0.19.0 - 2026-10-31
+
+### 変更
+
+- Discord BotのGateway受信・REST操作とOSストア資格情報管理を追加。
+- Slack・Discordの受信条件をモデル呼び出し前に制御。標準はDM・メンション・参加済みスレッド、通常投稿・リアクション起動は明示的に有効化する。
+- 互換性注意: Slackの通常投稿は標準でCodexを起動しなくなる。従来の動作にはslackReception.channelMessagesをtrueに設定する。
+
 ## 0.18.0 - Unreleased
 
 ### 設計・互換性

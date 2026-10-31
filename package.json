@@ -1,12 +1,13 @@
 {
   "name": "leuco",
-  "version": "0.18.0",
-  "description": "One local Codex companion CLI with optional Slack and schedules. Reuses your normal CODEX_HOME. Bun-only.",
+  "version": "0.19.0",
+  "description": "One local Codex companion CLI with optional Slack, Discord and schedules. Reuses your normal CODEX_HOME. Bun-only.",
   "keywords": [
     "bot",
     "bun",
     "cli",
     "codex",
+    "discord",
     "slack"
   ],
   "homepage": "https://github.com/shigurenimo/leucochloridium#readme",
@@ -69,7 +70,7 @@
     "test:package": "bun run scripts/verify-packed-package.ts",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.scripts.json --pretty false",
     "verify": "bun run check && bun run docs:check && bun run typecheck && bun run test && bun run test:cli && bun run package:check && bun run test:package",
-    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts && bun run scripts/verify-slack-http.ts && bun run scripts/verify-slack-sockets.ts && bun run scripts/verify-diagnostic-output.ts && bun run scripts/verify-event-log-concurrency.ts && bun run scripts/verify-cli-contract.ts && bun run scripts/verify-noninteractive.ts && bun run scripts/verify-maintenance.ts && bun run scripts/verify-reliability.ts && bun run scripts/verify-storage-cleanup.ts && bun run scripts/verify-clipboard.ts && bun run scripts/verify-linked-cli.ts",
+    "test:cli": "bun run scripts/verify-single-companion.ts && bun run scripts/verify-slack-proxy.ts && bun run scripts/verify-discord-proxy.ts && bun run scripts/verify-slack-http.ts && bun run scripts/verify-slack-sockets.ts && bun run scripts/verify-diagnostic-output.ts && bun run scripts/verify-event-log-concurrency.ts && bun run scripts/verify-cli-contract.ts && bun run scripts/verify-noninteractive.ts && bun run scripts/verify-maintenance.ts && bun run scripts/verify-reliability.ts && bun run scripts/verify-storage-cleanup.ts && bun run scripts/verify-clipboard.ts && bun run scripts/verify-linked-cli.ts",
     "docs:cli": "bun run scripts/generate-cli-docs.ts",
     "docs:check": "bun run scripts/generate-cli-docs.ts --check"
   },

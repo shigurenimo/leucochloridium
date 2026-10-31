@@ -1,6 +1,9 @@
 type Props = { env: NodeJS.ProcessEnv; home: string }
 
 const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
+  "DISCORD_TOKEN",
+  "DISCORD_BOT_TOKEN",
+  "LEUCO_DISCORD_BOT_TOKEN",
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
   "LEUCO_SLACK_BOT_TOKEN",

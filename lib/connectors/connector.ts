@@ -13,7 +13,7 @@ export type ConnectorContext = {
 
 export type ConnectorIdentity = {
   name: string
-  type: "slack" | "schedule"
+  type: "slack" | "discord" | "schedule"
   botUserId: string | null
 }
 

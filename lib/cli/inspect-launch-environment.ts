@@ -37,9 +37,9 @@ export function inspectLaunchEnvironment(props: Props) {
       failures.push({ phase: "soul", causes: errorDetails(error) })
     }
   }
-  if (props.settings.slack !== null && cli === null)
+  if ((props.settings.slack !== null || props.settings.discord !== null) && cli === null)
     errors.push(
-      "Slack replies require leuco on PATH. Run bun link in the Leuco checkout, include Bun's bin directory in PATH, then restart the daemon to inherit it. This check observes the invoking CLI's PATH.",
+      "Slack/Discord replies require leuco on PATH. Run bun link in the Leuco checkout, include Bun's bin directory in PATH, then restart the daemon to inherit it. This check observes the invoking CLI's PATH.",
     )
   return {
     cwd,

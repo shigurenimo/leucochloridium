@@ -6,6 +6,9 @@ describe("native Codex environment", () => {
     expect(
       buildCodexChildEnv({
         env: {
+          DISCORD_TOKEN: "secret",
+          DISCORD_BOT_TOKEN: "secret",
+          LEUCO_DISCORD_BOT_TOKEN: "secret",
           SLACK_BOT_TOKEN: "secret",
           SLACK_APP_TOKEN: "secret",
           LEUCO_SLACK_BOT_TOKEN: "secret",

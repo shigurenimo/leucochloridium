@@ -35,3 +35,5 @@ Codex子は親の環境変数を引き継ぐ。通常の `CODEX_HOME` を使い�
 本番ソース変更後は `bun run verify` を完了まで確認する。CLI定義変更後は `bun run docs:cli` で再生成する。公開APIの破壊的変更ではREADME・同梱CLI skill・packageの型も更新する。
 
 unitはMemory境界を使う。実プロセス・FSは `scripts/` のintegration verifierで確認し、script自体も型検査する。実Slackへの投稿・Codex推論・実資格情報操作をテストに使わない。
+
+Discordはflume Gatewayと直接REST v10で接続。discordReceptionの入口判定で対象外のモデル起動を防ぐ。Discordスレッドは独立したchannel IDで会話を分ける。実Discord接続・投稿はverify対象外。

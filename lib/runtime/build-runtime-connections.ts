@@ -1,3 +1,8 @@
+import { DiscordConnector } from "@/connectors/discord/discord-connector"
+import { FlumeDiscordEventSource } from "@/connectors/discord/flume-discord-event-source"
+import { FlumeDiscordGatewayIntents } from "@interactive-inc/flume/discord"
+import { discordCall } from "@/actions/discord/discord-call"
+import type { DiscordCredentials } from "@/secrets/discord-credentials"
 import type { LeucoSettings } from "@/config/config-schema"
 import type { Connector } from "@/connectors/connector"
 import { LeucoSlackConnector } from "@/connectors/slack/slack-connector"
@@ -7,16 +12,46 @@ import { LeucoScheduleConnector } from "@/connectors/schedule/schedule-connector
 import type { LeucoStore } from "@/storage/leuco-store"
 import type { SlackCredentials } from "@/secrets/slack-credentials"
 
-type Props = { settings: LeucoSettings; credentials: SlackCredentials | null; store: LeucoStore }
+type Props = {
+  settings: LeucoSettings
+  credentials: SlackCredentials | null
+  discordCredentials?: DiscordCredentials | null
+  store: LeucoStore
+}
 
 export function buildRuntimeConnections(props: Props): Connector[] {
   const connections: Connector[] = []
   const slack = props.settings.slack
   const credentials = props.credentials
+  const discord = props.settings.discord
+  const discordCredentials = props.discordCredentials
+  if (discord !== null && discordCredentials != null) {
+    const intents = FlumeDiscordGatewayIntents
+    const base = intents.Guilds | intents.GuildMessages | intents.DirectMessages
+    const reactions =
+      props.settings.discordReception.reactionAdded.length +
+        props.settings.discordReception.reactionRemoved.length >
+      0
+    connections.push(
+      new DiscordConnector({
+        reception: props.settings.discordReception,
+        api: (method, endpoint, body) =>
+          discordCall({ botToken: discordCredentials.botToken, method, endpoint, body }),
+        source: new FlumeDiscordEventSource({
+          botToken: discordCredentials.botToken,
+          intents:
+            base |
+            (discord.messageContent ? intents.MessageContent : 0) |
+            (reactions ? intents.GuildMessageReactions | intents.DirectMessageReactions : 0),
+        }),
+      }),
+    )
+  }
   if (slack !== null && credentials !== null)
     connections.push(
       new LeucoSlackConnector({
         ackMode: slack.ackMode,
+        reception: props.settings.slackReception,
         webClient: new LeucoFetchSlackWebClient({ botToken: credentials.botToken }),
         eventSource: new LeucoFlumeSlackEventSource({
           botToken: credentials.botToken,

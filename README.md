@@ -152,6 +152,24 @@ leuco slack logout
 
 Slack Web APIが明示的にHTTP 429を返し、応答の後片付けまで成功した場合だけ、一度再試行する。Retry-Afterの待機は最大30秒、欠落・不正値では1秒。キャンセル後は再試行しない。通信失敗・timeout・429以外のHTTPエラー・結果不明の場合や、ファイル本体の転送は自動再送しない。AIがCLIの失敗後に同じ投稿を自動でやり直してよいという意味ではない。
 
+### 反応するイベントの設定
+
+`slackReception` はモデルを呼ぶ前の受信ルール。既存設定にも以下の初期値を適用する。DM・メンション・Bot自身の投稿を受信して参加を確認したスレッドの続きだけを受け付け、通常投稿とリアクションはモデルを起動しない。参加スレッドの記録は最大500件で、daemon再起動時にリセットする。
+
+```sh
+leuco config set slackReception '{"directMessages":true,"mentions":true,"participatingThreads":true,"channelMessages":false,"reactionAdded":[],"reactionRemoved":[],"allowedChannels":null,"deniedChannels":[],"allowedUsers":null,"deniedUsers":[]}'
+leuco restart
+```
+
+各項目は省略すると初期値に戻る。`slackReception` 全体を置き換えるため、変更時は残したい項目も渡す。資格情報の参照IDは不要。
+
+- `directMessages` / `mentions` / `participatingThreads` / `channelMessages`：種類ごとの受付。DM、明示メンション、参加済みスレッド、通常投稿の順で分類する。例えばDMを無効にすると、DM内のメンションでも起動しない。
+- `reactionAdded` / `reactionRemoved`：起動する絵文字名の配列。例えば `["eyes", "robot_face"]`。コロンを付けない。追加・削除は別々に指定する。Bot自身のリアクションは常に除外する。Slack App側でも対象イベントの購読が必要。
+- `allowedChannels` / `allowedUsers`：許可するSlack IDの配列。`null` は制限なし、`[]` は全件拒否。チャンネル制限はDMにも適用する。
+- `deniedChannels` / `deniedUsers`：拒否するSlack IDの配列。許可指定より優先し、全イベントに適用する。
+
+対象外イベントはCodexを呼ばず、進行リアクションも付けない。イベント履歴には残る。リアクション起動を許可すると、そのイベントはCodexへ対象メッセージのIDとともに渡る。これは安価な外部モデルによる事前判定や自動リアクションの設定ではない。
+
 Slack threadごとに会話を分ける。受信した本文に宛先と返信方法を添える。Codexのfinal answerは内部出力で、Slack本文として自動投稿しない。返信はCodexが明示的に実行するCLI操作で送る。進行状況のreactionは `ackMode` で `off` / `mention` / `always` を選ぶ。
 
 履歴・検索・会話一覧を取得する場合も`slack call`で必要なAPIを明示する。応答を独自の空配列へ置き換える専用ヘルパーや、暗黙の履歴取得は持たない。methodと引数はSlackの公式仕様で確認する。
@@ -165,6 +183,42 @@ leuco slack download-file --file F123 --out ./download.pdf
 Slack操作は起動中のdaemonへ依頼し、daemonが保持したトークンで通信する。upload元の読み取りとdownload先への書き込みは呼び出し元のCLIで実行し、daemonにファイルパスの読み書きを代行させない。
 
 `leuco` をCodex子プロセスの `PATH` から実行できるようにしておく。Slackの本文は外部入力であり、共有Codex環境へのアクセス権限を持つ。詳細は [SECURITY.md](SECURITY.md)。
+
+## Discordを使う場合
+
+Slackと同時に、一つのDiscord Botを接続できる。受信はflumeのGateway、送信はSDKを使わないREST API v10。Discord Developer PortalでBotを作り、**Message Content Intent**を有効にする。対象サーバーへBotを招待し、View Channels / Send Messages / Read Message History、スレッド利用時はSend Messages in Threads、リアクション操作時はAdd Reactionsを許可する。
+
+```sh
+leuco stop
+# 人がDeveloper PortalでBot tokenそのものをコピーする。AIへ値を渡さない。
+leuco discord login
+leuco start
+leuco status
+```
+
+`login` はクリップボードからOSストアへ直接保存し、設定には資格情報の参照IDと `messageContent` だけを残す。保存成功はDiscord認証成功を意味しない。起動時にBotの本人確認とGateway接続を行う。削除は停止後に `leuco discord logout`。トークンを引数・設定・環境変数へ渡さず、Codexにも渡さない。
+
+`discordReception` はSlackと同じ種類の受信ルールに、`allowedGuilds` / `deniedGuilds`（サーバーIDの許可／拒否）を追加したもの。**DM・メンション・参加済みスレッドが初期値で有効**。通常投稿とリアクション起動は無効。対象外ではモデルを呼ばない。許可リストの `null` は制限なし、`[]` は全拒否。拒否リストを優先する。サーバー制限はDMには適用せず、チャンネル・ユーザー制限はDMにも適用する。
+
+```sh
+leuco config set discordReception '{"directMessages":true,"mentions":true,"participatingThreads":true,"channelMessages":false,"reactionAdded":["👀"],"reactionRemoved":[],"allowedGuilds":["123456789"],"allowedChannels":null,"allowedUsers":null}'
+leuco restart
+```
+
+全体置換のため、省略した項目は初期値に戻る。Unicode絵文字はその文字、カスタム絵文字は `name:id` を指定する。リアクション用Gateway intentsは対象絵文字の設定時に有効化する。Bot自身のリアクション、自分や他Bot・Webhookの投稿では起動しない。
+
+Discordのスレッドは独立したチャンネル。GatewayでBotのスレッド参加を確認した場合、またはBot自身のスレッド内投稿を確認した場合に、その後の投稿を受け付ける。退出・削除も反映する。参加記録は最大500件で、再起動時はGatewayの同期情報から再構築する。会話はDM／チャンネル／Discordスレッドごとに分かれる（通常チャンネル内の「返信」は同じ会話）。
+
+`discord.messageContent` は標準で `true`。Portalでintentを許可できない場合は `config show` で取得した資格情報の参照IDを保ったまま `discord` 設定の `messageContent` を `false` にできるが、メンションなしのサーバー投稿・スレッドでは本文や添付情報が取得できない場合がある。詳細は [Discord Gateway仕様](https://docs.discord.com/developers/events/gateway#message-content-intent) を参照。
+
+返信は明示的なCLI操作で送る。Codexのfinal answerは自動投稿しない。
+
+```sh
+leuco discord call GET /users/@me
+leuco discord call POST /channels/123456789/messages --body '{"content":"こんにちは","allowed_mentions":{"parse":[]}}'
+```
+
+`call <HTTP method> <API相対path> [--body <JSON>]` がDiscord APIの入口。GETのqueryはpathに付ける。宛先IDを推測せず受信イベントかAPI結果から取得する。HTTP失敗・レート制限で書き込みを自動再送しない。添付情報の受信には対応するが、Slackのようなファイルupload/download専用CLIや処理中の自動ackリアクションは未対応。リアクション操作は `call PUT/DELETE` で明示的に行える。
 
 ## 予定
 

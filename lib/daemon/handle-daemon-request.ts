@@ -1,3 +1,4 @@
+import { validateDiscordCommand } from "@/cli/validate-discord-command"
 import { MAX_FILE_TRANSFER_BYTES } from "@/file-transfer-limits"
 import { createLiteralRecordSchema } from "@/config/create-literal-record-schema"
 import { MAX_THREAD_KEY_CHARACTERS, MAX_TURN_INPUT_BYTES } from "@/turn-input-limits"
@@ -51,6 +52,7 @@ type Props = {
   getRuntimeStatus?: () => unknown
   isReady: () => boolean
   runTextTurn: (key: string, text: string, requestId?: string) => Promise<string | Error>
+  runDiscordCommand?: (parsed: CliArguments, requestId: string) => Promise<unknown>
   runSlackCommand?: (parsed: CliArguments, options?: SlackCommandOptions) => Promise<unknown>
   stop: (requestId: string) => void
   awaitStop?: () => Promise<void>
@@ -145,6 +147,39 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
           stopped: props.awaitStop !== undefined,
           processWillExit: props.ownsProcess ?? false,
         })
+      }
+      if (request.method === "POST" && path === "/discord") {
+        if (!props.isReady())
+          return daemonRejectionResponse({
+            status: 503,
+            phase: "readiness",
+            message: "Leuco is starting or stopping",
+            requestId,
+          })
+        try {
+          const parsed = parseControlInput(
+            z.strictObject({
+              words: z.array(z.string()),
+              flags: createLiteralRecordSchema(z.union([z.string(), z.literal(true)])),
+            }),
+            await readControlJson(request),
+            [props.token],
+          )
+          validateDiscordCommand(parsed)
+          if (parsed.words[0] !== "discord" || parsed.words[1] !== "call")
+            throw new Error("Unsupported Discord operation")
+          if (props.runDiscordCommand === undefined) throw new Error("Discord is unavailable")
+          return Response.json(await props.runDiscordCommand(parsed, requestId))
+        } catch (error) {
+          return daemonErrorResponse({
+            error,
+            status: 422,
+            requestId,
+            reportError: props.reportError,
+            redactionSecrets: [props.token],
+            fallback: "Discord operation failed. Inspect events for this requestId.",
+          })
+        }
       }
       if (request.method === "POST" && path === "/slack") {
         if (!props.isReady())

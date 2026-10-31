@@ -187,7 +187,7 @@ leuco config show
 leuco config set <key> <value>
   Atomically update one setting using a JSON value.
   Effect: local-write; daemon: none.
-  Argument key (string, required): Top-level settings key; inspect inputSchemas.settings. Choices: cwd, soul, model, slack, schedules, turnTimeoutMs, idleTimeoutMs.
+  Argument key (string, required): Top-level settings key; inspect inputSchemas.settings. Choices: cwd, soul, model, slack, slackReception, discord, discordReception, schedules, turnTimeoutMs, idleTimeoutMs.
   Argument value (json, required): One JSON value as an argument; stdin is never read and - is rejected. For a string, include JSON quotes. Relative cwd/soul paths resolve against the CLI directory.
   Result: {saved:string,restartRequired:boolean}.
   Note: Restart after changes except schedules.
@@ -264,6 +264,46 @@ leuco session reset [key]
   Note: Omitting key affects every mapping.
   Note: Success is printed only after the daemon reservation is released. STATE_UNCERTAIN with phase=reservation-release means local state may have changed; inspect it before repeating the command.
   Example: leuco session reset notes --json
+```
+
+## leuco discord login
+
+```text
+leuco discord login
+  Save a Discord bot token directly from the desktop clipboard in the OS credential store.
+  Effect: local-write; daemon: stopped.
+  Result: {discord:string,complete:true,restartRequired:true}.
+  Note: Human copies one Bot token from Discord Developer Portal. AI must never read the clipboard or token. No token arguments, stdin, environment variables or plaintext fallback.
+  Note: Stop Leuco before changing credentials. This saves the token without verifying Discord authentication; start verifies the bot identity and Gateway.
+  Example: leuco discord login
+```
+
+## leuco discord logout
+
+```text
+leuco discord logout
+  Delete the saved OS credential and disable Discord while stopped.
+  Effect: local-write; daemon: stopped.
+  Result: {discord:string}.
+  Note: Requires user authorization to remove credentials. Re-enabling requires human-operated login.
+  Example: leuco discord logout --json
+```
+
+## leuco discord call
+
+```text
+leuco discord call <method> <endpoint> [options]
+  Execute one explicit Discord REST API v10 operation through the daemon.
+  Effect: external-write; daemon: required.
+  Argument method (string, required): HTTP method. Writes are never automatically retried. Choices: GET, POST, PUT, PATCH, DELETE.
+  Argument endpoint (string, required): API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs and traversal are rejected.
+  --body (json-object, optional): JSON request body for non-GET requests. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.
+  Result: Discord JSON, or {ok:true} for a successful empty response. Stored tokens are redacted.
+  Note: Obtain channel/message IDs from incoming events or verified API data. Final agent answers stay internal; posting requires this explicit command.
+  Note: No SDK or token is passed to Codex. HTTP errors including rate limits are returned without automatically retrying writes.
+  Note: Reception is configured separately with discordReception. DMs, mentions and participating threads default on; ordinary messages and reactions default off.
+  Example: leuco discord call GET '/users/@me' --json
+  Example: leuco discord call POST /channels/123/messages --body '{"content":"Hello","allowed_mentions":{"parse":[]}}' --json
 ```
 
 ## leuco slack login

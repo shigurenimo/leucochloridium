@@ -165,6 +165,7 @@ export async function runDaemon(props: Props): Promise<void> {
         return operation
       },
       runTextTurn: (key, text, requestId) => runtime.runTextTurn(key, text, requestId),
+      runDiscordCommand: (parsed, requestId) => runtime.runDiscordCommand(parsed, requestId),
       runSlackCommand: (parsed, options) => runtime.runSlackCommand(parsed, options),
       stop: (requestId) => stop("control request", requestId),
       awaitStop: () => runtime.stop(),

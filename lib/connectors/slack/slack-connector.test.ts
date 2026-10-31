@@ -1,3 +1,4 @@
+import { slackReceptionSchema } from "@/config/config-schema"
 import { describe, expect, it, vi } from "vitest"
 import { LeucoMemorySlackEventSource } from "@/connectors/slack/leuco-memory-slack-event-source"
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
@@ -36,6 +37,95 @@ const makeCtx = (
 }
 
 describe("LeucoSlackConnector", () => {
+  it("filters before model calls and tracks threads the bot actually joined", async () => {
+    const eventSource = new LeucoMemorySlackEventSource()
+    const connector = new LeucoSlackConnector({
+      eventSource,
+      webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+      ackMode: "off",
+    })
+    const test = makeCtx()
+    await connector.start(test.ctx)
+    const emit = async (event: Record<string, unknown>) =>
+      eventSource.emit({
+        type: "events_api",
+        receivedAt: 1000,
+        payload: { event },
+      })
+    await emit({ type: "message", channel: "C1", user: "U1", text: "ordinary", ts: "1" })
+    await emit({
+      type: "message",
+      channel: "C1",
+      user: "U1",
+      text: "unjoined",
+      ts: "2",
+      thread_ts: "1",
+    })
+    await emit({
+      type: "reaction_added",
+      user: "U1",
+      reaction: "eyes",
+      event_ts: "7",
+      item: { type: "message", channel: "C1", ts: "1" },
+    })
+    expect(test.turns).toHaveLength(0)
+    await emit({ type: "app_mention", channel: "C1", user: "U1", text: "<@UBOT> help", ts: "3" })
+    await emit({
+      type: "message",
+      channel: "C1",
+      user: "UBOT",
+      text: "reply",
+      ts: "4",
+      thread_ts: "3",
+    })
+    await emit({
+      type: "message",
+      channel: "C1",
+      user: "U1",
+      text: "continue",
+      ts: "5",
+      thread_ts: "3",
+    })
+    await emit({ type: "message", channel: "D1", user: "U1", text: "dm", ts: "6" })
+    expect(test.turns).toHaveLength(3)
+    await connector.stop()
+  })
+
+  it("only invokes the model for explicitly configured reaction names and users", async () => {
+    const eventSource = new LeucoMemorySlackEventSource()
+    const connector = new LeucoSlackConnector({
+      eventSource,
+      webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+      ackMode: "off",
+      reception: slackReceptionSchema.parse({ reactionAdded: ["eyes"], allowedUsers: ["U1"] }),
+    })
+    const test = makeCtx()
+    await connector.start(test.ctx)
+    for (const reaction of [
+      { user: "U2", reaction: "eyes", ts: "1" },
+      { user: "U1", reaction: "heart", ts: "2" },
+      { user: "UBOT", reaction: "eyes", ts: "3" },
+      { user: "U1", reaction: "eyes", ts: "4" },
+    ]) {
+      await eventSource.emit({
+        type: "events_api",
+        receivedAt: 1000,
+        payload: {
+          event: {
+            type: "reaction_added",
+            user: reaction.user,
+            reaction: reaction.reaction,
+            event_ts: reaction.ts,
+            item: { type: "message", channel: "C1", ts: reaction.ts },
+          },
+        },
+      })
+    }
+    expect(test.turns).toHaveLength(1)
+    expect(test.turns[0]?.text).toContain('"emoji":"eyes"')
+    await connector.stop()
+  })
+
   it("exposes log delivery health independently from socket connection state", () => {
     const eventSource = new LeucoMemorySlackEventSource()
     eventSource.setStatus("connected")
@@ -358,6 +448,7 @@ describe("LeucoSlackConnector", () => {
       eventSource,
       webClient,
       ackMode: "always",
+      reception: slackReceptionSchema.parse({ channelMessages: true }),
     })
     const firstHarness = makeCtx()
     const turnStarted = Promise.withResolvers<void>()
@@ -477,6 +568,7 @@ it.each<[string, boolean]>([
     eventSource,
     webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
     ackMode: "off",
+    reception: slackReceptionSchema.parse({ channelMessages: true }),
   })
   const harness = makeCtx()
   await connector.start(harness.ctx)

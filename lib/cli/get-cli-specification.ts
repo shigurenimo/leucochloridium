@@ -64,8 +64,8 @@ export function getCliSpecification(path: string[] = []) {
     invariants: [
       "One companion, one serial turn queue, native Codex home. No project or connector registration.",
       "No implicit SOUL. --no-soul disables only the Leuco addition.",
-      "Slack final answers are internal. Slack writes require explicit commands and user authorization.",
-      "Only clipboard credential registration is supported. The human copies one raw token at a time; slack login bot/app reads it directly without revealing values to AI. Never solicit or transmit token values through AI prompts, argv, environment, config or logs.",
+      "Slack/Discord final answers are internal. Chat writes require explicit commands and user authorization.",
+      "Only clipboard credential registration is supported. The human copies one raw token at a time; slack login bot/app or discord login reads it directly without revealing values to AI. Never solicit or transmit token values through AI prompts, argv, environment, config or logs.",
       "CLI reads upload files and writes download files using the caller's permissions. The daemon only handles bytes.",
       "Ordinary control JSON is limited to 4 MiB and 5000 ms of body reception before work is accepted; this does not limit accepted turn duration. Rejected ordinary JSON bodies return USAGE with phase=control-body and executionStarted:false, retaining read and cleanup causes. Multipart uploads keep their separate 100 MiB file limit and 4 MiB command JSON limit.",
       "Daemon JSON results are limited to 16 MiB and error bodies to 1 MiB. Headers and JSON reading share the request deadline. Unreadable successful replies are STATE_UNCERTAIN; HTTP error status and decode causes are retained. Binary downloads use their separate 100 MiB limit.",
@@ -100,7 +100,9 @@ export function getCliSpecification(path: string[] = []) {
     } satisfies JSONSchema.JSONSchema,
     commands: commands.map((command) => ({
       ...command,
-      automation: command.name === "slack login" ? "human-required" : "supported",
+      automation: ["slack login", "discord login"].includes(command.name)
+        ? "human-required"
+        : "supported",
       outputSchema: getCliOutputSchema(command.name, command.resultSchema, definitions),
     })),
   }

@@ -49,6 +49,7 @@ export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
     errors.push("Maintenance journal is invalid; preserve it for inspection")
   return {
     ...environment,
+    discordConfigured: configuration.settings.discord !== null,
     slackConfigured: configuration.settings.slack !== null,
     versions: {
       leuco: pkg.version,

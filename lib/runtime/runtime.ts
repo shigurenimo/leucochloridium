@@ -1,3 +1,7 @@
+import type { DiscordCredentials } from "@/secrets/discord-credentials"
+import { loadDiscordCredentials } from "@/secrets/load-discord-credentials"
+import { executeDiscordCommand } from "@/actions/discord/execute-discord-command"
+import { validateDiscordCommand } from "@/cli/validate-discord-command"
 import { LeucoLogConsumer } from "@/runtime/leuco-log-consumer"
 import { MAX_THREAD_KEY_CHARACTERS, MAX_TURN_INPUT_BYTES } from "@/turn-input-limits"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
@@ -73,6 +77,7 @@ export class LeucoRuntime {
   private readonly usesDefaultConnections: boolean
   private readonly conversations: LeucoConversations
   private readonly pending: PendingTurn[] = []
+  private discordCredentials: DiscordCredentials | null = null
   private slackCredentials: SlackCredentials | null = null
   private readonly slackShutdown = new AbortController()
   private readonly slackOperations = new Map<
@@ -207,13 +212,26 @@ export class LeucoRuntime {
       const slack = this.settings.slack
       const credentials =
         slack === null ? null : await loadSlackCredentials(this.credentialStore, slack.credential)
+      const discord = this.settings.discord
+      const discordCredentials =
+        discord === null
+          ? null
+          : await loadDiscordCredentials(this.credentialStore, discord.credential)
       if (this.lifecycle !== "starting") throw new Error("Runtime stopped during startup")
       this.slackCredentials = credentials
+      this.discordCredentials = discordCredentials
+      if (discordCredentials !== null)
+        this.eventLog.addRedactionSecrets([discordCredentials.botToken])
       if (credentials !== null)
         this.eventLog.addRedactionSecrets([credentials.botToken, credentials.appToken])
       if (this.usesDefaultConnections)
         this.connections.push(
-          ...buildRuntimeConnections({ settings: this.settings, credentials, store: this.store }),
+          ...buildRuntimeConnections({
+            settings: this.settings,
+            credentials,
+            discordCredentials,
+            store: this.store,
+          }),
         )
       await this.codex.start()
       if (this.lifecycle !== "starting") throw new Error("Runtime stopped during startup")
@@ -254,6 +272,33 @@ export class LeucoRuntime {
         )
       }
       throw error
+    }
+  }
+
+  async runDiscordCommand(
+    parsed: CliArguments,
+    requestId: string = randomUUID(),
+  ): Promise<unknown> {
+    validateDiscordCommand(parsed)
+    if (parsed.words[0] !== "discord" || parsed.words[1] !== "call")
+      throw new Error("Unsupported Discord operation")
+    if (this.lifecycle !== "running") throw new Error("Runtime is not running")
+    if (this.discordCredentials === null)
+      throw new Error(
+        "Discord is not configured; stop Leuco, copy the bot token and run leuco discord login",
+      )
+    try {
+      const reply = await executeDiscordCommand({
+        parsed,
+        botToken: this.discordCredentials.botToken,
+      })
+      if (this.lifecycle !== "running") throw new Error("Runtime stopped during Discord operation")
+      return this.eventLog.redactValue(reply)
+    } catch (error) {
+      const message = this.eventLog.redactText(errorMessage(error))
+      this.lastFailure = { ts: Date.now(), requestId, phase: "discord", message }
+      this.eventLog.error("Discord operation failed", error, requestId)
+      throw new Error(message)
     }
   }
 
@@ -471,6 +516,7 @@ export class LeucoRuntime {
       }
     }
     this.slackCredentials = null
+    this.discordCredentials = null
     this.connections.splice(0)
     await this.logConsumer.close()
     this.lifecycle = "stopped"

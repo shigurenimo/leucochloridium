@@ -368,7 +368,18 @@ export const COMMANDS: CommandDefinition[] = [
         name: "key",
         type: "string",
         required: true,
-        choices: ["cwd", "soul", "model", "slack", "schedules", "turnTimeoutMs", "idleTimeoutMs"],
+        choices: [
+          "cwd",
+          "soul",
+          "model",
+          "slack",
+          "slackReception",
+          "discord",
+          "discordReception",
+          "schedules",
+          "turnTimeoutMs",
+          "idleTimeoutMs",
+        ],
         description: "Top-level settings key; inspect inputSchemas.settings.",
       },
       {
@@ -545,6 +556,100 @@ export const COMMANDS: CommandDefinition[] = [
       RESERVATION_RELEASE_NOTE,
     ],
     examples: [["session", "reset", "notes", "--json"]],
+  },
+  {
+    name: "discord login",
+    description:
+      "Save a Discord bot token directly from the desktop clipboard in the OS credential store.",
+    arguments: [],
+    options: [],
+    effect: "local-write",
+    daemon: "stopped",
+    result: "{discord:string,complete:true,restartRequired:true}.",
+    resultSchema: {
+      type: "object",
+      required: ["discord", "complete", "restartRequired"],
+      properties: {
+        discord: { type: "string" },
+        complete: { const: true },
+        restartRequired: { const: true },
+      },
+      additionalProperties: false,
+    },
+    notes: [
+      "Human copies one Bot token from Discord Developer Portal. AI must never read the clipboard or token. No token arguments, stdin, environment variables or plaintext fallback.",
+      "Stop Leuco before changing credentials. This saves the token without verifying Discord authentication; start verifies the bot identity and Gateway.",
+    ],
+    examples: [["discord", "login"]],
+  },
+  {
+    name: "discord logout",
+    description: "Delete the saved OS credential and disable Discord while stopped.",
+    arguments: [],
+    options: [],
+    effect: "local-write",
+    daemon: "stopped",
+    result: "{discord:string}.",
+    resultSchema: {
+      type: "object",
+      required: ["discord"],
+      properties: { discord: { type: "string" } },
+      additionalProperties: false,
+    },
+    notes: [
+      "Requires user authorization to remove credentials. Re-enabling requires human-operated login.",
+    ],
+    examples: [["discord", "logout", "--json"]],
+  },
+  {
+    name: "discord call",
+    description: "Execute one explicit Discord REST API v10 operation through the daemon.",
+    arguments: [
+      {
+        name: "method",
+        type: "string",
+        required: true,
+        choices: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+        description: "HTTP method. Writes are never automatically retried.",
+      },
+      {
+        name: "endpoint",
+        type: "string",
+        required: true,
+        description:
+          "API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs and traversal are rejected.",
+      },
+    ],
+    options: [
+      {
+        name: "body",
+        type: "json-object",
+        description:
+          "JSON request body for non-GET requests. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.",
+      },
+    ],
+    effect: "external-write",
+    daemon: "required",
+    result:
+      "Discord JSON, or {ok:true} for a successful empty response. Stored tokens are redacted.",
+    resultSchema: {},
+    notes: [
+      "Obtain channel/message IDs from incoming events or verified API data. Final agent answers stay internal; posting requires this explicit command.",
+      "No SDK or token is passed to Codex. HTTP errors including rate limits are returned without automatically retrying writes.",
+      "Reception is configured separately with discordReception. DMs, mentions and participating threads default on; ordinary messages and reactions default off.",
+    ],
+    examples: [
+      ["discord", "call", "GET", "/users/@me", "--json"],
+      [
+        "discord",
+        "call",
+        "POST",
+        "/channels/123/messages",
+        "--body",
+        '{"content":"Hello","allowed_mentions":{"parse":[]}}',
+        "--json",
+      ],
+    ],
   },
   {
     name: "slack login",
@@ -878,6 +983,7 @@ export const COMMANDS: CommandDefinition[] = [
         codexHome: { type: "string" },
         soulExists: { type: "boolean" },
         slackConfigured: { type: "boolean" },
+        discordConfigured: { type: "boolean" },
       },
       additionalProperties: false,
     },

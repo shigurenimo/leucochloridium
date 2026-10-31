@@ -16,6 +16,37 @@ describe("single settings commands", () => {
     await manageSettings(parseArguments(["config", "set", "soul", "null"]), store)
     expect(store.loadSettings().soul).toBeNull()
   })
+  it("saves reception rules without credentials and rejects invalid rules atomically", async () => {
+    const store = new MemoryLeucoStore()
+    await expect(
+      manageSettings(
+        parseArguments([
+          "config",
+          "set",
+          "slackReception",
+          '{"mentions":false,"reactionAdded":["eyes"],"allowedUsers":["U1"]}',
+        ]),
+        store,
+      ),
+    ).resolves.toEqual({ saved: "slackReception", restartRequired: true })
+    const saved = store.loadSettings()
+    expect(saved.slack).toBeNull()
+    expect(saved.slackReception).toMatchObject({
+      mentions: false,
+      directMessages: true,
+      participatingThreads: true,
+      channelMessages: false,
+      reactionAdded: ["eyes"],
+      allowedUsers: ["U1"],
+    })
+    await expect(
+      manageSettings(
+        parseArguments(["config", "set", "slackReception", '{"mentions":"yes"}']),
+        store,
+      ),
+    ).rejects.toThrow()
+    expect(store.loadSettings()).toEqual(saved)
+  })
   it("rejects unsupported settings without writing", async () => {
     const store = new MemoryLeucoStore()
     await expect(

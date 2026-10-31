@@ -1,3 +1,4 @@
+import { manageDiscordCredentials } from "@/cli/manage-discord-credentials"
 import { isVersionRequest } from "@/cli/is-version-request"
 import { withDaemonReservation } from "@/daemon/with-daemon-reservation"
 import { readCliEvents } from "@/cli/read-cli-events"
@@ -158,12 +159,12 @@ export async function runCli(
     await print(await manageSettings(parsed, store))
     return
   }
-  if (command === "slack") {
+  if (command === "slack" || command === "discord") {
     const action = parsed.words[1]
     if (action === "login" || action === "logout") {
       const lease = readDaemonLease(home)
       if (lease !== null && isProcessAlive(lease.pid))
-        throw new CliError("STATE_CONFLICT", "Stop Leuco before changing Slack credentials")
+        throw new CliError("STATE_CONFLICT", "Stop Leuco before changing chat credentials")
       store.ensureHome()
       const credentialStatus = await withDaemonReservation(home, () => {
         const services = {
@@ -171,6 +172,8 @@ export async function runCli(
           credentials: new BunCredentialStore(),
           signal,
         }
+        if (command === "discord")
+          return manageDiscordCredentials({ ...services, action, clipboard: new NodeClipboard() })
         return action === "login"
           ? manageSlackCredentials({
               ...services,
@@ -181,6 +184,19 @@ export async function runCli(
           : manageSlackCredentials({ ...services, action: "logout" })
       })
       await print(credentialStatus)
+      return
+    }
+    if (command === "discord") {
+      await print(
+        await requestDaemon({
+          home,
+          path: "/discord",
+          body: parsed,
+          signal,
+          requestId,
+          timeoutMs: Number(parsed.flags["timeout-ms"] ?? DEFAULT_CLI_TIMEOUT_MS),
+        }),
+      )
       return
     }
     await print(await requestSlackCommand(home, parsed, { signal, requestId }))
