@@ -4,6 +4,7 @@ import { LeucoEventLog } from "@/events/leuco-event-log"
 import { MemoryLeucoStore } from "@/storage/memory-leuco-store"
 import type { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import type { LeucoCodexClientProps } from "@/engine/codex/codex-client"
+import { MAX_CODEX_NOTIFICATION_PARAMS_CHARS } from "@/engine/codex/to-bounded-json-value"
 
 const fixture = vi.hoisted(() => {
   const notifications: Array<(method: string, params: unknown, requestId?: string) => void> = []
@@ -53,6 +54,38 @@ it("masks complete notification secrets before every diagnostic clipping stage",
     expect(history[2]).toMatchObject({
       params: { item: { tool: `${"t".repeat(240)}[redacted]`, hasResult: true } },
     })
+  } finally {
+    await runtime.stop()
+    events.close()
+  }
+})
+it("stores notification params through one bounding step with their original length", async () => {
+  const events = new LeucoEventLog()
+  const runtime = LeucoRuntime.build({
+    store: new MemoryLeucoStore(),
+    eventLog: events,
+    connections: [],
+    env: {},
+  })
+  try {
+    await runtime.start()
+    const notify = fixture.notifications[0]!
+    const medium = { text: '"'.repeat(5_000) }
+    const large = { text: '"'.repeat(20_000) }
+    notify("probe/medium", medium)
+    notify("probe/large", large)
+    const stored = events.query({ type: "codex.notification" }).map((entry) => entry.event)
+    expect(stored[0]).toMatchObject({ method: "probe/medium", params: medium })
+    expect(stored[1]).toMatchObject({
+      method: "probe/large",
+      params: {
+        _leuco: { truncated: true, originalChars: JSON.stringify(large).length },
+        preview: expect.stringMatching(/^\{"text":"/),
+      },
+    })
+    const params = stored[1]?.type === "codex.notification" ? stored[1].params : null
+    expect(params).not.toHaveProperty("truncated")
+    expect(JSON.stringify(params).length).toBeLessThanOrEqual(MAX_CODEX_NOTIFICATION_PARAMS_CHARS)
   } finally {
     await runtime.stop()
     events.close()

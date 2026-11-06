@@ -9,7 +9,6 @@ const statusSchema = z.object({
         starting: z.boolean().optional(),
         stopping: z.boolean().optional(),
         cleaningUp: z.boolean().optional(),
-        diagnostics: z.object({ healthy: z.boolean() }).optional(),
       })
       .nullable()
       .optional(),
@@ -74,10 +73,6 @@ export function inspectRuntimeHealth(status: unknown) {
       issues.push(
         `Connector ${connection.name} log delivery is degraded; inspect its diagnostic causes and log destinations`,
       )
-  if (runtime.codex?.diagnostics?.healthy === false)
-    issues.push(
-      "Codex diagnostic output is degraded; inspect runtime.codex.diagnostics.lastFailure and stderr",
-    )
   if (runtime.logs?.lastWriteFailed)
     issues.push("Event persistence is degraded; inspect disk space and permissions")
   if (runtime.logConsumer?.healthy === false)

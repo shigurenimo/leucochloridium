@@ -188,7 +188,7 @@ describe("LeucoScheduleConnector", () => {
     await connector.waitForStartupTick()
 
     expect(captured.turns).toEqual([])
-    expect(captured.logs.some((l) => l.includes("bad cron"))).toBe(true)
+    expect(captured.logs.some((l) => l.includes("has bad runAt"))).toBe(true)
   })
 
   it("forgets lastFiredMinute keys for entries removed from the store", async () => {

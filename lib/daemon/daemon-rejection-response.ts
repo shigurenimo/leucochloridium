@@ -3,7 +3,7 @@ import type { DaemonFailure } from "@/daemon/daemon-failure-schema"
 /** Only guards reached before callbacks can confirm that execution did not begin. */
 export function daemonRejectionResponse(props: {
   status: 401 | 503
-  phase: "authorization" | "readiness" | "availability"
+  phase: "authorization" | "readiness"
   message: string
   requestId: string
 }): Response {

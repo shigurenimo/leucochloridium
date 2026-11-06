@@ -56,7 +56,7 @@ export const scheduleEntrySchema = z
     }
   })
 
-export const slackReceptionSchema = z.strictObject({
+export const receptionRulesSchema = z.strictObject({
   directMessages: z.boolean().default(true),
   mentions: z.boolean().default(true),
   participatingThreads: z.boolean().default(true),
@@ -69,17 +69,21 @@ export const slackReceptionSchema = z.strictObject({
   deniedUsers: z.array(z.string().min(1)).default([]),
 })
 
-export type SlackReception = z.infer<typeof slackReceptionSchema>
+export type ReceptionRules = z.infer<typeof receptionRulesSchema>
 
-export const discordReceptionSchema = slackReceptionSchema.extend({
+export const discordReceptionSchema = receptionRulesSchema.extend({
   allowedGuilds: z.array(z.string().min(1)).nullable().default(null),
   deniedGuilds: z.array(z.string().min(1)).default([]),
 })
 export type DiscordReception = z.infer<typeof discordReceptionSchema>
 
+const slackAckModeSchema = z.enum(["off", "mention", "always"])
+export type SlackAckMode = z.infer<typeof slackAckModeSchema>
+export const DEFAULT_SLACK_ACK_MODE: SlackAckMode = "mention"
+
 const slackSchema = z.strictObject({
   credential: z.uuid(),
-  ackMode: z.enum(["off", "mention", "always"]).default("mention"),
+  ackMode: slackAckModeSchema.default(DEFAULT_SLACK_ACK_MODE),
 })
 
 export const settingsSchema = z
@@ -102,7 +106,7 @@ export const settingsSchema = z
       .nullable()
       .default(null),
     discordReception: discordReceptionSchema.default(() => discordReceptionSchema.parse({})),
-    slackReception: slackReceptionSchema.default(() => slackReceptionSchema.parse({})),
+    slackReception: receptionRulesSchema.default(() => receptionRulesSchema.parse({})),
     schedules: z.array(scheduleEntrySchema).default([]),
     turnTimeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(600_000),
     idleTimeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(120_000),

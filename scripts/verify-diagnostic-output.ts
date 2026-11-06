@@ -16,7 +16,7 @@ import { join } from "node:path"
 import { NodeDiagnosticOutput } from "@/node-diagnostic-output"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import { errorDetails } from "@/error-details"
-import pkg from "../package.json" with { type: "json" }
+import pkg from "leuco/package.json" with { type: "json" }
 import { getCliSpecification } from "@/cli/get-cli-specification"
 import { DaemonTextLog } from "@/daemon/daemon-text-log"
 import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
@@ -32,21 +32,11 @@ import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import { redactPublicText } from "@/secrets/redact-public-text"
 
 const mode = process.argv[2]
-if (
-  [
-    "codex-log-consumer",
-    "codex-notification-consumer",
-    "codex-log-consumer-closed",
-    "codex-notification-consumer-closed",
-    "codex-notification-with-log",
-  ].includes(mode ?? "")
-) {
+if (mode === "codex-notification-with-log") {
   const workspace = mkdtempSync(join(tmpdir(), "leuco-codex-consumer-"))
   const secret = "synthetic-consumer-private-credential"
   const initial = "diagnostic\n\u001b[2J"
-  const prefix = mode?.startsWith("codex-log-consumer")
-    ? 0
-    : "[codex notification consumer failed] ".length
+  const prefix = "[codex notification consumer failed] ".length
   const failure = new Error(`${initial}${"p".repeat(3988 - initial.length - prefix)}${secret}tail`)
   const received: Array<{ line: string; level: string | undefined }> = []
   const client = new LeucoCodexClient({
@@ -57,24 +47,12 @@ if (
       LEUCO_VERIFY_TURN_STDERR: "1",
       LEUCO_VERIFY_TRACE: join(workspace, "trace.jsonl"),
     },
-    ...(mode?.startsWith("codex-log-consumer")
-      ? {
-          onLog: () => {
-            throw failure
-          },
-        }
-      : {
-          onAnyNotification: () => {
-            throw failure
-          },
-        }),
-    ...(mode === "codex-notification-with-log"
-      ? {
-          onLog: (line: string, level?: string) => {
-            received.push({ line, level })
-          },
-        }
-      : {}),
+    onAnyNotification: () => {
+      throw failure
+    },
+    onLog: (line: string, level?: string) => {
+      received.push({ line, level })
+    },
     redactLogText: (text) => redactPublicText(text, [secret]),
   })
   try {
@@ -84,24 +62,16 @@ if (
     await client.stop()
     rmSync(workspace, { recursive: true, force: true })
   }
-  if (mode === "codex-notification-with-log") {
-    const errors = received.filter((entry) =>
-      entry.line.startsWith("[codex notification consumer failed]"),
-    )
-    assert.ok(errors.length > 0)
-    assert.ok(
-      errors.every((entry) => entry.level === "error"),
-      "Notification callback failures must remain visible as errors",
-    )
-    assert.ok(!JSON.stringify(errors).includes("synthetic-"))
-    console.log(JSON.stringify({ survived: true, errorsVisible: true }))
-  } else if (mode?.endsWith("-closed")) {
-    const health = client.getStatus().diagnostics
-    assert.equal(health.healthy, false)
-    assert.equal(health.pending, 0)
-    assert.ok(health.lastFailure?.causes.some((cause) => cause.code === "EPIPE"))
-    console.log(JSON.stringify({ survived: true, diagnosticRecorded: true }))
-  } else console.log(JSON.stringify({ survived: true }))
+  const errors = received.filter((entry) =>
+    entry.line.startsWith("[codex notification consumer failed]"),
+  )
+  assert.ok(errors.length > 0)
+  assert.ok(
+    errors.every((entry) => entry.level === "error"),
+    "Notification callback failures must remain visible as errors",
+  )
+  assert.ok(!JSON.stringify(errors).includes("synthetic-"))
+  console.log(JSON.stringify({ survived: true, errorsVisible: true }))
 } else if (mode === "backpressure") {
   const output = new NodeDiagnosticOutput()
   await assert.rejects(
@@ -242,8 +212,6 @@ if (
             "runtime-log-stderr-closed",
             "runtime-log-async",
             "maintenance-stderr-closed",
-            "codex-log-consumer-closed",
-            "codex-notification-consumer-closed",
           ].includes(scenario)
             ? "pipe"
             : descriptor,
@@ -265,8 +233,6 @@ if (
           "runtime-log-stderr-closed",
           "runtime-log-async",
           "maintenance-stderr-closed",
-          "codex-log-consumer-closed",
-          "codex-notification-consumer-closed",
         ].includes(scenario) &&
         child.stderr instanceof ReadableStream
       )
@@ -353,35 +319,10 @@ if (
     } finally {
       await correlated.stop()
     }
-    for (const scenario of ["codex-log-consumer", "codex-notification-consumer"]) {
-      const path = join(workspace, `${scenario}.log`)
-      const descriptor = openSync(path, "w", 0o600)
-      try {
-        assert.deepEqual(await run(scenario, descriptor), { survived: true })
-      } finally {
-        closeSync(descriptor)
-      }
-      const diagnostic = readFileSync(path, "utf8")
-      assert.ok(diagnostic.includes("consumer failed"))
-      assert.ok(
-        !diagnostic.includes("synthetic-"),
-        "A clipped diagnostic retained a secret fragment",
-      )
-      assert.ok(!diagnostic.includes("\u001b"), "Diagnostic output retained terminal controls")
-      assert.ok(
-        diagnostic
-          .split("\n")
-          .filter(Boolean)
-          .every((line) => line.startsWith("[codex ")),
-      )
-      assert.ok(diagnostic.isWellFormed())
-    }
     assert.deepEqual(await run("codex-notification-with-log", 2), {
       survived: true,
       errorsVisible: true,
     })
-    for (const scenario of ["codex-log-consumer-closed", "codex-notification-consumer-closed"])
-      assert.deepEqual(await run(scenario, 2), { survived: true, diagnosticRecorded: true })
     assert.deepEqual(await run("runtime-log-stderr-closed", 2), {
       survived: true,
       diagnosticRecorded: true,
@@ -484,6 +425,6 @@ if (
     rmSync(workspace, { recursive: true, force: true })
   }
   console.log(
-    `Diagnostic output passed: Codex consumer redaction/framing; append/Unicode preserved; caller descriptor remains open; FIFO backpressure ${process.platform === "win32" ? "not verified on Windows" : "exits without forced termination"}`,
+    `Diagnostic output passed: Codex notification consumer redaction; append/Unicode preserved; caller descriptor remains open; FIFO backpressure ${process.platform === "win32" ? "not verified on Windows" : "exits without forced termination"}`,
   )
 }

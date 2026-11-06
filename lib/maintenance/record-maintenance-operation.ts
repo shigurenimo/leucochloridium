@@ -1,5 +1,5 @@
 import { createMaintenanceObservationError } from "@/maintenance/create-maintenance-observation-error"
-import { chmodSync, existsSync } from "node:fs"
+import { restrictEventLogFiles } from "@/daemon/restrict-event-log-files"
 import { join } from "node:path"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
@@ -7,9 +7,7 @@ import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
 import { errorFromDetails } from "@/error-from-details"
 import { withSyncCleanup } from "@/fs/with-sync-cleanup"
 import { recordMaintenanceEventFailure } from "@/maintenance/record-maintenance-event-failure"
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
-import { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from "@/diagnostic-limits"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 
 /** The journal is authoritative even if the secondary event database fails. */
 export function recordMaintenanceOperation(
@@ -20,13 +18,7 @@ export function recordMaintenanceOperation(
   const store = new NodeMaintenanceStore(home)
   const safe = {
     ...operation,
-    error:
-      operation.error === null
-        ? null
-        : truncateDiagnosticText(
-            redactPublicText(operation.error),
-            MAX_DIAGNOSTIC_MESSAGE_CHARACTERS,
-          ),
+    error: operation.error === null ? null : toPublicDiagnosticMessage(operation.error),
   }
   const committed =
     expectedId === undefined
@@ -65,10 +57,7 @@ export function recordMaintenanceOperation(
       },
       () => log.close(),
     )
-    for (const suffix of ["", "-wal", "-shm"]) {
-      const path = join(home, `events.db${suffix}`)
-      if (existsSync(path)) chmodSync(path, 0o600)
-    }
+    restrictEventLogFiles(home)
   } catch (error) {
     return recordMaintenanceEventFailure(store, operation.id, error)
   }

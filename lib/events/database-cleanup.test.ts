@@ -104,9 +104,9 @@ it("does not claim successful history after close failed on an otherwise success
   })
   expect(() => readLeucoEvents("/memory/events.db", 10)).toThrow("close failed")
 })
-it("keeps successful reads read-only and closes exactly once", () => {
+it("keeps successful reads read-only, drops retired fields and closes exactly once", () => {
   expect(readLeucoEvents("/memory/events.db", 10)).toEqual([
-    { seq: 1, ts: 1, event: { ts: 1, type: "runtime.started", runtime: "leuco" } },
+    { seq: 1, ts: 1, event: { ts: 1, type: "runtime.started" } },
   ])
   expect(fixture.open).toHaveBeenCalledExactlyOnceWith("/memory/events.db", { readonly: true })
   expect(fixture.close).toHaveBeenCalledOnce()
@@ -134,15 +134,13 @@ it("closes after read timeout setup fails and retains a simultaneous close failu
   expect(fixture.close).toHaveBeenCalledOnce()
 })
 
-it.each([
-  ["runtime.started", ["runtime.started", "tenant.started"]],
-  ["runtime.stopped", ["runtime.stopped", "tenant.stopped"]],
-  ["supervisor.reconcile", ["supervisor.reconcile", "engine.reconcile"]],
-  ["supervisor.reconcile.failed", ["supervisor.reconcile.failed", "engine.reconcile.failed"]],
-  ["turn.rejected", ["turn.rejected"]],
-])("includes stored aliases for the %s type filter", (type, aliases) => {
-  readLeucoEvents("/memory/events.db", 7, { type, requestId: "wanted", since: 10 })
-  expect(fixture.rows).toHaveBeenCalledExactlyOnceWith("wanted", ...aliases, 10, 7)
+it("binds the type filter with the request and time filters", () => {
+  readLeucoEvents("/memory/events.db", 7, {
+    type: "runtime.started",
+    requestId: "wanted",
+    since: 10,
+  })
+  expect(fixture.rows).toHaveBeenCalledExactlyOnceWith("wanted", "runtime.started", 10, 7)
   expect(fixture.close).toHaveBeenCalledOnce()
 })
 

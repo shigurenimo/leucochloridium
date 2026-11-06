@@ -16,40 +16,26 @@ describe("leucoEventSchema", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "turn.complete",
-      runtime: "p",
       threadKey: "t",
       reply: "ok",
     })
     expect(parsed.success).toBe(true)
   })
 
-  it("accepts turn queue metrics and codex recovery outcomes", () => {
-    const queued = leucoEventSchema.safeParse({
+  it("accepts turn queue metrics", () => {
+    const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "turn.queued",
-      runtime: "p",
       threadKey: "t",
       queueDepth: 2,
     })
-    const recovered = leucoEventSchema.safeParse({
-      ts: 1700000000100,
-      type: "codex.recovery",
-      runtime: "p",
-      reason: "codex turn idle timed out after 120s",
-      status: "succeeded",
-      durationMs: 250,
-      error: null,
-    })
-
-    expect(queued.success).toBe(true)
-    expect(recovered.success).toBe(true)
+    expect(parsed.success).toBe(true)
   })
 
   it("accepts a structured turn.rejected event", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "turn.rejected",
-      runtime: "p",
       threadKey: "t",
       reason: "queue_bytes_limit",
       queueDepth: 2,
@@ -61,25 +47,10 @@ describe("leucoEventSchema", () => {
     expect(parsed.success).toBe(true)
   })
 
-  it("accepts a Codex child recovery outcome", () => {
-    const parsed = leucoEventSchema.safeParse({
-      ts: 1700000000000,
-      type: "codex.recovery",
-      runtime: "p",
-      reason: "codex command output exceeded 200000 chars from call_123",
-      status: "succeeded",
-      durationMs: 250,
-      error: null,
-    })
-    expect(parsed.success).toBe(true)
-  })
-
   it("accepts a slack.event with a message payload", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "slack.event",
-      runtime: "p",
-      connector: "c",
       event: {
         kind: "message",
         channel: "C123",
@@ -100,8 +71,6 @@ describe("leucoEventSchema", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "slack.connection",
-      runtime: "p",
-      connector: "c",
       status: "reconnecting",
     })
     expect(parsed.success).toBe(true)
@@ -111,24 +80,10 @@ describe("leucoEventSchema", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "slack.error",
-      runtime: "p",
-      connector: "c",
       level: "warn",
       action: "ws.close",
       message: "socket closed",
       error: null,
-    })
-    expect(parsed.success).toBe(true)
-  })
-
-  it("accepts runtime retry details on an supervisor.reconcile.failed event", () => {
-    const parsed = leucoEventSchema.safeParse({
-      ts: 1700000000000,
-      type: "supervisor.reconcile.failed",
-      reason: "runtime demo start failed: offline",
-      runtime: "demo",
-      attempt: 2,
-      retryAt: 1700000060000,
     })
     expect(parsed.success).toBe(true)
   })
@@ -145,7 +100,6 @@ describe("leucoEventSchema", () => {
     const parsed = leucoEventSchema.safeParse({
       ts: 1700000000000,
       type: "turn.complete",
-      runtime: "p",
     })
     expect(parsed.success).toBe(false)
   })

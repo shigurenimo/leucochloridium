@@ -1,6 +1,6 @@
 import { readLeucoEvents } from "@/events/read-leuco-events"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { z } from "zod"
 import { getCliSpecification } from "@/cli/get-cli-specification"
@@ -9,6 +9,10 @@ import { writeCliOutput } from "@/cli/write-cli-output"
 import { writeCliError } from "@/cli/write-cli-error"
 import { CliError } from "@/cli/cli-error"
 import { MemoryDiagnosticOutput } from "@/memory-diagnostic-output"
+import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
 // Native Bun YAML must preserve data without emitting terminal control sequences.
 const controlText = `${String.fromCharCode(...Array.from({ length: 33 }, (_, index) => 127 + index))}\u2028\u2029`
@@ -71,8 +75,10 @@ if (process.platform === "win32")
   )
 
 const repository = resolve(import.meta.dir, "..")
-const workspace = realpathSync(mkdtempSync("/tmp/leuco-noinput-"))
+const fixture = new VerifierWorkspace("leuco-noinput-")
+const workspace = fixture.path
 const home = join(workspace, "state")
+fixture.trackDaemon(home)
 const clipboardHelpers = join(workspace, "clipboard-helpers")
 mkdirSync(clipboardHelpers)
 for (const name of ["pbpaste", "wl-paste", "xclip", "xsel"])
@@ -87,23 +93,13 @@ const env = {
 }
 const executable = join(repository, "lib/index.ts")
 async function run(args: string[], code: number | number[] = 0) {
-  const child = Bun.spawn([process.execPath, executable, ...args], {
-    cwd: workspace,
-    env,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const limit = setTimeout(() => child.kill(), 8000)
-  try {
-    const stdout = await new Response(child.stdout).text()
-    const stderr = await new Response(child.stderr).text()
-    const expected = typeof code === "number" ? [code] : code
-    assert.ok(expected.includes(await child.exited), `${args.join(" ")}\n${stdout}\n${stderr}`)
-    return { stdout, stderr }
-  } finally {
-    clearTimeout(limit)
-  }
+  const output = await readProcess(spawnCli({ args, cwd: workspace, env, stdin: "pipe" }), 8000)
+  const expected = typeof code === "number" ? [code] : code
+  assert.ok(
+    expected.includes(output.exitCode),
+    `${args.join(" ")}\n${output.stdout}\n${output.stderr}`,
+  )
+  return output
 }
 try {
   const status = Bun.YAML.parse((await run(["status"])).stdout)
@@ -139,12 +135,7 @@ try {
     tty.terminal?.close()
   }
   assert.ok(Buffer.concat(terminal.chunks).toString().includes("NEEDS_HUMAN"))
-  const fake = join(clipboardHelpers, "codex")
-  writeFileSync(
-    fake,
-    `#!/bin/sh\nexec '${process.execPath}' '${join(repository, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-    { mode: 0o700 },
-  )
+  writeFakeCodex(clipboardHelpers)
   await run(["start"])
   const fifo = join(workspace, "upload-pipe")
   assert.equal(
@@ -333,7 +324,8 @@ try {
   console.log(
     "Non-interactive passed: YAML/JSON contracts, TTY and open-pipe fail-fast, bounded observation, correlated timeout, no implicit foreground or secret prompt",
   )
+} catch (error) {
+  fixture.recordFailure(error)
 } finally {
-  await run(["stop"]).catch(() => {})
-  rmSync(workspace, { recursive: true, force: true })
+  await fixture.close(() => run(["stop"]))
 }

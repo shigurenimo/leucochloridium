@@ -18,9 +18,9 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 `read-control-json.test.ts`は容量超過・受信timeout・キャンセル処理のtimeout・不正JSONの元の原因と実行前判定を確認する。`handle-daemon-request.test.ts`はturn・restart・Slackで壊れたJSONを受けてもcallbackを呼ばず、構造化されたUSAGEを返すことを確認する。修正前は8件が失敗した。`verify-cli-contract.ts`は実daemonへ4MiB超の本文を送り、CLI側までphase=control-body・executionStarted=false・mutationMayHaveOccurred=falseが届くことを確認する。
 
-- `build-codex-child-env.test.ts` は大小文字が混在するtoken名、旧project ID、LEUCO_HOMEを確認し、親の環境と通常のCodex認証が保持されることを検査する。`verify-single-companion.ts` は偽Codexの実環境をキー名だけで観測し、token／旧IDがなく、Leucoホームが一つであることを確認する。
+- `build-codex-child-env.test.ts` は大小文字が混在するtoken名とLEUCO_HOMEを確認し、親の環境と通常のCodex認証が保持されることを検査する。`verify-single-companion.ts` は偽Codexの実環境をキー名だけで観測し、tokenがなく、Leucoホームが一つであることを確認する。
 
-- `codex-client-limits.test.ts` はプロトコル・タイマー・出力量の不正なオプションを子プロセス境界で検査し、spawnが呼ばれないことを確認する。出力上限0、プロトコル最小値、タイマー最大値の受付も確認する。既存のprotocol検証と実CLI検証で有効設定の起動を維持する。
+- `codex-client-limits.test.ts` はプロトコル上限の不正値をspawn前に拒否し、最小値でspawnまで進むことを確認する。既存のprotocol検証と実CLI検証で有効設定の起動を維持する。
 
 - `verify-single-companion.ts` は実CLIのinitializeでパッケージversionが通知されることを確認する。`verify-reliability.ts` は二度の起動でLeucoの名前とパッケージversionが保持されること、`verify-packed-package.ts` はインストール済みCLI／ライブラリ両方の通知versionが配布package.jsonと一致することを検査する。
 
@@ -28,9 +28,7 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 - `inspect-diagnostic-history.test.ts` はライブSQLiteのDB欠落を異常とし、停止中・memory-fallback・観測なしでの未作成を許容することを確認する。`verify-reliability.ts` は実CLIのdoctorとeventsで同じ欠落を検出し、DBが新規作成されないことを検査する。
 
-- `codex-consumer-diagnostics.test.ts` は同期／非同期出力失敗の原因・マスク・snapshot・後続の復旧、64件の上限、1秒でのdrain完了と古い成功応答の扱いを確認する。`verify-diagnostic-output.ts` は実際に読取側を閉じたstderrへ両方のcallback失敗を発生させ、偽Codexの応答成功・親のexit 0・status内のEPIPEを照合する。
-
-- `format-codex-consumer-error.test.ts` は予備診断のマスク・文字数・Unicode・改行と制御文字の無害化・マスク失敗時の省略を確認する。`verify-diagnostic-output.ts` は実Codexクライアントを偽子プロセスへ接続し、log／notification callbackの例外を実ファイルに捕捉して秘密の断片が出ず、一行の診断を保つことを確認する。notification callbackの失敗を通常ログへ渡す経路でもerrorレベルとマスクを確認する。
+- `format-codex-consumer-error.test.ts` はnotification callback失敗の診断のマスク・文字数・Unicode・改行と制御文字の無害化・マスク失敗時の省略を確認する。`verify-diagnostic-output.ts` は実Codexクライアントを偽子プロセスへ接続し、notification callbackの失敗が秘密の断片を残さずerrorレベルで通常ログへ渡ることを確認する。
 
 - `get-bounded-validation-issues.test.ts` はpath/messageの上限をまたぐ長いURL資格情報が短縮前にマスクされることと、Unicodeを壊さず省略を示すことを確認する。
 
@@ -79,7 +77,7 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 - `lib/runtime/runtime-options.test.ts` はbuild後にoptionsの資格情報ストアを差し替えても、選択済みのストアから一度だけ取得することを確認する。資格情報の読取を保留している間にconnectionsの指定を変えても、明示した接続と標準接続の選択を両方向で維持する。
 
-- `lib/events/leuco-event-log.bun-test.ts` は、旧project形式の履歴を実SQLiteに保存し、現在形式のMemory履歴と同じ検索結果になることを確認する。別種別の新しいイベントが20件あっても、type・limit=1・asc/descの組み合わせで該当行を失わない。
+- `lib/events/leuco-event-log.bun-test.ts` は、実SQLiteへ保存した履歴をreadLeucoEventsで読み戻し、SQLite保存時のLeucoEventLog.queryが拒否されることを確認する。保持件数の上限と大きなturnの切り詰めも実SQLiteで検査する。
 
 - `scripts/verify-event-log-concurrency.ts` は別プロセスのSQLite排他ロックに対する保存履歴の読取も検証する。80msのロックは解除後に取得し、800msのロックは待機予算内にSQLITE_BUSYとして失敗し、解除後に同じ履歴が残ることを確認する。`lib/events/database-cleanup.test.ts` はreadonly接続・設定失敗時のclose・両方の原因の保持を確認する。
 
@@ -101,7 +99,7 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 - `lib/daemon/create-daemon-startup-error.test.ts` はログ末尾の境界にある絵文字の非分断、マスク後の文字数での省略判定、非省略・読み取り失敗の区別をMemory境界で検証する。起動失敗のPID・終了原因も維持する。
 
-- `scripts/verify-cli-contract.ts` はSQLiteへ依頼拒否・supervisor失敗・Codex復旧失敗・再起動failed/uncertain・Slackエラーを保存し、後続の25件の復帰警告と150件の通知に埋もれず実CLIのdoctorへ出ることを確認する。復旧成功・キャンセルは失敗一覧へ混ぜず、警告はeventsのsummaryから読めることも検査する。
+- `scripts/verify-cli-contract.ts` はSQLiteへ依頼拒否・再起動failed/uncertain・Slackエラーを保存し、後続の25件の復帰警告と150件の通知に埋もれず実CLIのdoctorへ出ることを確認する。キャンセルは失敗一覧へ混ぜず、警告はeventsのsummaryから読めることも検査する。
 
 - `scripts/verify-noninteractive.ts` はC1制御文字全域とUnicode行区切りをキー・配列・改行のある値へ含め、JSON・YAMLの直接整形、成功結果、エラーを検証する。生の制御文字を出さず、秘密のマスクと読み戻した値を保ち、通常のYAML表示を変えないことを確認する。
 
@@ -162,14 +160,12 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 ## 大量ログのローカル観測
 
-2026-10-30、Bun 1.4.4で合成ログ `"xoxb-a "` を100万回並べ、7,000,000文字の入力から11,000,000文字の期待結果へ全件一致することを確認した。時間はマスクと結果照合、RSSは照合後のプロセス観測値。
+2026-11-06、Bun 1.4.4で合成ログ `"xoxb-a "` を100万回並べ、7,000,000文字の入力が11,000,000文字の期待結果になることを確認した。時間はマスク処理、RSSは処理直後のプロセス観測値。
 
-| 条件                                                         | 処理・照合時間 | 終了時RSS |
-| ------------------------------------------------------------ | -------------: | --------: |
-| 標準のSlack形式だけが一致                                    |          107ms |   約95MiB |
-| 登録値 `xoxb-` も100万箇所で重なり、置換語 `redacted` も登録 |          243ms |   約77MiB |
+- 標準のSlack形式だけが一致する場合、処理時間は96ms、RSSは約379MiB。
+- 登録値 `xoxb-` も100万箇所で重なり、置換語 `redacted` も登録した場合、処理時間は157ms、RSSは約232MiB。
 
-一致候補は各matcherのiteratorから順に取り出し、重なる範囲をまとめる。全一致の配列を先に作らない。元の文字列だけを照合するため、出力したマーカーを新しい一致として処理しない。
+各matcherの全一致を範囲として集め、開始位置で並べてから重なる範囲をまとめる。メモリは一致数に比例するため、旧実装（iteratorから順に取り出す方式、同条件でRSS約95MiB）より大きい。元の文字列だけを照合するため、出力したマーカーを新しい一致として処理しない。
 
 ## 実環境の確認方法と過去の記録
 

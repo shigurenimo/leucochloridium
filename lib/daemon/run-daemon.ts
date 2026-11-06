@@ -7,7 +7,8 @@ import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { readMaintenance } from "@/maintenance/read-maintenance"
 import { scheduleRestart } from "@/maintenance/schedule-restart"
 import { DaemonTextLog } from "@/daemon/daemon-text-log"
-import { chmodSync, existsSync, statSync } from "node:fs"
+import { restrictEventLogFiles } from "@/daemon/restrict-event-log-files"
+import { chmodSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { LeucoRuntime } from "@/runtime/runtime"
 import type { LeucoRuntimeProps } from "@/runtime/runtime"
@@ -120,7 +121,7 @@ export async function runDaemon(props: Props): Promise<void> {
         )
       if (process.stderr.isTTY) process.stderr.write(`${formatLogLine(record)}\n`)
     }
-    resources.eventLog = new LeucoEventLog({
+    const eventLog = new LeucoEventLog({
       eventLogPath: join(props.home, "events.db"),
       onFallback: (event) => {
         const failure = textLog.write(JSON.stringify(event))
@@ -128,25 +129,21 @@ export async function runDaemon(props: Props): Promise<void> {
           throw new Error("Text event fallback persistence failed", { cause: failure })
       },
     })
-    resources.eventLog.addRedactionSecrets([lease.token])
-    for (const suffix of ["", "-wal", "-shm"]) {
-      const path = join(props.home, `events.db${suffix}`)
-      if (existsSync(path)) chmodSync(path, 0o600)
-    }
+    resources.eventLog = eventLog
+    eventLog.addRedactionSecrets([lease.token])
+    restrictEventLogFiles(props.home)
     const runtime = LeucoRuntime.build({
       ...props,
       cwd,
       store,
-      eventLog: resources.eventLog,
+      eventLog,
       onLog: log,
     })
     resources.runtime = runtime
     const handler = handleDaemonRequest({
       token: lease.token,
-      reportError: (error, requestId) =>
-        resources.eventLog
-          ? reportDaemonRequestFailure(resources.eventLog, error, requestId)
-          : "Daemon request failed; inspect logs",
+      reportError: (error, requestId) => reportDaemonRequestFailure(eventLog, error, requestId),
+      redactText: (text) => eventLog.redactText(text),
       cwd,
       isReady: () => state.ready,
       getVolatileEvents: (query) => runtime.getVolatileEvents(query),
@@ -161,7 +158,7 @@ export async function runDaemon(props: Props): Promise<void> {
           requestId,
           expectedLease: lease,
         })
-        resources.eventLog?.log("info", `Restart operation accepted: ${operation.id}`, requestId)
+        eventLog.log("info", `Restart operation accepted: ${operation.id}`, requestId)
         return operation
       },
       runTextTurn: (key, text, requestId) => runtime.runTextTurn(key, text, requestId),
@@ -169,7 +166,7 @@ export async function runDaemon(props: Props): Promise<void> {
       runSlackCommand: (parsed, options) => runtime.runSlackCommand(parsed, options),
       stop: (requestId) => stop("control request", requestId),
       awaitStop: () => runtime.stop(),
-      ownsProcess: props.ownsProcess,
+      ownsProcess: props.ownsProcess ?? false,
     })
     resources.server = Bun.serve<undefined>({
       unix: join(props.home, "control.sock"),
@@ -177,9 +174,8 @@ export async function runDaemon(props: Props): Promise<void> {
       fetch(request, server) {
         server.timeout(request, 0)
         return handler(request).catch((error: unknown) => {
-          const message =
-            resources.eventLog?.redactText(errorMessage(error)) ?? "Daemon request failed"
-          resources.eventLog?.error(`Unexpected daemon request failure: ${message}`, error)
+          const message = eventLog.redactText(errorMessage(error))
+          eventLog.error(`Unexpected daemon request failure: ${message}`, error)
           return Response.json({ error: message }, { status: 500 })
         })
       },

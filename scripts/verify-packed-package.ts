@@ -1,5 +1,6 @@
 import { redactPublicText } from "@/secrets/redact-public-text"
 import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 import { z } from "zod"
 import {
   readFileSync,
@@ -12,6 +13,7 @@ import {
 } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { tmpdir } from "node:os"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
 
 const repositoryRoot = resolve(import.meta.dir, "..")
 const workspace = mkdtempSync(join(tmpdir(), "leuco-package-"))
@@ -93,7 +95,6 @@ try {
     "skills/leuco-cli/SKILL.md",
     ".docs/reliability.md",
     ".docs/reliability-design.md",
-    ".docs/reliability-verification.md",
   ]) {
     const path = join(installedPackage, document)
     if (!existsSync(path)) throw new Error(`Required package document is missing: ${document}`)
@@ -191,7 +192,7 @@ try {
         !diagnostic.includes("leuco is Bun-only.")
       )
         throw new Error(
-          `Node import did not report Bun guidance (exit=${rejected.exitCode}, signal=${rejected.signalCode}): ${truncateDiagnosticText(redactPublicText(diagnostic), 4000)}`,
+          `Node import did not report Bun guidance (exit=${rejected.exitCode}, signal=${rejected.signalCode}): ${toPublicDiagnosticMessage(diagnostic)}`,
         )
     }
   }
@@ -205,13 +206,7 @@ try {
     throw new Error("Packed command help is not discoverable")
 
   const fakeBin = join(workspace, "bin")
-  mkdirSync(fakeBin)
-  const fakeCodex = join(fakeBin, "codex")
-  writeFileSync(
-    fakeCodex,
-    `#!/bin/sh\nexec '${process.execPath}' '${join(repositoryRoot, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-    { mode: 0o700 },
-  )
+  const fakeCodex = writeFakeCodex(fakeBin)
   const executionEnvironment = {
     ...process.env,
     PATH: fakeBin,

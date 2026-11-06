@@ -68,7 +68,7 @@ export class NodeClipboard extends Clipboard {
           finish(
             new ClipboardReadError(
               "TOO_LARGE",
-              "Clipboard data exceeds 8192 bytes; copy only one Slack token.",
+              "Clipboard data exceeds 8192 bytes; copy only one token.",
             ),
           )
           return

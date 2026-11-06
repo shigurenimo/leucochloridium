@@ -193,7 +193,7 @@ describe("observable log persistence", () => {
   it("contains serialization errors and exposes them instead of breaking the bot", () => {
     vi.spyOn(diagnosticOutput, "write").mockResolvedValue(undefined)
     const log = new LeucoEventLog({ diagnosticOutput })
-    expect(() => log.append({ ts: NaN, type: "runtime.started", runtime: "leuco" })).not.toThrow()
+    expect(() => log.append({ ts: NaN, type: "runtime.started" })).not.toThrow()
     expect(log.getHealth().lastWriteFailed).toBe(true)
     expect(log.getHealth().lastPersistError?.message).toContain("serialization")
     log.log("info", "next valid event")

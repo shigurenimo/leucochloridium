@@ -36,5 +36,5 @@ it("bounds disposal of a late response after cancellation", async () => {
   await vi.advanceTimersByTimeAsync(1000)
   const causes = errorDetails(await pending)
   expect(causes.some((cause) => cause.message.includes("caller cancelled"))).toBe(true)
-  expect(causes.some((cause) => cause.message.includes("disposal timed out"))).toBe(true)
+  expect(causes.some((cause) => cause.message.includes("cancellation timed out"))).toBe(true)
 })

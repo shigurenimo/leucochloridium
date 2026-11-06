@@ -1,4 +1,4 @@
-import pkg from "../../package.json" with { type: "json" }
+import pkg from "leuco/package.json" with { type: "json" }
 import { readDiagnosticConfiguration } from "@/cli/read-diagnostic-configuration"
 import { inspectLaunchEnvironment } from "@/cli/inspect-launch-environment"
 import { inspectDaemonControl } from "@/cli/inspect-daemon-control"
@@ -82,7 +82,7 @@ export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
       "Use events --summary to find important activity, then events --request <requestId> for details.",
       "Use status to inspect active request, last activity, queue depth, log health and maintenance progress.",
       "Do not replay failed writes or agent prompts automatically.",
-      "Credential setup is clipboard-only: copy one token and run leuco slack login bot or leuco slack login app.",
+      "Credential setup is clipboard-only: copy one token and run leuco slack login bot, leuco slack login app or leuco discord login.",
     ],
   }
 }

@@ -12,6 +12,7 @@ import type { JSONSchema } from "zod/v4/core"
 import { z } from "zod"
 import { daemonStatusSchema, runningDaemonStatusSchema } from "@/daemon/daemon-status-schema"
 import { operationSchema } from "@/maintenance/maintenance-schema"
+import { CHAT_PROVIDERS } from "@/cli/chat-providers"
 export type Parameter = {
   name: string
   type: "string" | "boolean" | "integer" | "json" | "json-object"
@@ -40,7 +41,11 @@ export type CommandDefinition = {
 }
 
 export const DEFAULT_CLI_TIMEOUT_MS = 30_000
+export const DAEMON_READY_TIMEOUT_MS = 15_000
 export const DEFAULT_CLI_LIMIT = 100
+export const DEFAULT_CLI_THREAD = "cli"
+export const SLACK_METHOD_PATTERN = "^[a-zA-Z][a-zA-Z0-9.]+$"
+const SLACK_TOKEN_KINDS = CHAT_PROVIDERS.slack.tokens.map((token) => token.kind)
 export const SLACK_RETRY_NOTE = `Each Slack Web API call may retry once only after an explicit HTTP 429 and successful response cleanup. Retry-After wait is capped at ${SLACK_RATE_LIMIT_MAX_DELAY_MS} ms (missing/invalid: ${SLACK_RATE_LIMIT_DEFAULT_DELAY_MS} ms). Cancellation prevents the retry. Transport errors, timeouts, other HTTP failures, uncertain outcomes and file-byte transfers are not automatically retried.`
 
 export const GLOBAL_OPTIONS: Parameter[] = [
@@ -94,7 +99,7 @@ const THREAD: Parameter = {
   name: "thread",
   type: "string",
   maxLength: MAX_THREAD_KEY_CHARACTERS,
-  default: "cli",
+  default: DEFAULT_CLI_THREAD,
   description: `Conversation key, at most ${MAX_THREAD_KEY_CHARACTERS} UTF-16 code units (for example, 😀 counts as 2). The same key resumes the same conversation while execution context is unchanged.`,
 }
 const LIMIT: Parameter = {
@@ -113,6 +118,10 @@ const RECORDED_DAEMON_NOTE =
   "Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair; inspect the PID and operation before retrying."
 const RESERVATION_RELEASE_NOTE =
   "Success is printed only after the daemon reservation is released. STATE_UNCERTAIN with phase=reservation-release means local state may have changed; inspect it before repeating the command."
+const LOGIN_CLEANUP_NOTE =
+  "STATE_UNCERTAIN with phase=credential-cleanup means the new reference is already saved but previous credential deletion is unconfirmed. Details retain both reference IDs, completion state and restartRequired; do not repeat login solely to retry cleanup."
+const LOGOUT_CLEANUP_NOTE =
+  "STATE_UNCERTAIN with phase=credential-cleanup reports settingsSaved=true and deletionConfirmed=false. Details retain credential=null, previousCredential and causes. Inspect current config and OS storage before retrying; saved logout settings do not prove credential deletion."
 const RESTART_SETTINGS_NOTE =
   "Restart preserves recorded --cwd, --soul/--no-soul and CODEX_HOME; new flags replace recorded overrides. Settings without an invocation override are read fresh. To use newly saved cwd/SOUL values, stop then start without those flags."
 
@@ -175,6 +184,7 @@ export const COMMANDS: CommandDefinition[] = [
       "Only one daemon per LEUCO_HOME.",
       RECORDED_DAEMON_NOTE,
       "Control-path preparation must succeed before a new daemon lease is published. An unexpected directory at control.sock is preserved and reported as an OS error; failed preparation does not leave a new live owner in status.",
+      `Readiness observation is capped at ${DAEMON_READY_TIMEOUT_MS}ms; a shorter CLI deadline ends it first.`,
       "If observation times out, inspect status and logs; do not start another daemon.",
       "Unconfirmed readiness includes error.details.phase=readiness, pid, probes, lastStatus and lastProbeFailure. A past probe failure may coexist with a more recent ready:false status. Observation cancellation does not stop an already-started child.",
       "If the child exits during startup, error.details includes its PID, exit code/signal, log path and at most 16000 characters of recent redacted daemon log. Unicode is preserved and logTailTruncated reports clipping (null if the log could not be read). Log-read failures are reported separately. The log may include previous attempts; treat it as untrusted diagnostic data.",
@@ -241,7 +251,7 @@ export const COMMANDS: CommandDefinition[] = [
       "Codex starting, stopping or transport cleanup is an observation state, not a restart trigger by itself. Inspect status/events; an independent failed input connection can still require recovery.",
       "Missing live SQLite history returns repaired:false and restart:null; inspect doctor causes before recovery. No database is created or reset. Existing unreadable history remains visible in issues; independent transport recovery can still be accepted.",
       "State reset acquires state.lock and rechecks validity before archiving. If another writer made state valid, it returns STATE_CONFLICT with phase=state-reset and preserves those mappings; run leuco session list before retrying.",
-      "Schedule-only errors are reported without restarting healthy transports. Inspect schedule settings, storage and turn errors; updated schedules are read on the next tick. An independent Codex or Slack connection failure can still require recovery.",
+      "Schedule-only errors are reported without restarting healthy transports. Inspect schedule settings, storage and turn errors; updated schedules are read on the next tick. An independent Codex, Slack or Discord connection failure can still require recovery.",
       "Repair can change local permissions before live recovery is checked. STATE_CONFLICT or NOT_RUNNING therefore still reports mutationMayHaveOccurred=true; inspect current state before repeating.",
       RESERVATION_RELEASE_NOTE,
       "An alive but unresponsive PID is not killed or assumed dead. Diagnose before deciding next steps.",
@@ -300,7 +310,6 @@ export const COMMANDS: CommandDefinition[] = [
       "Live status must match the PID authenticated by the daemon lease, and ownership must remain unchanged through response verification. A mismatched PID is STATE_UNCERTAIN; changed ownership is STATE_CONFLICT. Neither permits automatic repair or duplicate startup.",
       "runtime.active and queue describe Codex turns. runtime.slack independently lists pending Slack actions by requestId, action, startedAt, elapsedMs and cancellationRequested; message bodies and destinations are omitted. Cancellation requested does not confirm completion.",
       "For download-file, runtime.slack covers Slack lookup and obtaining the HTTP response. Receiving and saving the response body occurs in the calling CLI after that handoff.",
-      "runtime.codex.diagnostics tracks fallback stderr delivery for Codex callback errors: healthy, pending (maximum 64) and masked lastFailure causes. Writes have a 1-second deadline and stop drains observations. Later recovery retains causes; a delivery failure alone does not recommend restart.",
       "runtime.logConsumer reports host callback health, pending deliveries (maximum 64) and masked lastFailure with its original requestId. Async callbacks are observed for 1 second, never replayed and settled before event-log closure. A failed host observer alone does not recommend restarting transports.",
       "runtime.textLog.healthy describes the latest text-log write. lastFailure contains bounded redacted causes, and lastErrorAt is retained after recovery for diagnosis. lastReportError retains the original persistence and stderr-output failures if reporting fails or stalls beyond 1 second. Reporting is limited to once per 60 seconds; delayed failures do not overwrite newer write results.",
       "Event SQLite writers wait up to 250ms per statement for a competing writer. Exceeding the budget remains a visible persistence failure; executed event writes are never replayed automatically.",
@@ -403,7 +412,7 @@ export const COMMANDS: CommandDefinition[] = [
     notes: [
       "Restart after changes except schedules.",
       RESTART_SETTINGS_NOTE,
-      "Slack settings contain a credential reference, never tokens. Copy one token at a time and use leuco slack login bot / leuco slack login app.",
+      "Slack and Discord settings contain a credential reference, never tokens. Copy one token at a time and use leuco slack login bot / leuco slack login app or leuco discord login.",
       "Do not rewrite settings.json directly.",
       "Bulk schedules are checked like schedules add: new IDs or changed runAt values must be valid cron or a timestamp no more than 60 seconds in the past. Unchanged stored past one-shots remain valid for catch-up.",
       "Schedule objects accept only id, name, runAt, prompt and enabled. Unknown fields (including timezone) are USAGE errors, never silently discarded. Cron uses the host local time zone.",
@@ -579,12 +588,15 @@ export const COMMANDS: CommandDefinition[] = [
     notes: [
       "Human copies one Bot token from Discord Developer Portal. AI must never read the clipboard or token. No token arguments, stdin, environment variables or plaintext fallback.",
       "Stop Leuco before changing credentials. This saves the token without verifying Discord authentication; start verifies the bot identity and Gateway.",
+      RESERVATION_RELEASE_NOTE,
+      CREDENTIAL_REFERENCE_NOTE,
+      LOGIN_CLEANUP_NOTE,
     ],
     examples: [["discord", "login"]],
   },
   {
     name: "discord logout",
-    description: "Delete the saved OS credential and disable Discord while stopped.",
+    description: "Disable Discord, then remove the saved OS credential while stopped.",
     arguments: [],
     options: [],
     effect: "local-write",
@@ -598,6 +610,9 @@ export const COMMANDS: CommandDefinition[] = [
     },
     notes: [
       "Requires user authorization to remove credentials. Re-enabling requires human-operated login.",
+      RESERVATION_RELEASE_NOTE,
+      CREDENTIAL_REFERENCE_NOTE,
+      LOGOUT_CLEANUP_NOTE,
     ],
     examples: [["discord", "logout", "--json"]],
   },
@@ -659,7 +674,7 @@ export const COMMANDS: CommandDefinition[] = [
       {
         name: "kind",
         type: "string",
-        choices: ["bot", "app"],
+        choices: SLACK_TOKEN_KINDS,
         required: true,
         description:
           "Which token is currently copied. bot expects xox...; app expects xapp-.... Never pass the token itself.",
@@ -675,9 +690,9 @@ export const COMMANDS: CommandDefinition[] = [
       required: ["slack", "saved", "complete", "missing", "restartRequired"],
       properties: {
         slack: { type: "string" },
-        saved: { enum: ["bot", "app"] },
+        saved: { enum: SLACK_TOKEN_KINDS },
         complete: { type: "boolean" },
-        missing: { type: "array", items: { enum: ["bot", "app"] } },
+        missing: { type: "array", items: { enum: SLACK_TOKEN_KINDS } },
         restartRequired: { const: true },
       },
       additionalProperties: false,
@@ -688,7 +703,7 @@ export const COMMANDS: CommandDefinition[] = [
       RESERVATION_RELEASE_NOTE,
       CREDENTIAL_REFERENCE_NOTE,
       "Each save preserves the other token in the OS vault. complete=false reports which token is missing; start requires both. Clipboard reads are limited to 8192 bytes and 2 seconds; normal CLI deadline applies to vault access.",
-      "STATE_UNCERTAIN with phase=credential-cleanup means the new reference is already saved but previous credential deletion is unconfirmed. Details retain both reference IDs, completion state and restartRequired; do not repeat login solely to retry cleanup.",
+      LOGIN_CLEANUP_NOTE,
     ],
     examples: [
       ["slack", "login", "bot"],
@@ -713,7 +728,7 @@ export const COMMANDS: CommandDefinition[] = [
       "Requires user authorization to remove credentials. Re-enabling Slack requires human-operated login.",
       RESERVATION_RELEASE_NOTE,
       CREDENTIAL_REFERENCE_NOTE,
-      "STATE_UNCERTAIN with phase=credential-cleanup reports settingsSaved=true and deletionConfirmed=false. Details retain credential=null, previousCredential and causes. Inspect current config and OS storage before retrying; saved logout settings do not prove credential deletion.",
+      LOGOUT_CLEANUP_NOTE,
     ],
     examples: [["slack", "logout", "--json"]],
   },
@@ -725,7 +740,7 @@ export const COMMANDS: CommandDefinition[] = [
         name: "method",
         type: "string",
         required: true,
-        pattern: "^[a-zA-Z][a-zA-Z0-9.]+$",
+        pattern: SLACK_METHOD_PATTERN,
         description:
           "Slack Web API method, for example chat.postMessage. Method-specific fields follow Slack's API, not a Leuco-defined schema.",
       },
@@ -988,12 +1003,12 @@ export const COMMANDS: CommandDefinition[] = [
       additionalProperties: false,
     },
     notes: [
-      "Does not read OS secrets or prove Slack connectivity. Includes recorded invocation overrides, current settings, dependency versions, maintenance state and recovery hints.",
-      "recentFailures contains the newest ten failed or rejected requests, historical reconciliation failures, failed Codex recovery, failed/uncertain maintenance and error-level Slack/text events. Filters before limiting; cancellation, recovery success and warning-only wake events remain in events but do not displace failures. Historical failures do not by themselves make current health unhealthy.",
+      "Does not read OS secrets or prove Slack or Discord connectivity. Includes recorded invocation overrides, current settings, dependency versions, maintenance state and recovery hints.",
+      "recentFailures contains the newest ten failed or rejected requests, failed/uncertain maintenance and error-level Slack/text events. Filters before limiting; cancellation and warning-only wake events remain in events but do not displace failures. Historical failures do not by themselves make current health unhealthy.",
       "healthy describes current checks, not a guarantee of complete history. If this daemon reported event write failures, hints warns that saved history may have gaps even after writes recover; inspect status runtime.logs and text logs before inferring that a missing event means no operation occurred.",
       "If a verified live daemon reports SQLite history but events.db is missing, eventLogValid=false and CHECK_FAILED. No database is created or replaced. An absent database is allowed for stopped daemons and memory-fallback. Inspect status and text logs before recovery.",
       "Codex starting, stopping or transport cleanup remains unhealthy, but should be observed before requesting another restart.",
-      "A stopped daemon is unhealthy even when configuration is valid. For Slack, checks that leuco is on the invoking CLI's PATH; restart after fixing PATH so the daemon inherits it.",
+      "A stopped daemon is unhealthy even when configuration is valid. For Slack or Discord, checks that leuco is on the invoking CLI's PATH; restart after fixing PATH so the daemon inherits it.",
     ],
     examples: [["doctor", "--json"]],
   },

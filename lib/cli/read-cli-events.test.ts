@@ -72,7 +72,7 @@ it("keeps the ordinary array result when no write failures are reported", async 
 const volatileEntry = (seq: number) => ({
   seq,
   ts: seq,
-  event: { ts: seq, type: "runtime.started", runtime: "leuco", requestId: "wanted" },
+  event: { ts: seq, type: "runtime.started", requestId: "wanted" },
 })
 it.each([
   {

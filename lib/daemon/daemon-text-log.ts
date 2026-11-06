@@ -5,9 +5,7 @@ import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import type { DiagnosticOutput } from "@/diagnostic-output"
 import { NodeDiagnosticOutput } from "@/node-diagnostic-output"
 import { errorMessage } from "@/error-message"
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from "@/diagnostic-limits"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 
 /** Text logging is best effort, but its failure remains inspectable. */
 export class DaemonTextLog {
@@ -39,10 +37,7 @@ export class DaemonTextLog {
     } catch (error) {
       const primary =
         error instanceof Error ? error : new Error("Text log write failed", { cause: error })
-      const message = truncateDiagnosticText(
-        redactPublicText(errorMessage(primary)),
-        MAX_DIAGNOSTIC_MESSAGE_CHARACTERS,
-      )
+      const message = toPublicDiagnosticMessage(errorMessage(primary))
       const snapshot = { message, causes: errorDetails(primary) }
       this.state.healthy = false
       this.state.lastErrorAt = Date.now()

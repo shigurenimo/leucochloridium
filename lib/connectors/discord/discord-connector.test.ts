@@ -1,31 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
 import { DiscordConnector } from "@/connectors/discord/discord-connector"
-import {
-  DiscordEventSource,
-  type DiscordSourceHandlers,
-} from "@/connectors/discord/discord-event-source"
+import { MemoryDiscordEventSource } from "@/connectors/discord/memory-discord-event-source"
 import { discordReceptionSchema } from "@/config/config-schema"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import type { ConnectorContext } from "@/connectors/connector"
 
-class MemorySource extends DiscordEventSource {
-  handlers: DiscordSourceHandlers | null = null
-  async start(handlers: DiscordSourceHandlers) {
-    this.handlers = handlers
-  }
-  async stop() {
-    this.handlers = null
-  }
-  status() {
-    return this.handlers === null ? "disconnected" : "connected"
-  }
-  async emit(type: string, data: Record<string, unknown>) {
-    await this.handlers?.onEvent({ type, data, receivedAt: 1000 })
-  }
-}
-
 function fixture(reception: unknown = {}) {
-  const source = new MemorySource()
+  const source = new MemoryDiscordEventSource()
   const api = vi.fn(async (_method: string, endpoint: string): Promise<unknown> =>
     endpoint === "/users/@me"
       ? { id: "BOT", bot: true }
@@ -46,8 +27,10 @@ function fixture(reception: unknown = {}) {
       return "internal reply"
     },
   }
+  const emit = (type: string, data: Record<string, unknown>) =>
+    source.emit({ type, data, receivedAt: 1000 })
   const message = async (id: string, overrides: Record<string, unknown> = {}) =>
-    source.emit("MESSAGE_CREATE", {
+    emit("MESSAGE_CREATE", {
       id,
       channel_id: "C1",
       guild_id: "G1",
@@ -55,7 +38,7 @@ function fixture(reception: unknown = {}) {
       author: { id: "USER" },
       ...overrides,
     })
-  return { source, api, connector, turns, context, message, logs }
+  return { source, api, connector, turns, context, emit, message, logs }
 }
 
 describe("Discord connector", () => {
@@ -68,9 +51,9 @@ describe("Discord connector", () => {
     await test.message("3", { mentions: [{ id: "BOT" }] })
     await test.message("4", { author: { id: "OTHERBOT", bot: true }, mentions: [{ id: "BOT" }] })
     await test.message("5", { webhook_id: "HOOK", mentions: [{ id: "BOT" }] })
-    await test.source.emit("THREAD_CREATE", { id: "THREAD", type: 11, member: { user_id: "BOT" } })
+    await test.emit("THREAD_CREATE", { id: "THREAD", type: 11, member: { user_id: "BOT" } })
     await test.message("6", { channel_id: "THREAD" })
-    await test.source.emit("THREAD_CREATE", { id: "UNJOINED", type: 11 })
+    await test.emit("THREAD_CREATE", { id: "UNJOINED", type: 11 })
     await test.message("7", { channel_id: "UNJOINED" })
     expect(test.turns.map((turn) => turn.key)).toEqual([
       "discord:C1",
@@ -114,16 +97,16 @@ describe("Discord connector", () => {
   it("tracks membership sync and leaving threads", async () => {
     const test = fixture()
     await test.connector.start(test.context)
-    await test.source.emit("THREAD_LIST_SYNC", {
+    await test.emit("THREAD_LIST_SYNC", {
       threads: [{ id: "T1", type: 11 }],
       members: [{ id: "T1", user_id: "BOT" }],
     })
     await test.message("1", { channel_id: "T1" })
-    await test.source.emit("THREAD_MEMBERS_UPDATE", { id: "T1", removed_member_ids: ["BOT"] })
+    await test.emit("THREAD_MEMBERS_UPDATE", { id: "T1", removed_member_ids: ["BOT"] })
     await test.message("2", { channel_id: "T1" })
-    await test.source.emit("THREAD_MEMBER_UPDATE", { id: "T1", user_id: "BOT" })
+    await test.emit("THREAD_MEMBER_UPDATE", { id: "T1", user_id: "BOT" })
     await test.message("3", { channel_id: "T1" })
-    await test.source.emit("THREAD_DELETE", { id: "T1" })
+    await test.emit("THREAD_DELETE", { id: "T1" })
     await test.message("4", { channel_id: "T1" })
     expect(test.turns).toHaveLength(2)
     await test.connector.stop()
@@ -138,11 +121,11 @@ describe("Discord connector", () => {
       guild_id: "G1",
       emoji: { id: null, name: "👀" },
     }
-    await test.source.emit("MESSAGE_REACTION_ADD", { ...reaction, user_id: "BOT" })
-    await test.source.emit("MESSAGE_REACTION_REMOVE", reaction)
-    await test.source.emit("MESSAGE_REACTION_ADD", { ...reaction, emoji: { id: null, name: "❤️" } })
-    await test.source.emit("MESSAGE_REACTION_ADD", reaction)
-    await test.source.emit("MESSAGE_REACTION_ADD", {
+    await test.emit("MESSAGE_REACTION_ADD", { ...reaction, user_id: "BOT" })
+    await test.emit("MESSAGE_REACTION_REMOVE", reaction)
+    await test.emit("MESSAGE_REACTION_ADD", { ...reaction, emoji: { id: null, name: "❤️" } })
+    await test.emit("MESSAGE_REACTION_ADD", reaction)
+    await test.emit("MESSAGE_REACTION_ADD", {
       ...reaction,
       emoji: { id: "123", name: "custom" },
     })

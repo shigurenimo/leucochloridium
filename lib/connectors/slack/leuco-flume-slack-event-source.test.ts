@@ -97,7 +97,7 @@ describe("LeucoFlumeSlackEventSource", () => {
     await source.stop()
   })
 
-  it("leaves Flume's frame-silence watchdog disabled", async () => {
+  it("passes only the app token and leaves Flume's frame-silence watchdog disabled", async () => {
     const source = new LeucoFlumeSlackEventSource({
       diagnosticOutput,
       createSockets: () => new LeucoMemorySlackSockets(),
@@ -108,10 +108,7 @@ describe("LeucoFlumeSlackEventSource", () => {
     await source.start({ onEvent: async () => {} })
     await source.stop()
 
-    expect(captured.sourceOptions).toEqual({
-      appToken: "xapp-test",
-      botToken: "xoxb-test",
-    })
+    expect(captured.sourceOptions).toEqual({ appToken: "xapp-test" })
     expect(captured.flumeOptions[0]?.signal).toBeInstanceOf(AbortSignal)
     expect(captured.close).toHaveBeenCalledTimes(1)
   })

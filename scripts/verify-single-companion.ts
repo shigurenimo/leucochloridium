@@ -1,38 +1,34 @@
 import pkg from "leuco/package.json" with { type: "json" }
 import assert from "node:assert/strict"
 import {
-  chmodSync,
   existsSync,
-  mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs"
 import { join, resolve } from "node:path"
 import { waitForDaemonReady } from "@/daemon/wait-for-daemon-ready"
+import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
 const repository = resolve(import.meta.dir, "..")
-const workspace = realpathSync(mkdtempSync("/tmp/leuco-"))
+const fixture = new VerifierWorkspace("leuco-")
+const workspace = fixture.path
 const home = join(workspace, "leuco")
+fixture.trackDaemon(home)
 const codexHome = join(workspace, "codex")
 const trace = join(workspace, "trace.jsonl")
 const fakeBin = join(workspace, "bin")
-mkdirSync(fakeBin)
-const fake = join(fakeBin, "codex")
+writeFakeCodex(fakeBin)
 mkdirSync(home)
 mkdirSync(codexHome)
 writeFileSync(join(codexHome, "config.toml"), 'developer_instructions = "native instruction"\n')
 writeFileSync(join(codexHome, "auth.json"), "sentinel")
-writeFileSync(
-  fake,
-  `#!/bin/sh\nexec '${process.execPath}' '${join(repository, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-  { mode: 0o700 },
-)
-chmodSync(fake, 0o700)
 const environment: NodeJS.ProcessEnv = {
   ...process.env,
   PATH: fakeBin,
@@ -42,26 +38,20 @@ const environment: NodeJS.ProcessEnv = {
 }
 
 async function cli(args: string[], success = true, env = environment): Promise<string> {
-  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args, "--json"], {
-    env,
-    cwd: workspace,
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const timer = setTimeout(() => child.kill(), 20_000)
-  try {
-    const output = await new Response(child.stdout).text()
-    const error = await new Response(child.stderr).text()
-    const code = await child.exited
-    assert.equal(code === 0, success, `${args.join(" ")}: ${code}\n${output}\n${error}`)
-    if (!success) return output + error
-    const envelope = JSON.parse(output)
-    return typeof envelope.data?.reply === "string"
-      ? envelope.data.reply
-      : JSON.stringify(envelope.data)
-  } finally {
-    clearTimeout(timer)
-  }
+  const output = await readProcess(
+    spawnCli({ args: [...args, "--json"], cwd: workspace, env }),
+    20_000,
+  )
+  assert.equal(
+    output.exitCode === 0,
+    success,
+    `${args.join(" ")}: ${output.exitCode}\n${output.stdout}\n${output.stderr}`,
+  )
+  if (!success) return output.stdout + output.stderr
+  const envelope = JSON.parse(output.stdout)
+  return typeof envelope.data?.reply === "string"
+    ? envelope.data.reply
+    : JSON.stringify(envelope.data)
 }
 function frames(): Record<string, unknown>[] {
   return readFileSync(trace, "utf8")
@@ -96,7 +86,6 @@ try {
       Leuco_Slack_Bot_Token: "synthetic-secret",
       leuco_slack_app_token: "synthetic-secret",
       Leuco_Home: "/obsolete",
-      leuco_project_id: "obsolete",
       LEUCO_VERIFY_ENV_GUARD: "1",
     }),
     /verified reply/,
@@ -104,7 +93,6 @@ try {
   assert.deepEqual(frames().find((frame) => frame.environmentGuard)?.environmentGuard, {
     slackTokenKeys: [],
     leucoHomeKeys: ["LEUCO_HOME"],
-    obsoleteProjectKeys: [],
   })
   assert.equal(existsSync(join(home, "daemon.json")), false)
   assert.equal(existsSync(join(home, "control.sock")), false)
@@ -249,6 +237,7 @@ try {
     [process.execPath, join(repository, "lib/index.ts"), "run", "--foreground", "--no-soul"],
     { env: environment, cwd: workspace, stdout: "ignore", stderr: "pipe" },
   )
+  fixture.trackProcess(holding)
   await waitForDaemonReady({
     home,
     pid: holding.pid,
@@ -293,6 +282,7 @@ try {
     assert.equal(Object.hasOwn(JSON.parse(await cli(["session", "list"])), key), false)
   }
   const recoveryHome = join(workspace, "instruction-recovery")
+  fixture.trackDaemon(recoveryHome)
   const recoveryTrace = join(workspace, "instruction-recovery.jsonl")
   const nativeInstructions = join(workspace, "native-instructions.txt")
   const resumeIdentity = join(workspace, "resume-thread-id.txt")
@@ -558,7 +548,8 @@ try {
     await cli(["stop"], true, recoveryEnv)
   }
   console.log("Single-companion CLI integration passed")
+} catch (error) {
+  fixture.recordFailure(error)
 } finally {
-  await cli(["stop"]).catch(() => {})
-  rmSync(workspace, { force: true, recursive: true })
+  await fixture.close((stateHome) => cli(["stop"], true, { ...environment, LEUCO_HOME: stateHome }))
 }

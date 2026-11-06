@@ -45,6 +45,5 @@ export type LeucoSlackSourceLog = {
   action: string
   message: string
   error: Error | null
-  detail: Record<string, unknown> | null
   timestamp: number
 }

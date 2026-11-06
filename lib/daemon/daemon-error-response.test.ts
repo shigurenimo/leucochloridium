@@ -4,10 +4,13 @@ import { CliError } from "@/cli/cli-error"
 import { daemonErrorResponse } from "@/daemon/daemon-error-response"
 
 it("marks shortened control errors without splitting Unicode or exposing tokens", async () => {
+  const message = `xoxb-private-token ${"a".repeat(3976)}😀${"z".repeat(100)}`
   const response = daemonErrorResponse({
-    error: new Error(`xoxb-private-token ${"a".repeat(3976)}😀${"z".repeat(100)}`),
+    error: new Error(message),
     status: 500,
     requestId: "control-request",
+    message,
+    redactionSecrets: [],
   })
   const body = z.object({ error: z.string(), requestId: z.string() }).parse(await response.json())
   expect(response.status).toBe(500)
@@ -28,6 +31,8 @@ it("preserves a classified uncertainty and its publication details across the da
     }),
     status: 422,
     requestId: "publication-request",
+    message: "worker publication unconfirmed",
+    redactionSecrets: [],
   })
   expect(await response.json()).toMatchObject({
     error: "worker publication unconfirmed",
@@ -50,6 +55,7 @@ it("masks known secrets in classified metadata before returning it", async () =>
     redactionSecrets: [secret],
     status: 422,
     requestId: "request",
+    message: `unknown ${secret}`,
   })
   expect(await response.json()).toMatchObject({
     error: "unknown [redacted]",
@@ -69,7 +75,13 @@ it.each(["cyclic", "oversized", "getter"])(
           throw new Error("metadata unreadable")
         },
       })
-    const response = daemonErrorResponse({ error: failure, status: 422, requestId: "request" })
+    const response = daemonErrorResponse({
+      error: failure,
+      status: 422,
+      requestId: "request",
+      message: "accepted but unconfirmed",
+      redactionSecrets: [],
+    })
     const body = await response.json()
     expect(body).toMatchObject({
       failure: {

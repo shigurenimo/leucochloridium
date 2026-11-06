@@ -31,7 +31,7 @@ leuco slack call --help --json
 
 ## 状態と再試行
 
-内部のSlack Web APIは明示的なHTTP 429と応答の後片付け成功時だけ一度再試行する。待機は最大30秒、不正・欠落のRetry-Afterは1秒。キャンセル後・通信失敗・timeout・429以外のHTTPエラー・結果不明・ファイル本体の転送は再送しない。この内部動作を理由に、失敗したCLIコマンドをAIが自動で繰り返さない。
+内部のSlack Web APIは明示的なHTTP 429のときだけ一度再試行する。条件は `leuco slack call --help` のNoteで確認する。この内部動作を理由に、失敗したCLIコマンドをAIが自動で繰り返さない。
 
 設定変更後のrestartは、起動時の`--cwd`・`--soul`・`--no-soul`を引き継ぐ。保存した作業場所やSOULへ切り替える場合は、stop後、それらのflagを付けずにstartする。schedulesは再起動なしで読み直す。
 
@@ -91,7 +91,7 @@ session resetはdaemon停止中だけ使え、key省略は全会話に影響す�
 
 障害調査ではdoctorのfailuresとイベントのcausesも読み、エラーコード・スタック・連鎖した原因を確認する。statusのCodex PIDと初期化状態、入力接続のhealthを区別する。memory-fallbackではeventsが稼働中のメモリ履歴を返し、停止後に消えるため再起動前に必要な内容を取得する。元のDBを見切りで削除しない。単発の予定も受付後は自動再送しない。
 
-Codex callback失敗時の予備stderrは `runtime.codex.diagnostics` で配送状態・保留件数・マスク済みの原因を確認する。ホストのonLog受信は `runtime.logConsumer`。doctorが診断出力の劣化を示す場合は出力先を調べ、同じ障害だけを理由に再起動を繰り返さない。
+ホストのonLog受信は `runtime.logConsumer` で確認する。doctorがログ配送の劣化を示す場合は出力先を調べ、同じ障害だけを理由に再起動を繰り返さない。
 
 doctorのrecentFailuresは再起動前の履歴も含む。statusのruntime.instanceIdとevent.instanceId・発生時刻を照合し、現在のhealthと区別する。古いinstanceIdだけで解決済みとは断定せず、履歴の件数だけを理由に再起動しない。
 

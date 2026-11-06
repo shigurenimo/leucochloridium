@@ -11,6 +11,7 @@ import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
 import { readDaemonLease, isProcessAlive } from "@/daemon/daemon-lease"
 import { requestDaemon } from "@/daemon/request-daemon"
+import { waitForDaemonExit } from "@/daemon/wait-for-daemon-exit"
 
 const home = process.env.LEUCO_HOME!
 const store = new NodeMaintenanceStore(home)
@@ -59,9 +60,11 @@ try {
       expectedLease: previous,
       requestId: operation.id,
     })
-    const stopDeadline = performance.now() + 20000
-    while (performance.now() < stopDeadline && isProcessAlive(previous.pid)) await Bun.sleep(100)
-    if (isProcessAlive(previous.pid)) {
+    const exited = await waitForDaemonExit(previous.pid, 20_000).then(
+      () => true,
+      () => false,
+    )
+    if (!exited) {
       update("uncertain", "Old daemon is still stopping. No replacement was started.")
       process.exit(0)
     }
@@ -70,11 +73,9 @@ try {
   update("starting")
   const launch = operation.launch
   const args = ["run", "--foreground"]
-  for (const key of ["cwd", "soul"]) {
-    const value = key === "cwd" ? launch.cwd : launch.soul
-    if (key === "soul" && value === null) args.push("--no-soul")
-    else if (typeof value === "string") args.push(`--${key}=${value}`)
-  }
+  if (launch.cwd !== undefined) args.push(`--cwd=${launch.cwd}`)
+  if (launch.soul !== undefined)
+    args.push(launch.soul === null ? "--no-soul" : `--soul=${launch.soul}`)
   const env: NodeJS.ProcessEnv = { ...process.env, LEUCO_HOME: home }
   if (launch.codexHome === null) delete env.CODEX_HOME
   else env.CODEX_HOME = launch.codexHome

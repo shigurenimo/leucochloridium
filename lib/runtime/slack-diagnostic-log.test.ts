@@ -41,7 +41,6 @@ for (const sinkFails of [false, true]) {
         action: "ws.error",
         message: `socket diagnostic ${secret}`,
         error: new Error("connection failed", { cause }),
-        detail: null,
         timestamp: 123,
       })
       const recorded = events.query({ sinceSeq })

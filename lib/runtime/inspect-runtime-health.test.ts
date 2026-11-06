@@ -152,14 +152,3 @@ it.each(["codex", "slack"])(
     expect(diagnosis).toMatchObject({ healthy: false, restartRecommended: true })
   },
 )
-
-it("reports Codex diagnostic delivery failure without recommending a restart", () => {
-  const diagnosis = inspectRuntimeHealth({
-    ready: true,
-    runtime: { codexRunning: true, codex: { diagnostics: { healthy: false } } },
-  })
-  expect(diagnosis).toMatchObject({ healthy: false, restartRecommended: false })
-  expect(diagnosis.issues).toEqual([
-    expect.stringContaining("runtime.codex.diagnostics.lastFailure"),
-  ])
-})

@@ -20,13 +20,9 @@ export async function manageSettings(parsed: CliArguments, store: LeucoStore): P
   if (command === "config" && action === "set") {
     const key = parsed.words[2]
     const raw = parsed.words[3]
-    if (!key || raw === undefined) throw new Error("Usage: leuco config set <key> <json>")
-    if (raw === "-")
-      throw new CliError(
-        "USAGE",
-        "stdin input is disabled; pass the JSON setting value as an argument",
-      )
-    const value: unknown = parseJson(raw)
+    if (key === undefined || raw === undefined)
+      throw new Error("config set requires a key and value")
+    const value: unknown = JSON.parse(raw)
     const normalized =
       (key === "cwd" || key === "soul") && typeof value === "string" ? resolve(value) : value
     parseSettingUpdate(store.loadSettings(), key, normalized)
@@ -62,18 +58,9 @@ export async function manageSettings(parsed: CliArguments, store: LeucoStore): P
   }
   if (command === "schedules" && action === "remove") {
     const name = parsed.words[2]
-    if (!name) throw new CliError("USAGE", "Schedule name or ID is required")
+    if (name === undefined) throw new Error("schedules remove requires a name or ID")
     removeScheduleFromSettings(store.loadSettings(), name)
     store.updateSettings((settings) => removeScheduleFromSettings(settings, name))
     return { removed: name }
-  }
-  throw new Error(`Unknown ${command} command: ${action}`)
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new CliError("USAGE", "Invalid JSON setting value; read leuco config set --help --json")
   }
 }

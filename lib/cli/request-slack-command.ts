@@ -5,7 +5,7 @@ import { requiredCliFlag } from "@/cli/required-cli-flag"
 import { readBoundedUploadFile } from "@/actions/slack/read-bounded-upload-file"
 import { downloadResponseToFile } from "@/fs/download-response-to-file"
 import { requestDaemon } from "@/daemon/request-daemon"
-import { requestDaemonResponse } from "@/daemon/request-daemon-response"
+import { DaemonHttpRequest } from "@/daemon/daemon-http-request"
 import { DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
 
 export async function requestSlackCommand(
@@ -41,14 +41,14 @@ export async function requestSlackCommand(
       signal,
       timeoutMs,
       fetchResponse: (downloadSignal) =>
-        requestDaemonResponse({
+        new DaemonHttpRequest({
           home,
           path: "/slack",
           requestId,
           body: parsed,
           signal: downloadSignal,
           timeoutMs,
-        }),
+        }).getResponse(),
     })
   return requestDaemon({
     home,

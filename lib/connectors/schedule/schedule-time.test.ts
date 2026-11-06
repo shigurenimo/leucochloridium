@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest"
 import { isCronDue } from "@/connectors/schedule/is-cron-due"
 import { isCronSchedule } from "@/connectors/schedule/is-cron-schedule"
 import { latestScheduleCatchup } from "@/connectors/schedule/latest-schedule-catchup"
-import { parseScheduleCron } from "@/connectors/schedule/parse-schedule-cron"
+import { parseScheduleRunAt } from "@/connectors/schedule/parse-schedule-run-at"
 
 const parse = (expression: string) => {
-  const cron = parseScheduleCron(expression)
-  if (cron === null) throw new Error(`invalid test cron: ${expression}`)
+  const schedule = parseScheduleRunAt(expression)
+  if (schedule.kind !== "cron") throw new Error(`invalid test cron: ${expression}`)
 
-  return cron
+  return schedule.cron
 }
 
 describe("schedule time", () => {
@@ -26,8 +26,12 @@ describe("schedule time", () => {
     expect(isCronDue(parse("0 9 * * 7"), sunday)).toBe(true)
   })
 
-  it("rejects malformed cron without throwing into the tick loop", () => {
-    expect(parseScheduleCron("not a cron")).toBeNull()
+  it("rejects malformed cron and parses one-shots to epoch milliseconds", () => {
+    expect(() => parseScheduleRunAt("not a cron")).toThrow()
+    expect(parseScheduleRunAt("2026-05-07T09:00:00Z")).toEqual({
+      kind: "one-shot",
+      at: Date.parse("2026-05-07T09:00:00Z"),
+    })
   })
 
   it("finds the newest missed tick inside the bounded catch-up window", () => {

@@ -17,8 +17,8 @@ const PAST_GRACE_MS = 60_000
  * `now` is injectable for tests and defaults to the real clock.
  */
 export const validateRunAt = (runAt: string, now: () => number = () => Date.now()): string => {
-  const ts = parseScheduleRunAt(runAt)
-  if (ts === null) return runAt
+  const schedule = parseScheduleRunAt(runAt)
+  if (schedule.kind === "cron") return runAt
   if (
     !/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:?\d{2})$/i.test(runAt) ||
     !ONE_SHOT_DATE_SCHEMA.safeParse(runAt.slice(0, 10)).success
@@ -27,7 +27,7 @@ export const validateRunAt = (runAt: string, now: () => number = () => Date.now(
       "runAt must be a real ISO 8601 date-time with Z or a numeric UTC offset, e.g. '2050-01-01T09:00:00+09:00'",
     )
 
-  if (ts < now() - PAST_GRACE_MS) {
+  if (schedule.at < now() - PAST_GRACE_MS) {
     throw new Error(`runAt timestamp is in the past: '${runAt}'`)
   }
 

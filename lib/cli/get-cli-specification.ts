@@ -2,32 +2,17 @@ import { DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
 import { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from "@/diagnostic-limits"
 import type { JSONSchema } from "zod/v4/core"
 import { z } from "zod"
-import pkg from "../../package.json" with { type: "json" }
-import {
-  COMMANDS,
-  GLOBAL_OPTIONS,
-  VERSION_RESULT_SCHEMA,
-  SLACK_RETRY_NOTE,
-} from "@/cli/command-catalog"
+import pkg from "leuco/package.json" with { type: "json" }
+import { GLOBAL_OPTIONS, VERSION_RESULT_SCHEMA, SLACK_RETRY_NOTE } from "@/cli/command-catalog"
 import { getCliOutputSchema } from "@/cli/get-cli-output-schema"
-import { ERROR_CODES, CliError } from "@/cli/cli-error"
+import { ERROR_CODES } from "@/cli/cli-error"
 import { leucoEventSchema } from "@/events/leuco-event-schema"
 import { settingsSchema, scheduleEntrySchema } from "@/config/config-schema"
 import { CLI_OUTPUT_TIMEOUTS_MS } from "@/cli/cli-output-limits"
+import { resolveHelpTarget } from "@/cli/resolve-help-target"
 
 export function getCliSpecification(path: string[] = []) {
-  const requested = path.join(" ")
-  const commands =
-    requested === ""
-      ? COMMANDS
-      : COMMANDS.filter(
-          (entry) => entry.name === requested || entry.name.startsWith(`${requested} `),
-        )
-  if (commands.length === 0)
-    throw new CliError(
-      "USAGE",
-      "Unknown help target. Run leuco --help --json for the supported command paths.",
-    )
+  const commands = resolveHelpTarget(path).commands
   const references = JSON.stringify(commands)
   const definitions: Record<string, JSONSchema.JSONSchema> = {}
   if (references.includes("#/$defs/event") || commands.some((command) => command.name === "doctor"))

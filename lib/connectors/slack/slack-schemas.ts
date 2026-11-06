@@ -2,8 +2,8 @@ import { z } from "zod"
 
 const routingStringSchema = z.string().regex(/\S/, "Slack routing field must not be blank")
 
-/** Subset of `app_mention` event fields the listener actually needs. */
-export const slackAppMentionEventSchema = z.object({
+/** Subset of raw `app_mention` payload fields the listener actually needs. */
+export const slackAppMentionPayloadSchema = z.object({
   channel: routingStringSchema,
   user: routingStringSchema.optional(),
   text: z.string().optional(),
@@ -12,19 +12,13 @@ export const slackAppMentionEventSchema = z.object({
   bot_id: z.string().optional(),
 })
 
-/** Subset of `message` event fields used as fallback when `app_mention` is not subscribed. */
-export const slackMessageEventSchema = z.object({
-  channel: routingStringSchema,
-  user: routingStringSchema.optional(),
-  text: z.string().optional(),
-  ts: routingStringSchema,
-  thread_ts: routingStringSchema.optional(),
+/** Raw `message` payload, used as fallback when `app_mention` is not subscribed. */
+export const slackMessagePayloadSchema = slackAppMentionPayloadSchema.extend({
   subtype: z.string().optional(),
-  bot_id: z.string().optional(),
 })
 
-/** Subset of `reaction_added` / `reaction_removed` event fields we forward. */
-export const slackReactionEventSchema = z.object({
+/** Subset of raw `reaction_added` / `reaction_removed` payload fields we forward. */
+export const slackReactionPayloadSchema = z.object({
   type: z.enum(["reaction_added", "reaction_removed"]),
   user: routingStringSchema,
   reaction: routingStringSchema,

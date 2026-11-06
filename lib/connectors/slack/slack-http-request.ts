@@ -1,7 +1,7 @@
 import { awaitAbortableOperation } from "@/await-abortable-operation"
-import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { assertTimerDelay } from "@/assert-timer-delay"
+import { cancelSlackResponseBody } from "@/connectors/slack/cancel-slack-response-body"
 import { errorMessage } from "@/error-message"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 
 type Props = {
   url: string
@@ -20,11 +20,7 @@ export class SlackHttpRequest {
   }
 
   async run<T>(consume: (response: Response, signal: AbortSignal) => Promise<T>): Promise<T> {
-    const timeoutMs = this.props.timeoutMs
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMER_DELAY_MS)
-      throw new Error(
-        `Slack request timeout must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
-      )
+    const timeoutMs = assertTimerDelay("Slack request timeout", this.props.timeoutMs)
     const controller = new AbortController()
     const signal = this.props.signal
       ? AbortSignal.any([this.props.signal, controller.signal])
@@ -60,26 +56,18 @@ export class SlackHttpRequest {
         clearTimeout(timer)
       }
     })()
+    if (!outcome.completed) {
+      await cancelSlackResponseBody(owned.response, { error: outcome.error })
+      throw outcome.error
+    }
     try {
-      await awaitBoundedCleanup(
-        Promise.resolve().then(async () => {
-          await owned.response?.body?.cancel()
-        }),
-        "Slack response cancellation",
-      )
+      await cancelSlackResponseBody(owned.response)
     } catch (cleanup) {
-      if (!outcome.completed)
-        throw new AggregateError(
-          [outcome.error, cleanup],
-          `${errorMessage(outcome.error)}; response cleanup failed`,
-          { cause: outcome.error },
-        )
       throw new Error(
         `${this.props.label} http ${owned.response?.status}: response cleanup failed; do not replay automatically`,
         { cause: cleanup },
       )
     }
-    if (!outcome.completed) throw outcome.error
     signal.throwIfAborted()
     return outcome.value
   }

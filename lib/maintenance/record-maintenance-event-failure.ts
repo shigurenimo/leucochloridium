@@ -2,15 +2,14 @@ import type { MaintenanceStore } from "@/maintenance/maintenance-store"
 import { createMaintenanceObservationError } from "@/maintenance/create-maintenance-observation-error"
 import { errorDetails } from "@/error-details"
 import { errorMessage } from "@/error-message"
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 
 export function recordMaintenanceEventFailure(
   store: MaintenanceStore,
   operationId: string,
   error: unknown,
 ): boolean {
-  const message = truncateDiagnosticText(redactPublicText(errorMessage(error)), 4000)
+  const message = toPublicDiagnosticMessage(errorMessage(error))
   try {
     return (
       store.updateOperation(operationId, (current) => ({

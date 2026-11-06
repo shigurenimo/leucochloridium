@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { handleDaemonRequest } from "@/daemon/handle-daemon-request"
+import type { handleDaemonRequest } from "@/daemon/handle-daemon-request"
+import { createMemoryDaemonHandler } from "@/daemon/memory-daemon-handler"
 import { CliError } from "@/cli/cli-error"
 import { daemonErrorResponse } from "@/daemon/daemon-error-response"
 import { requestDaemon } from "@/daemon/request-daemon"
@@ -337,6 +338,7 @@ it("keeps safe diagnostic causes when original remote metadata cannot be seriali
         error: original,
         status: 422,
         requestId: "request",
+        message: "accepted but unconfirmed",
         redactionSecrets: ["synthetic-control-token"],
       }),
     ),
@@ -367,7 +369,13 @@ it.each([null, "original diagnostic", ["original", "values"]])(
     const original = new CliError("STATE_UNCERTAIN", "unconfirmed", details)
     globalThis.fetch = Object.assign(
       vi.fn(async () =>
-        daemonErrorResponse({ error: original, status: 422, requestId: "request" }),
+        daemonErrorResponse({
+          error: original,
+          status: 422,
+          requestId: "request",
+          message: "unconfirmed",
+          redactionSecrets: [],
+        }),
       ),
       { preconnect: originalFetch.preconnect },
     )
@@ -403,18 +411,16 @@ it.each([401, 503, 422, 500])(
   },
 )
 
+function createHandler(overrides: Partial<Parameters<typeof handleDaemonRequest>[0]>) {
+  const token = "synthetic-control-token"
+  return createMemoryDaemonHandler({ token, secrets: [token], overrides }).handler
+}
+
 it("does not infer pre-execution refusal from a 503 after the operation callback ran", async () => {
   const runSlackCommand = vi.fn(async () =>
     Response.json({ error: "injected service error after acceptance" }, { status: 503 }),
   )
-  const handler = handleDaemonRequest({
-    token: "synthetic-control-token",
-    cwd: "/memory",
-    isReady: () => true,
-    runTextTurn: async () => "unused",
-    stop: () => {},
-    runSlackCommand,
-  })
+  const handler = createHandler({ runSlackCommand })
   const fetch = vi.fn(async (url: unknown, options?: RequestInit) =>
     handler(new Request(String(url), options)),
   )
@@ -433,16 +439,14 @@ it("does not infer pre-execution refusal from a 503 after the operation callback
   })
 })
 
-it.each(["authorization", "readiness", "availability"])(
+it.each(["authorization", "readiness"])(
   "keeps a correlated pre-execution %s rejection classified",
   async (phase) => {
     const runTextTurn = vi.fn(async () => "never called")
-    const handler = handleDaemonRequest({
+    const handler = createHandler({
       token: phase === "authorization" ? "different-token" : "synthetic-control-token",
-      cwd: "/memory",
       isReady: () => phase !== "readiness",
       runTextTurn,
-      stop: () => {},
     })
     globalThis.fetch = Object.assign(
       vi.fn(async (url: unknown, options?: RequestInit) =>
@@ -452,7 +456,7 @@ it.each(["authorization", "readiness", "availability"])(
     )
     const failure = await requestDaemon({
       home: "/memory",
-      path: phase === "availability" ? "/restart" : "/turn",
+      path: "/turn",
       body: { text: "never execute" },
       requestId: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
     }).catch((error: unknown) => error)

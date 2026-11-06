@@ -6,35 +6,25 @@ import { LeucoEventLog } from "@/events/leuco-event-log"
 import { randomUUID } from "node:crypto"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import assert from "node:assert/strict"
-import {
-  mkdtempSync,
-  writeFileSync,
-  readFileSync,
-  rmSync,
-  realpathSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-} from "node:fs"
+import { writeFileSync, readFileSync, rmSync, existsSync, mkdirSync, renameSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { Database } from "bun:sqlite"
 import { requestDaemon } from "@/daemon/request-daemon"
 import { readLeucoEvents } from "@/events/read-leuco-events"
-import { readDaemonLease, isProcessAlive } from "@/daemon/daemon-lease"
+import { isProcessAlive } from "@/daemon/daemon-lease"
 import { errorDetails } from "@/error-details"
+import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
 const repository = resolve(import.meta.dir, "..")
-const workspace = realpathSync(mkdtempSync("/tmp/leuco-reliability-"))
+const fixture = new VerifierWorkspace("leuco-reliability-")
+const workspace = fixture.path
 const home = join(workspace, "state")
 const trace = join(workspace, "trace.jsonl")
 const fakeBin = join(workspace, "bin")
-mkdirSync(fakeBin)
-const fake = join(fakeBin, "codex")
-writeFileSync(
-  fake,
-  `#!/bin/sh\nexec '${process.execPath}' '${join(repository, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-  { mode: 0o700 },
-)
+const fake = writeFakeCodex(fakeBin)
 const env = {
   ...process.env,
   PATH: fakeBin,
@@ -42,21 +32,16 @@ const env = {
   LEUCO_VERIFY_TRACE: trace,
   LEUCO_VERIFY_CODEX: fake,
 }
-const cliPath = join(repository, "lib/index.ts")
-const processes: Array<ReturnType<typeof Bun.spawn>> = []
 const processContexts = new WeakMap<object, { command: string; home: string; pid: number }>()
-const daemonHomes = new Set<string>([home])
-const verification: { failure: unknown } = { failure: null }
+fixture.trackDaemon(home)
 function spawn(args: string[], stateHome = home, overrides: NodeJS.ProcessEnv = {}) {
-  if (args[0] === "start") daemonHomes.add(stateHome)
-  const child = Bun.spawn([process.execPath, cliPath, ...args, "--json"], {
+  if (args[0] === "start") fixture.trackDaemon(stateHome)
+  const child = spawnCli({
+    args: [...args, "--json"],
     cwd: workspace,
     env: { ...env, ...overrides, LEUCO_HOME: stateHome },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
   })
-  processes.push(child)
+  fixture.trackProcess(child)
   processContexts.set(child, { command: args[0] ?? "fixture", home: stateHome, pid: child.pid })
   return child
 }
@@ -71,23 +56,13 @@ async function result(
 ) {
   const origin = new Error("CLI fixture observation started")
   const startedAt = performance.now()
-  const observation = { watchdogExpired: false }
-  const timeout = setTimeout(() => {
-    observation.watchdogExpired = true
-    child.kill()
-  }, 8000)
-  try {
-    const stdout = await new Response(child.stdout).text()
-    const stderr = await new Response(child.stderr).text()
-    assert.equal(
-      await child.exited,
-      expected,
-      `${JSON.stringify({ ...processContexts.get(child), elapsedMs: Math.round(performance.now() - startedAt), watchdogExpired: observation.watchdogExpired })}\n${origin.stack}\n${stdout}\n${stderr}`,
-    )
-    return JSON.parse(expected === 0 ? stdout : stderr)
-  } finally {
-    clearTimeout(timeout)
-  }
+  const output = await readProcess(child, 8000)
+  assert.equal(
+    output.exitCode,
+    expected,
+    `${JSON.stringify({ ...processContexts.get(child), elapsedMs: Math.round(performance.now() - startedAt), watchdogExpired: output.timedOut })}\n${origin.stack}\n${output.stdout}\n${output.stderr}`,
+  )
+  return JSON.parse(expected === 0 ? output.stdout : output.stderr)
 }
 async function cli(args: string[], expected = 0) {
   return result(spawn(args), expected)
@@ -291,8 +266,15 @@ try {
         controlProbeLog.error("control probe failed", error, requestId)
         return "control probe failed"
       },
+      redactText: (text) => controlProbeLog.redactText(text),
+      getMaintenance: () => null,
       runTextTurn: async () => "",
+      runDiscordCommand: async () => {
+        throw new Error("Unexpected Discord operation during reliability probes")
+      },
       stop: () => {},
+      awaitStop: async () => {},
+      ownsProcess: false,
     }),
   })
   try {
@@ -483,51 +465,50 @@ try {
     ],
     { cwd: workspace, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
   )
-  processes.push(diagnosticProbe)
+  fixture.trackProcess(diagnosticProbe)
   const diagnosticFailure = await result(diagnosticProbe, 1)
   assert.equal(diagnosticFailure.ok, false)
   assert.equal(diagnosticFailure.error.code, "OPERATION_FAILED")
   assert.equal(diagnosticFailure.error.message, "[unprintable thrown value]")
   assert.ok(diagnosticFailure.error.details.causes.length > 0)
-  const legacyPath = join(workspace, "legacy-events.db")
-  const legacyDatabase = new Database(legacyPath)
+  const filteredPath = join(workspace, "filtered-events.db")
+  const filteredDatabase = new Database(filteredPath)
   try {
-    legacyDatabase.run(
+    filteredDatabase.run(
       "CREATE TABLE logs (seq INTEGER PRIMARY KEY, ts REAL, type TEXT, event TEXT)",
     )
-    const legacyEvents = [
-      { ts: 10, type: "tenant.started", project: "old", requestId: "legacy" },
-      { ts: 20, type: "runtime.started", runtime: "leuco", requestId: "modern" },
-      { ts: 30, type: "tenant.stopped", project: "old", requestId: "legacy" },
+    const storedEvents = [
+      { ts: 10, type: "runtime.started", requestId: "first" },
+      { ts: 20, type: "runtime.started", requestId: "second" },
+      { ts: 30, type: "runtime.stopped", requestId: "first" },
       { ts: 40, type: "log", level: "info", line: "noise" },
     ]
-    for (const event of legacyEvents)
-      legacyDatabase
+    for (const event of storedEvents)
+      filteredDatabase
         .query("INSERT INTO logs (ts, type, event) VALUES (?, ?, ?)")
         .run(event.ts, event.type, JSON.stringify(event))
   } finally {
-    legacyDatabase.close()
+    filteredDatabase.close()
   }
   assert.deepEqual(
-    readLeucoEvents(legacyPath, 10, { type: "runtime.started" }).map((entry) => entry.seq),
+    readLeucoEvents(filteredPath, 10, { type: "runtime.started" }).map((entry) => entry.seq),
     [2, 1],
   )
   assert.deepEqual(
-    readLeucoEvents(legacyPath, 1, {
+    readLeucoEvents(filteredPath, 1, {
       type: "runtime.started",
-      requestId: "legacy",
+      requestId: "first",
       summary: true,
     }).map((entry) => entry.seq),
     [1],
   )
   assert.deepEqual(
-    readLeucoEvents(legacyPath, 1, { type: "runtime.stopped", since: 25 }).map(
+    readLeucoEvents(filteredPath, 1, { type: "runtime.stopped", since: 25 }).map(
       (entry) => entry.seq,
     ),
     [3],
   )
-  for (const type of ["__proto__", "constructor", "toString", "unknown.event"])
-    assert.deepEqual(readLeucoEvents(legacyPath, 10, { type }), [])
+  assert.deepEqual(readLeucoEvents(filteredPath, 10, { type: "unknown.event" }), [])
   const textLogHome = join(workspace, "text-log-failure")
   await result(spawn(["start"], textLogHome, { LEUCO_VERIFY_STDERR: "1" }))
   try {
@@ -738,7 +719,7 @@ try {
 
   for (const mode of ["throw", "reject", "null", "unprintable", "metadata", "recover"]) {
     const faultHome = join(workspace, mode)
-    daemonHomes.add(faultHome)
+    fixture.trackDaemon(faultHome)
     const child = Bun.spawn(
       [process.execPath, join(repository, "scripts/fixtures/fault-daemon.ts")],
       {
@@ -753,7 +734,7 @@ try {
         stderr: "pipe",
       },
     )
-    processes.push(child)
+    fixture.trackProcess(child)
     const ready = await until(
       async () => requestDaemon({ home: faultHome, path: "/status", timeoutMs: 200 }),
       (status) =>
@@ -927,40 +908,7 @@ try {
     "Reliability passed: 5 native Codex crashes/reconnections without replay, real SQLite write lock and recovery, fatal exception/rejection recording and orderly shutdown",
   )
 } catch (error) {
-  verification.failure = error
+  fixture.recordFailure(error)
 } finally {
-  const cleanupFailures: unknown[] = []
-  for (const stateHome of daemonHomes) {
-    try {
-      const lease = readDaemonLease(stateHome)
-      if (lease === null || !isProcessAlive(lease.pid)) continue
-      assert.notEqual(lease.pid, process.pid, "Refusing to stop the verifier itself")
-      await result(spawn(["stop"], stateHome))
-      assert.equal(isProcessAlive(lease.pid), false, `Fixture daemon still alive: ${lease.pid}`)
-    } catch (error) {
-      cleanupFailures.push(error)
-    }
-  }
-  for (const child of processes) if (child.exitCode === null) child.kill()
-  const cleanupTimer = setTimeout(() => {
-    for (const child of processes) if (child.exitCode === null) child.kill("SIGKILL")
-  }, 3000)
-  try {
-    await Promise.allSettled(processes.map((child) => child.exited))
-  } finally {
-    clearTimeout(cleanupTimer)
-  }
-  if (cleanupFailures.length === 0) {
-    try {
-      rmSync(workspace, { recursive: true, force: true })
-    } catch (error) {
-      cleanupFailures.push(error)
-    }
-  }
-  if (cleanupFailures.length > 0)
-    verification.failure = new AggregateError(
-      [...(verification.failure === null ? [] : [verification.failure]), ...cleanupFailures],
-      `Native fixture cleanup unconfirmed; preserving workspace: ${workspace}`,
-    )
+  await fixture.close((stateHome) => result(spawn(["stop"], stateHome)))
 }
-if (verification.failure !== null) throw verification.failure

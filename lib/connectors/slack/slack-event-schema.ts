@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-const slackMessageEventSchema = z.object({
+export const slackMessageEventSchema = z.object({
   kind: z.literal("message"),
   channel: z.string(),
   user: z.string(),
@@ -13,7 +13,7 @@ const slackMessageEventSchema = z.object({
   source: z.enum(["app_mention", "message"]),
 })
 
-const slackReactionEventSchema = z.object({
+export const slackReactionEventSchema = z.object({
   kind: z.enum(["reaction_added", "reaction_removed"]),
   channel: z.string(),
   user: z.string(),

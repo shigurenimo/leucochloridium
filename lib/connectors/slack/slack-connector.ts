@@ -1,6 +1,11 @@
-import { slackReceptionSchema, type SlackReception } from "@/config/config-schema"
+import {
+  DEFAULT_SLACK_ACK_MODE,
+  receptionRulesSchema,
+  type SlackAckMode,
+  type ReceptionRules,
+} from "@/config/config-schema"
 import { acceptsSlackEvent } from "@/connectors/slack/accepts-slack-event"
-import { slackMessageEventSchema } from "@/connectors/slack/slack-schemas"
+import { slackMessagePayloadSchema } from "@/connectors/slack/slack-schemas"
 import { randomUUID } from "node:crypto"
 import type {
   LeucoSlackEnvelope,
@@ -24,13 +29,11 @@ import { errorMessage } from "@/error-message"
 import { errorDetails } from "@/error-details"
 import { sliceTextPrefix } from "@/slice-text-prefix"
 
-type SlackAckMode = "off" | "mention" | "always"
-
 type LeucoSlackConnectorProps = {
   eventSource: LeucoSlackEventSource
   webClient: LeucoSlackWebClient
-  /** When the bot adds the in-progress / done / error reactions. Defaults to "mention". */
-  reception?: SlackReception
+  reception?: ReceptionRules
+  /** When the bot adds the in-progress / done / error reactions. Defaults like `slack.ackMode` in settings. */
   ackMode?: SlackAckMode
 }
 
@@ -310,7 +313,7 @@ export class LeucoSlackConnector implements Connector {
       })
     }
 
-    const reception = this.props.reception ?? slackReceptionSchema.parse({})
+    const reception = this.props.reception ?? receptionRulesSchema.parse({})
     const participating =
       event.kind === "message" &&
       !event.isThreadRoot &&
@@ -461,7 +464,7 @@ export class LeucoSlackConnector implements Connector {
   }
 
   private shouldAck(msg: SlackMessageEvent): boolean {
-    const mode = this.props.ackMode ?? "mention"
+    const mode = this.props.ackMode ?? DEFAULT_SLACK_ACK_MODE
     if (mode === "off") return false
     if (mode === "always") return true
     return msg.mentioned
@@ -469,7 +472,7 @@ export class LeucoSlackConnector implements Connector {
 
   private recordActiveThreadFromRawMessage(message: unknown): void {
     if (this.botUserId === null) return
-    const parsed = slackMessageEventSchema.safeParse(message)
+    const parsed = slackMessagePayloadSchema.safeParse(message)
     if (!parsed.success || parsed.data.user !== this.botUserId) return
     const data = parsed.data
     const threadTs = data.thread_ts ?? data.ts

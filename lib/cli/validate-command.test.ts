@@ -42,6 +42,17 @@ describe("flat CLI commands", () => {
   })
 })
 
+it("reports the catalog conflict between --soul and --no-soul", () => {
+  expect(() =>
+    validateCommand(parseArguments(["run", "--foreground", "--soul=a", "--no-soul"])),
+  ).toThrow(
+    expect.objectContaining({
+      code: "USAGE",
+      details: { parameter: "soul", conflictsWith: ["no-soul"] },
+    }),
+  )
+})
+
 it.each(["", "   ", "\n\t", "　"])("rejects a blank prompt before dispatch: %j", (text) => {
   expect(() => validateCommand(parseArguments(["ask", text]))).toThrow()
 })

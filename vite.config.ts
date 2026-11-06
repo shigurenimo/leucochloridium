@@ -11,7 +11,7 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json-summary"],
+      reporter: ["text"],
       thresholds: {
         statements: 70,
         branches: 57,
@@ -24,11 +24,6 @@ export default defineConfig({
     semi: false,
   },
   lint: {
-    ignorePatterns: [
-      "node_modules/**",
-      "lib/**/*.test.ts",
-      "lib/**/*.test.tsx",
-      "lib/**/*.bun-test.ts",
-    ],
+    ignorePatterns: ["node_modules/**", "lib/**/*.test.ts", "lib/**/*.bun-test.ts"],
   },
 })

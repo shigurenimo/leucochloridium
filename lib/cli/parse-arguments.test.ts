@@ -14,7 +14,6 @@ describe("flat CLI arguments", () => {
   it.each([
     ["run", "--soul"],
     ["run", "--soul", "--cwd", "/work"],
-    ["run", "--soul=a", "--no-soul"],
     ["run", "--no-soul=false"],
     ["run", "--project", "demo"],
   ])("rejects invalid arguments %j", (...args) => {

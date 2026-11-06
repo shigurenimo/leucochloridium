@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs"
+import { z } from "zod"
 import { errorMessage } from "@/error-message"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 import { errorDetails } from "@/error-details"
 import type { EventLogEntry } from "@/event-log/event-log-entry"
 import { redactPublicText } from "@/secrets/redact-public-text"
@@ -8,19 +9,18 @@ import { EventLog } from "@/event-log/event-log"
 import { MemoryEventLog } from "@/event-log/memory-event-log"
 import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { compactLeucoEvent } from "@/events/compact-leuco-event"
-import { leucoEventReadSchema } from "@/events/leuco-event-read-schema"
 import { leucoEventSchema } from "@/events/leuco-event-schema"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
 import type { LeucoEvent } from "@/events/leuco-event-types"
 import { maintainLeucoEventLog } from "@/events/maintain-leuco-event-log"
 import { queryLeucoEventEntries } from "@/events/query-leuco-event-entries"
-import { storedLeucoEventTypes } from "@/events/stored-leuco-event-types"
 import { redactJsonSecrets } from "@/secrets/redact-json-secrets"
 import { copyRedactedError } from "@/secrets/copy-redacted-error"
 import { NodeDiagnosticOutput } from "@/node-diagnostic-output"
 import type { DiagnosticOutput } from "@/diagnostic-output"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import { formatLogLine } from "@/format-log-line"
+import { MEMORY_FALLBACK_CAPACITY } from "@/events/fallback-limits"
 
 const DEFAULT_EVENT_LOG_MAX_ROWS = 50_000
 const DEFAULT_EVENT_LOG_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
@@ -110,16 +110,19 @@ export class LeucoEventLog {
         })
         this.mode = "sqlite"
       } catch (error) {
-        this.store = new MemoryEventLog<LeucoEvent>({ capacity: Math.min(maxRows, 1000) })
+        this.store = new MemoryEventLog<LeucoEvent>({
+          capacity: Math.min(maxRows, MEMORY_FALLBACK_CAPACITY),
+        })
         this.mode = "memory-fallback"
         this.recordPersistenceFailure(
           error,
-          "event database unavailable; retaining up to 1000 volatile events",
+          `event database unavailable; retaining up to ${MEMORY_FALLBACK_CAPACITY} volatile events`,
         )
       }
     } else this.store = new MemoryEventLog<LeucoEvent>({ capacity: maxRows })
     this.eventLog = new EventLog<LeucoEvent>({
-      validate: leucoEventSchema.safeParse,
+      // append() parses and compacts each event before dispatch, so the shared validator only forwards it.
+      validate: z.custom<LeucoEvent>().safeParse,
       // This wrapper owns the store lifetime; the shared dispatcher intentionally swallows close errors.
       primary: {
         insert: (input) => this.store.insert(input),
@@ -136,7 +139,9 @@ export class LeucoEventLog {
       memoryWrites: this.memoryWrites,
       lastFallbackError: this.lastFallbackError,
       fallbackCapacity:
-        this.mode === "memory-fallback" ? Math.min(this.retention.maxRows, 1000) : null,
+        this.mode === "memory-fallback"
+          ? Math.min(this.retention.maxRows, MEMORY_FALLBACK_CAPACITY)
+          : null,
       lastWriteFailed: this.lastWriteFailed,
       lastSuccessfulWriteAt: this.lastSuccessfulWriteAt,
       successfulWrites: this.successfulWrites,
@@ -227,7 +232,7 @@ export class LeucoEventLog {
       this.onFallback?.(event)
       return primaryFailure
     } catch (error) {
-      this.lastFallbackError = truncateDiagnosticText(this.redactText(errorMessage(error)), 4000)
+      this.lastFallbackError = toPublicDiagnosticMessage(errorMessage(error), this.redactionSecrets)
       if (primaryFailure === null)
         return new Error(`Event fallback mirror failed: ${errorMessage(error)}`, { cause: error })
       return new AggregateError(
@@ -243,7 +248,7 @@ export class LeucoEventLog {
     this.failedWrites += 1
     this.lastPersistError = {
       ts: this.now(),
-      message: truncateDiagnosticText(this.redactText(errorMessage(error)), 4000),
+      message: toPublicDiagnosticMessage(errorMessage(error), this.redactionSecrets),
       causes: errorDetails(error, this.redactionSecrets),
     }
     if (this.diagnosticOutput === null) return
@@ -301,42 +306,16 @@ export class LeucoEventLog {
     const limit = query.limit ?? 1000
     if (!Number.isSafeInteger(limit) || limit < 0)
       throw new RangeError("Event query limit must be a non-negative safe integer")
+    if (!(this.store instanceof MemoryEventLog))
+      throw new Error(
+        "Event query only reads memory storage; read SQLite history with readLeucoEvents",
+      )
 
-    return this.selectEntries(query).map((entry) => ({
+    return queryLeucoEventEntries(this.store.query(), query).map((entry) => ({
       seq: entry.seq,
       ts: entry.ts,
-      event: leucoEventReadSchema.parse(this.redactValue(entry.event)),
+      event: leucoEventSchema.parse(this.redactValue(entry.event)),
     }))
-  }
-
-  private selectEntries(query: LeucoEventQuery): ReadonlyArray<EventLogEntry<LeucoEvent>> {
-    if (this.store instanceof MemoryEventLog) {
-      return queryLeucoEventEntries(this.store.query(), query)
-    }
-
-    const storedTypes = query.type === undefined ? [null] : storedLeucoEventTypes(query.type)
-    // JSON-only filters run after normalization; limiting the raw rows first can hide every match.
-    const entries = storedTypes.flatMap((type) =>
-      this.store.query({
-        ...(query.sinceSeq !== undefined ? { sinceSeq: query.sinceSeq } : {}),
-        ...(type === null ? {} : { type }),
-        ...(query.summary || query.requestId !== undefined || query.sinceTs !== undefined
-          ? { limit: this.retention.maxRows }
-          : query.limit !== undefined
-            ? { limit: query.limit }
-            : {}),
-        ...(query.order !== undefined ? { order: query.order } : {}),
-      }),
-    )
-    const normalized = entries
-      .sort((left, right) => left.seq - right.seq)
-      .map((entry) => ({
-        seq: entry.seq,
-        ts: entry.ts,
-        event: leucoEventReadSchema.parse(entry.event),
-      }))
-
-    return queryLeucoEventEntries(normalized, query)
   }
 
   close(): void {

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { join } from "node:path"
 import { NodeClipboard } from "@/clipboard/node-clipboard"
 import { ClipboardReadError } from "@/clipboard/clipboard-read-error"
-import { manageSlackCredentials } from "@/cli/manage-slack-credentials"
+import { manageChatCredentials } from "@/cli/manage-chat-credentials"
 import { MemoryLeucoStore } from "@/storage/memory-leuco-store"
 import { MemoryCredentialStore } from "@/secrets/memory-credential-store"
 import { isProcessAlive } from "@/daemon/daemon-lease"
@@ -43,7 +43,8 @@ const credentials = new MemoryCredentialStore()
 try {
   process.env.PATH = `${helpers}:${originalPath ?? ""}`
   writeFileSync(control, JSON.stringify({ mode: "read", text: valid }))
-  const saved = await manageSlackCredentials({
+  const saved = await manageChatCredentials({
+    provider: "slack",
     action: "login",
     kind: "bot",
     clipboard,
@@ -57,7 +58,8 @@ try {
     JSON.stringify({ botToken: valid }),
   )
   writeFileSync(control, JSON.stringify({ mode: "read", text: "xapp-clipboard-test-secret" }))
-  const completed = await manageSlackCredentials({
+  const completed = await manageChatCredentials({
+    provider: "slack",
     action: "login",
     kind: "app",
     clipboard,
@@ -81,7 +83,8 @@ try {
       }),
     )
     const startedAt = Date.now()
-    const failure = await manageSlackCredentials({
+    const failure = await manageChatCredentials({
+      provider: "slack",
       action: "login",
       kind: "bot",
       clipboard,

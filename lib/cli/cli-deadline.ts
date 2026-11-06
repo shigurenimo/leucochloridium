@@ -1,9 +1,9 @@
-import { isVersionRequest } from "@/cli/is-version-request"
-import { parseArguments } from "@/cli/parse-arguments"
-import { validateCommand } from "@/cli/validate-command"
+import type { CliInvocation } from "@/cli/parse-cli-invocation"
 import { CliError, ERROR_CODES } from "@/cli/cli-error"
 import { writeCliError } from "@/cli/write-cli-error"
 import { DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
+
+export const CLI_FORCED_EXIT_GRACE_MS = 5000
 
 export class CliDeadline {
   readonly controller = new AbortController()
@@ -12,16 +12,17 @@ export class CliDeadline {
   expired = false
   errorOutput: Promise<void> | null = null
 
-  constructor(args: string[], requestId: string) {
-    if (isVersionRequest(args)) return
-    const parsed = parseArguments(args)
-    if (parsed.flags.help || args.length === 0) return
-    validateCommand(parsed)
+  constructor(invocation: CliInvocation, args: string[], requestId: string) {
+    if (invocation.mode !== "command") return
+    const parsed = invocation.parsed
     if (parsed.flags.foreground && parsed.flags["timeout-ms"] === undefined) return
     const timeout = Number(parsed.flags["timeout-ms"] ?? DEFAULT_CLI_TIMEOUT_MS)
     this.timer = setTimeout(() => {
       this.expired = true
-      this.forcedExit = setTimeout(() => process.exit(ERROR_CODES.STATE_UNCERTAIN.exitCode), 5000)
+      this.forcedExit = setTimeout(
+        () => process.exit(ERROR_CODES.STATE_UNCERTAIN.exitCode),
+        CLI_FORCED_EXIT_GRACE_MS,
+      )
       this.controller.abort()
       this.errorOutput = writeCliError(
         new CliError(

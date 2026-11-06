@@ -25,12 +25,10 @@ describe("native Codex environment", () => {
     expect(Object.hasOwn(env, "CODEX_HOME")).toBe(false)
   })
   it("preserves an explicit Codex home without copying settings or auth", () => {
-    const original = { CODEX_HOME: "/native", LEUCO_PROJECT_ID: "obsolete" }
-    expect(buildCodexChildEnv({ env: original, home: "/state" })).toEqual({
+    expect(buildCodexChildEnv({ env: { CODEX_HOME: "/native" }, home: "/state" })).toEqual({
       CODEX_HOME: "/native",
       LEUCO_HOME: "/state",
     })
-    expect(original.LEUCO_PROJECT_ID).toBe("obsolete")
   })
 })
 
@@ -58,8 +56,3 @@ it.each(["leuco_home", "Leuco_Home"])(
     ).toEqual({ CODEX_HOME: "/native", LEUCO_HOME: "/state" })
   },
 )
-it.each(["leuco_project_id", "Leuco_Project_Id"])("removes obsolete routing key %s", (name) => {
-  expect(buildCodexChildEnv({ env: { [name]: "obsolete" }, home: "/state" })).toEqual({
-    LEUCO_HOME: "/state",
-  })
-})

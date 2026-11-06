@@ -1,6 +1,6 @@
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import type { CliArguments } from "@/cli/parse-arguments"
-import { COMMANDS } from "@/cli/command-catalog"
+import { COMMANDS, DAEMON_READY_TIMEOUT_MS } from "@/cli/command-catalog"
 import { launchDaemonProcess } from "@/daemon/launch-daemon-process"
 import { CliError } from "@/cli/cli-error"
 import { isProcessAlive, readDaemonLease } from "@/daemon/daemon-lease"
@@ -32,7 +32,7 @@ export async function startDaemon(
   return waitForDaemonReady({
     home,
     pid: state.pid,
-    timeoutMs: 15000,
+    timeoutMs: DAEMON_READY_TIMEOUT_MS,
     signal,
     getExitError: () =>
       state.error !== null || state.exited

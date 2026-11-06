@@ -7,11 +7,12 @@ import { randomUUID } from "node:crypto"
 import { isCronDue } from "@/connectors/schedule/is-cron-due"
 import { isCronSchedule } from "@/connectors/schedule/is-cron-schedule"
 import { latestScheduleCatchup } from "@/connectors/schedule/latest-schedule-catchup"
-import { parseScheduleCron } from "@/connectors/schedule/parse-schedule-cron"
+import { type ScheduleRunAt, parseScheduleRunAt } from "@/connectors/schedule/parse-schedule-run-at"
 import type { ScheduleStorePort } from "@/connectors/schedule/schedule-store-port"
 import type { ScheduleEntry } from "@/config/config-schema"
 import type { ConnectorIdentity, Connector, ConnectorContext } from "@/connectors/connector"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
+import { assertTimerDelay } from "@/assert-timer-delay"
+import { errorMessage } from "@/error-message"
 
 type Props = {
   /** Read/mutate access to this connector's entries. */
@@ -52,6 +53,13 @@ type ScheduleTick = {
   signal: AbortSignal
   entriesById: Map<string, ScheduleEntry> | null
   startedAt: number
+}
+
+type CatchUpRequest = {
+  entry: ScheduleEntry
+  schedule: ScheduleRunAt
+  minuteEpoch: number
+  tick: ScheduleTick
 }
 
 const DEFAULT_INTERVAL_MS = 60_000
@@ -111,15 +119,7 @@ export class LeucoScheduleConnector implements Connector {
 
   constructor(props: Props) {
     this.props = props
-    this.intervalMs = props.intervalMs ?? DEFAULT_INTERVAL_MS
-    if (
-      !Number.isSafeInteger(this.intervalMs) ||
-      this.intervalMs < 1 ||
-      this.intervalMs > MAX_TIMER_DELAY_MS
-    )
-      throw new Error(
-        `Schedule interval must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
-      )
+    this.intervalMs = assertTimerDelay("Schedule interval", props.intervalMs ?? DEFAULT_INTERVAL_MS)
     this.now = props.now ?? (() => new Date())
     this.setIntervalFn = props.setIntervalFn ?? setInterval
     this.clearIntervalFn = props.clearIntervalFn ?? clearInterval
@@ -292,6 +292,9 @@ export class LeucoScheduleConnector implements Connector {
         tick.entriesById = this.indexCurrentEntries(this.props.store.listEntries())
       const entry = tick.entriesById.get(listedEntry.id)
       if (entry === undefined || !entry.enabled) continue
+      // Embedded stores are not schema-validated, so one bad entry is skipped here.
+      const schedule = this.parseEntryRunAt(entry, tick.ctx)
+      if (schedule === null) continue
       const now = this.now()
       // A preceding turn may cross a minute boundary or a system-clock adjustment.
       const minuteEpoch = Math.floor(now.getTime() / 60_000)
@@ -301,24 +304,24 @@ export class LeucoScheduleConnector implements Connector {
       //    would have matched, fire once on the next tick so daily / hourly
       //    schedules don't silently skip. Capped at 24h; one-shots already
       //    catch up implicitly via the `ts <= now` branch.
-      const catchupFired = await this.maybeCatchUp(entry, minuteEpoch, tick)
+      const catchupFired = await this.maybeCatchUp({ entry, schedule, minuteEpoch, tick })
       if (this.isTickCancelled(tick)) return
 
       if (this.lastFiredMinute.get(entry.id) === minuteEpoch) continue
-      if (this.wasCronFiredAtOrAfter(entry, minuteEpoch)) {
+      if (schedule.kind === "cron" && this.wasCronFiredAtOrAfter(entry, minuteEpoch)) {
         this.lastFiredMinute.set(entry.id, minuteEpoch)
         continue
       }
 
-      const decision = decideFire(entry, now, tick.ctx)
+      const decision = decideFire(schedule, now)
       if (decision === "skip") {
         if (catchupFired) this.lastFiredMinute.set(entry.id, minuteEpoch)
         continue
       }
 
       this.lastFiredMinute.set(entry.id, minuteEpoch)
-      if (decision === "one-shot") {
-        await this.fireOneShot(entry, now, tick)
+      if (schedule.kind === "one-shot") {
+        await this.fireOneShot({ entry, at: schedule.at, now, tick })
         continue
       }
       await this.fire(entry, tick, decision)
@@ -339,13 +342,13 @@ export class LeucoScheduleConnector implements Connector {
     return indexed
   }
 
-  private async maybeCatchUp(
-    entry: ScheduleEntry,
-    minuteEpoch: number,
-    tick: ScheduleTick,
-  ): Promise<boolean> {
-    if (!isCronSchedule(entry.runAt)) return false
+  private async maybeCatchUp(request: CatchUpRequest): Promise<boolean> {
+    const schedule = request.schedule
+    if (schedule.kind !== "cron") return false
 
+    const entry = request.entry
+    const minuteEpoch = request.minuteEpoch
+    const tick = request.tick
     const observation = this.catchUpWalkedTo.get(entry.id)
     const walkedTo =
       observation !== undefined && observation.runAt === entry.runAt ? observation.minute : null
@@ -360,12 +363,9 @@ export class LeucoScheduleConnector implements Connector {
     const currentMinuteStart = minuteEpoch * 60_000
     if (lastFiredAt >= currentMinuteStart) return false
 
-    const parsed = parseScheduleCron(entry.runAt)
-    if (parsed === null) return false
-
     const walkedThrough = currentMinuteStart - 60_000
     const latest = latestScheduleCatchup({
-      cron: parsed,
+      cron: schedule.cron,
       lastFiredAt: Math.max(lastFiredAt, walkedTo ?? 0),
       now: currentMinuteStart - 1,
       maxWindowMs: CATCHUP_MAX_LOOKBACK_MS,
@@ -454,15 +454,21 @@ export class LeucoScheduleConnector implements Connector {
     return true
   }
 
-  private async fireOneShot(entry: ScheduleEntry, now: Date, tick: ScheduleTick): Promise<void> {
-    const nowMs = now.getTime()
-    if (this.isWaitingForOneShotRetry(entry, nowMs)) return
+  private async fireOneShot(props: {
+    entry: ScheduleEntry
+    at: number
+    now: Date
+    tick: ScheduleTick
+  }): Promise<void> {
+    const entry = props.entry
+    const tick = props.tick
+    if (this.isWaitingForOneShotRetry(entry, props.now.getTime())) return
     const attempt = this.props.store.getLastAttempt(entry.id)
     const attempted =
       attempt !== null &&
       (attempt.runAt === null
-        ? attempt.firedAt >= Date.parse(entry.runAt)
-        : !isCronSchedule(attempt.runAt) && Date.parse(attempt.runAt) === Date.parse(entry.runAt))
+        ? attempt.firedAt >= props.at
+        : !isCronSchedule(attempt.runAt) && Date.parse(attempt.runAt) === props.at)
     if (attempted)
       this.log(
         tick.ctx,
@@ -473,10 +479,23 @@ export class LeucoScheduleConnector implements Connector {
   }
 
   private wasCronFiredAtOrAfter(entry: ScheduleEntry, minuteEpoch: number): boolean {
-    if (!isCronSchedule(entry.runAt)) return false
     const lastFiredAt = this.props.store.getLastAttempt(entry.id)?.firedAt ?? null
     if (lastFiredAt === null) return false
     return Math.floor(lastFiredAt / 60_000) >= minuteEpoch
+  }
+
+  private parseEntryRunAt(entry: ScheduleEntry, ctx: ConnectorContext): ScheduleRunAt | null {
+    try {
+      return parseScheduleRunAt(entry.runAt)
+    } catch (error) {
+      ctx.onLog(
+        formatScheduleLog(
+          `[${this.name}] entry ${entry.name} has bad runAt '${entry.runAt}': ${errorMessage(error)}`,
+          ctx.eventLog,
+        ),
+      )
+      return null
+    }
   }
 
   private isTickCancelled(tick: ScheduleTick): boolean {
@@ -537,34 +556,7 @@ const oneShotRetryDelayMs = (failures: number): number => {
   return Math.min(ONE_SHOT_RETRY_BASE_MS * 2 ** exponent, ONE_SHOT_RETRY_MAX_MS)
 }
 
-const decideFire = (
-  entry: ScheduleEntry,
-  now: Date,
-  ctx: ConnectorContext,
-): "cron" | "one-shot" | "skip" => {
-  if (isCronSchedule(entry.runAt)) {
-    const parsed = parseScheduleCron(entry.runAt)
-    if (parsed === null) {
-      ctx.onLog(
-        formatScheduleLog(
-          `[schedule] entry ${entry.name} has bad cron '${entry.runAt}'`,
-          ctx.eventLog,
-        ),
-      )
-      return "skip"
-    }
-    return isCronDue(parsed, now) ? "cron" : "skip"
-  }
-
-  const timestamp = Date.parse(entry.runAt)
-  if (Number.isNaN(timestamp)) {
-    ctx.onLog(
-      formatScheduleLog(
-        `[schedule] entry ${entry.name} has unparseable runAt: '${entry.runAt}'`,
-        ctx.eventLog,
-      ),
-    )
-    return "skip"
-  }
-  return timestamp <= now.getTime() ? "one-shot" : "skip"
+const decideFire = (schedule: ScheduleRunAt, now: Date): "cron" | "one-shot" | "skip" => {
+  if (schedule.kind === "cron") return isCronDue(schedule.cron, now) ? "cron" : "skip"
+  return schedule.at <= now.getTime() ? "one-shot" : "skip"
 }

@@ -4,7 +4,7 @@ import { LeucoEventLog } from "@/events/leuco-event-log"
 describe("diagnostic event summary", () => {
   it("filters noise before limiting and preserves failures, request filters and sequence order", () => {
     const log = new LeucoEventLog()
-    log.append({ ts: 1, type: "runtime.started", runtime: "leuco", requestId: "wanted" })
+    log.append({ ts: 1, type: "runtime.started", requestId: "wanted" })
     log.log("warn", "warning", "wanted")
     log.log("error", "other failure", "other")
     for (const index of Array.from({ length: 20 }).keys()) {
@@ -12,7 +12,6 @@ describe("diagnostic event summary", () => {
       log.append({
         ts: index + 2,
         type: "codex.notification",
-        runtime: "leuco",
         method: "hook/completed",
         params: {},
         requestId: "wanted",

@@ -32,6 +32,12 @@ Codexのfinal answerはSlackへ自動投稿しない。本文の送信は明示�
 
 Slack private file取得では認証付きの通信先を検証する。Slack Web APIとファイル送信ではリダイレクトを自動追従しない。外部upload URLはHTTPSに限定する。Slack bearer tokenを付けず、uploadは100 MiBまでとする。
 
+## Discord
+
+Discord Bot tokenもクリップボードからOSストアへ直接登録し、起動時だけ読み込む。資格情報はdaemonで保持し、既知のDiscord token環境変数をCodex子プロセスから除く。API通信は固定したDiscord RESTホストだけへ送信し、redirectや相対pathのtraversalを拒否する。既知の保存済みtokenをAPI応答・ログからマスクする。
+
+Discord受信本文・添付URL・リアクションは外部入力。受信ルールはモデル呼び出し前に適用する。final answerは内部出力で、投稿・リアクションは明示的なCLI操作。受信ルールやJEVのような分類器は操作の権限を増やすものではない。
+
 ## 保存
 
 `daemon.log` と `events.db` は受信本文、依頼、応答、コマンドの出力を含み得る。Codex自身の会話履歴も通常のCodexホームに残る。Leucoのsession resetはCodex履歴を削除しない。
@@ -41,9 +47,3 @@ Codexデスクトップ専用のブラウザ操作は追加していないが、
 ## 報告
 
 問題はGitHubのprivate vulnerability reportingが利用可能ならそこへ報告し、利用できない場合は秘密情報を含めずmaintainerへ連絡する。公開Issueにtokenや本文ログを載せない。
-
-## Discord
-
-Discord Bot tokenもクリップボードからOSストアへ直接登録し、起動時だけ読み込む。資格情報はdaemonで保持し、既知のDiscord token環境変数をCodex子プロセスから除く。API通信は固定したDiscord RESTホストだけへ送信し、redirectや相対pathのtraversalを拒否する。既知の保存済みtokenをAPI応答・ログからマスクする。
-
-Discord受信本文・添付URL・リアクションは外部入力。受信ルールはモデル呼び出し前に適用する。final answerは内部出力で、投稿・リアクションは明示的なCLI操作。受信ルールやJEVのような分類器は操作の権限を増やすものではない。

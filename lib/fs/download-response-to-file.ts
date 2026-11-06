@@ -1,6 +1,6 @@
 import { MAX_FILE_TRANSFER_BYTES } from "@/file-transfer-limits"
 import { DownloadFileTransfer } from "@/fs/download-file-transfer"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
+import { assertTimerDelay } from "@/assert-timer-delay"
 
 type Props = {
   fetchResponse: (signal: AbortSignal) => Promise<Response>
@@ -19,20 +19,14 @@ export const downloadResponseToFile = async (
     outputPath: props.outputPath,
     signal: props.signal,
     maxBytes: positiveInteger(props.maxBytes ?? MAX_FILE_TRANSFER_BYTES, "maxBytes"),
-    timeoutMs: positiveInteger(props.timeoutMs ?? 60_000, "timeoutMs", MAX_TIMER_DELAY_MS),
-    idleTimeoutMs: positiveInteger(
-      props.idleTimeoutMs ?? 30_000,
-      "idleTimeoutMs",
-      MAX_TIMER_DELAY_MS,
-    ),
+    timeoutMs: assertTimerDelay("download timeoutMs", props.timeoutMs ?? 60_000),
+    idleTimeoutMs: assertTimerDelay("download idleTimeoutMs", props.idleTimeoutMs ?? 30_000),
   }).run()
 
-const positiveInteger = (
-  value: number,
-  name: string,
-  maximum = Number.MAX_SAFE_INTEGER,
-): number => {
-  if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
-    throw new Error(`download ${name} must be an integer between 1 and ${maximum}, got ${value}`)
+const positiveInteger = (value: number, name: string): number => {
+  if (!Number.isSafeInteger(value) || value < 1)
+    throw new Error(
+      `download ${name} must be an integer between 1 and ${Number.MAX_SAFE_INTEGER}, got ${value}`,
+    )
   return value
 }

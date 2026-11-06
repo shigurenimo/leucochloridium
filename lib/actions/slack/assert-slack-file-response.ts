@@ -1,20 +1,9 @@
-import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { cancelSlackResponseBody } from "@/connectors/slack/cancel-slack-response-body"
 
 export async function assertSlackFileResponse(response: Response): Promise<void> {
   if (response.ok) return
 
   const failure = new Error(`Slack file download failed: HTTP ${response.status}`)
-  try {
-    await awaitBoundedCleanup(
-      Promise.resolve().then(async () => {
-        await response.body?.cancel()
-      }),
-      "failed response cancellation",
-    )
-  } catch (cleanup) {
-    throw new AggregateError([failure, cleanup], `${failure.message}; response cleanup failed`, {
-      cause: failure,
-    })
-  }
+  await cancelSlackResponseBody(response, { error: failure })
   throw failure
 }

@@ -1,4 +1,3 @@
-import { storedLeucoEventTypes } from "@/events/stored-leuco-event-types"
 import { withSyncCleanup } from "@/fs/with-sync-cleanup"
 import { statSync } from "node:fs"
 import { Database } from "bun:sqlite"
@@ -21,8 +20,7 @@ export function readLeucoEvents(path: string, limit: number, filters: Filters = 
   if (filters.failuresOnly)
     conditions.push(
       `((type = 'turn.error' AND COALESCE(json_extract(event, '$.cancelled'), 0) = 0)
-        OR type IN ('turn.rejected', 'supervisor.reconcile.failed', 'engine.reconcile.failed')
-        OR (type = 'codex.recovery' AND json_extract(event, '$.status') = 'failed')
+        OR type = 'turn.rejected'
         OR (type = 'maintenance' AND json_extract(event, '$.status') IN ('failed', 'uncertain'))
         OR (type IN ('slack.error', 'log') AND json_extract(event, '$.level') = 'error'))`,
     )
@@ -35,9 +33,8 @@ export function readLeucoEvents(path: string, limit: number, filters: Filters = 
     bindings.push(filters.requestId)
   }
   if (filters.type !== undefined) {
-    const storedTypes = storedLeucoEventTypes(filters.type)
-    conditions.push(`type IN (${storedTypes.map(() => "?").join(", ")})`)
-    bindings.push(...storedTypes)
+    conditions.push("type = ?")
+    bindings.push(filters.type)
   }
   if (filters.since !== undefined) {
     conditions.push("ts >= ?")

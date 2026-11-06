@@ -1,9 +1,5 @@
-import { getCodexProtocolLimits } from "@/engine/codex/get-codex-protocol-limits"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 import pkg from "leuco/package.json" with { type: "json" }
 import { CodexTurnText } from "@/engine/codex/codex-turn-text"
-import { CodexConsumerDiagnostics } from "@/engine/codex/codex-consumer-diagnostics"
-import type { DiagnosticOutput } from "@/diagnostic-output"
 import { formatCodexConsumerError } from "@/engine/codex/format-codex-consumer-error"
 import { isCodexThreadMissingError } from "@/engine/codex/is-codex-thread-missing-error"
 import { CodexPendingNotifications } from "@/engine/codex/codex-pending-notifications"
@@ -48,8 +44,8 @@ export type LeucoCodexClientProps = {
   env?: NodeJS.ProcessEnv
   onLog?: (line: string, level?: LogLevel) => void
   /**
-   * Called for every JSON-RPC notification from codex BEFORE per-turn handlers
-   * (`collectTurn`'s temporary handler chains to whatever was set previously).
+   * Called for every JSON-RPC notification from codex before the per-thread
+   * turn handler sees it.
    * requestId is supplied only after both thread and turn identity are confirmed.
    * Useful for broadcasting to the structured event log.
    */
@@ -59,7 +55,6 @@ export type LeucoCodexClientProps = {
   protocolMaxFrameChars?: number
   protocolLogPreviewChars?: number
   redactLogText?: (text: string) => string
-  diagnosticOutput?: DiagnosticOutput
 }
 
 /**
@@ -75,11 +70,9 @@ export class LeucoCodexClient {
   private readonly onLog: ((line: string, level?: LogLevel) => void) | undefined
   private readonly commandOutputLimitChars: number
   private readonly threadRequestTimeoutMs: number
-  private readonly protocolMaxFrameChars: number
-  private readonly protocolLogPreviewChars: number
+  private readonly protocolMaxFrameChars: number | undefined
+  private readonly protocolLogPreviewChars: number | undefined
   private readonly redactLogText: ((text: string) => string) | undefined
-
-  private readonly consumerDiagnostics: CodexConsumerDiagnostics
 
   private starting: Promise<void> | null = null
   private stopping: Promise<void> | null = null
@@ -103,10 +96,6 @@ export class LeucoCodexClient {
     this.args = props.args === undefined ? ["app-server"] : [...props.args]
     this.cwd = props.cwd
     this.env = props.env === undefined ? undefined : { ...props.env }
-    this.consumerDiagnostics = new CodexConsumerDiagnostics({
-      output: props.diagnosticOutput,
-      redactLogText: props.redactLogText,
-    })
     const onLog = props.onLog
     this.onLog =
       onLog === undefined
@@ -114,34 +103,16 @@ export class LeucoCodexClient {
         : (line, level) => {
             try {
               onLog(line, level)
-            } catch (error) {
-              this.consumerDiagnostics.report({ kind: "log", error })
+            } catch {
+              // A failing host log callback must not break the Codex transport.
             }
           }
     this.commandOutputLimitChars = props.commandOutputLimitChars ?? COMMAND_OUTPUT_LIMIT_CHARS
     this.threadRequestTimeoutMs = props.threadRequestTimeoutMs ?? THREAD_REQUEST_TIMEOUT_MS
-    const protocolLimits = getCodexProtocolLimits({
-      maxFrameChars: props.protocolMaxFrameChars,
-      logPreviewChars: props.protocolLogPreviewChars,
-    })
-    this.protocolMaxFrameChars = protocolLimits.maxFrameChars
-    this.protocolLogPreviewChars = protocolLimits.logPreviewChars
-    this.validateLimits()
+    this.protocolMaxFrameChars = props.protocolMaxFrameChars
+    this.protocolLogPreviewChars = props.protocolLogPreviewChars
     this.redactLogText = props.redactLogText
     this.notificationHandler = props.onAnyNotification ?? null
-  }
-
-  private validateLimits(): void {
-    if (!Number.isSafeInteger(this.commandOutputLimitChars) || this.commandOutputLimitChars < 0)
-      throw new Error("commandOutputLimitChars must be a non-negative safe integer")
-    if (
-      !Number.isSafeInteger(this.threadRequestTimeoutMs) ||
-      this.threadRequestTimeoutMs < 1 ||
-      this.threadRequestTimeoutMs > MAX_TIMER_DELAY_MS
-    )
-      throw new Error(
-        `threadRequestTimeoutMs must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
-      )
   }
 
   isRunning(): boolean {
@@ -156,7 +127,6 @@ export class LeucoCodexClient {
       stopping: this.stopping !== null,
       cleaningUp: this.transportFailurePromise !== null,
       activeTurns: this.turnAborters.size,
-      diagnostics: this.consumerDiagnostics.getHealth(),
     }
   }
 
@@ -183,6 +153,15 @@ export class LeucoCodexClient {
       return
     }
 
+    // The protocol validates its limits before a child exists; its writer
+    // first runs after spawn assigns `child`.
+    const protocol = new LeucoCodexProtocol({
+      writer: (line) => child.stdin.write(line),
+      onLog: this.onLog,
+      maxFrameChars: this.protocolMaxFrameChars,
+      logPreviewChars: this.protocolLogPreviewChars,
+      redactLogText: this.redactLogText,
+    })
     const child = spawn(this.bin, this.args, {
       cwd: this.cwd,
       env: this.env ?? process.env,
@@ -192,13 +171,6 @@ export class LeucoCodexClient {
     child.stdout.setEncoding("utf8")
     child.stderr.setEncoding("utf8")
 
-    const protocol = new LeucoCodexProtocol({
-      writer: (line) => child.stdin.write(line),
-      onLog: this.onLog,
-      maxFrameChars: this.protocolMaxFrameChars,
-      logPreviewChars: this.protocolLogPreviewChars,
-      redactLogText: this.redactLogText,
-    })
     protocol.onNotification((method, params) => this.handleNotification(method, params))
 
     child.stdout.on("data", (chunk: string) => {
@@ -300,7 +272,7 @@ export class LeucoCodexClient {
 
   async stop(): Promise<void> {
     if (this.stopping !== null) return this.stopping
-    const stopping = this.stopChild().finally(() => this.consumerDiagnostics.drain())
+    const stopping = this.stopChild()
     this.stopping = stopping
     try {
       await stopping
@@ -683,21 +655,10 @@ export class LeucoCodexClient {
           : undefined
       this.notificationHandler?.(method, params, requestId)
     } catch (error) {
-      const message = formatCodexConsumerError({
-        kind: "notification",
-        error,
-        redactLogText: this.redactLogText,
-      })
-      if (this.onLog) this.onLog(message, "error")
-      else this.consumerDiagnostics.report({ kind: "notification", error })
+      this.onLog?.(formatCodexConsumerError({ error, redactLogText: this.redactLogText }), "error")
     }
     const threadId = notificationThreadId(params)
-    if (threadId === null) {
-      if (this.turnHandlers.size === 1) {
-        this.turnHandlers.values().next().value?.handler(method, params)
-      }
-      return
-    }
+    if (threadId === null) return
     this.turnHandlers.get(threadId)?.handler(method, params)
   }
 
@@ -723,8 +684,8 @@ const INITIALIZE_TIMEOUT_MS = 30_000
 const COMMAND_OUTPUT_LIMIT_CHARS = 200_000
 
 /** `thread/start` / `thread/resume` are quick metadata round-trips; a hung
- * child must not park `drainTurns` forever with every later message piling
- * up behind it. */
+ * child must not park the runtime's serial queue forever with every later
+ * request piling up behind it. */
 const THREAD_REQUEST_TIMEOUT_MS = 60_000
 
 const STOP_TERM_GRACE_MS = 5_000

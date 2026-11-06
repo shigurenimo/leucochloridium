@@ -1,23 +1,10 @@
-export type SlackMessageEvent = {
-  kind: "message"
-  channel: string
-  user: string
-  rawText: string
-  text: string
-  threadTs: string
-  ts: string
-  isThreadRoot: boolean
-  mentioned: boolean
-  source: "app_mention" | "message"
-}
+import type { z } from "zod"
+import type {
+  slackEventSchema,
+  slackMessageEventSchema,
+  slackReactionEventSchema,
+} from "@/connectors/slack/slack-event-schema"
 
-export type SlackReactionEvent = {
-  kind: "reaction_added" | "reaction_removed"
-  channel: string
-  user: string
-  emoji: string
-  targetTs: string
-  targetUser: string | null
-}
-
-export type SlackEvent = SlackMessageEvent | SlackReactionEvent
+export type SlackMessageEvent = z.infer<typeof slackMessageEventSchema>
+export type SlackReactionEvent = z.infer<typeof slackReactionEventSchema>
+export type SlackEvent = z.infer<typeof slackEventSchema>

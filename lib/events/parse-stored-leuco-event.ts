@@ -1,4 +1,4 @@
-import { leucoEventReadSchema } from "@/events/leuco-event-read-schema"
+import { leucoEventSchema } from "@/events/leuco-event-schema"
 import { redactJsonSecrets } from "@/secrets/redact-json-secrets"
 
 /** Decode escapes before masking; malformed JSON diagnostics must not quote stored content. */
@@ -12,5 +12,5 @@ export function parseStoredLeucoEvent(encoded: string, sequence: number) {
       )
     }
   })()
-  return leucoEventReadSchema.parse(redactJsonSecrets(decoded, []))
+  return leucoEventSchema.parse(redactJsonSecrets(decoded, []))
 }

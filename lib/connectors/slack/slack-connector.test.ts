@@ -1,4 +1,4 @@
-import { slackReceptionSchema } from "@/config/config-schema"
+import { receptionRulesSchema } from "@/config/config-schema"
 import { describe, expect, it, vi } from "vitest"
 import { LeucoMemorySlackEventSource } from "@/connectors/slack/leuco-memory-slack-event-source"
 import { LeucoMemorySlackWebClient } from "@/connectors/slack/leuco-memory-slack-web-client"
@@ -97,7 +97,7 @@ describe("LeucoSlackConnector", () => {
       eventSource,
       webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
       ackMode: "off",
-      reception: slackReceptionSchema.parse({ reactionAdded: ["eyes"], allowedUsers: ["U1"] }),
+      reception: receptionRulesSchema.parse({ reactionAdded: ["eyes"], allowedUsers: ["U1"] }),
     })
     const test = makeCtx()
     await connector.start(test.ctx)
@@ -448,7 +448,7 @@ describe("LeucoSlackConnector", () => {
       eventSource,
       webClient,
       ackMode: "always",
-      reception: slackReceptionSchema.parse({ channelMessages: true }),
+      reception: receptionRulesSchema.parse({ channelMessages: true }),
     })
     const firstHarness = makeCtx()
     const turnStarted = Promise.withResolvers<void>()
@@ -544,7 +544,6 @@ it.each([true, false])(
         action: "probe",
         message,
         error: withError ? new Error(message) : null,
-        detail: null,
         timestamp: 123,
       })
       const retained = connector.getStatus().lastFailure?.message
@@ -568,7 +567,7 @@ it.each<[string, boolean]>([
     eventSource,
     webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
     ackMode: "off",
-    reception: slackReceptionSchema.parse({ channelMessages: true }),
+    reception: receptionRulesSchema.parse({ channelMessages: true }),
   })
   const harness = makeCtx()
   await connector.start(harness.ctx)
@@ -636,7 +635,6 @@ it("identifies new Slack events by type while retaining the actual channel", asy
       action: "probe",
       message: "diagnostic",
       error: null,
-      detail: null,
       timestamp: Date.now(),
     })
     const events = test.events()

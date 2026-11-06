@@ -54,16 +54,13 @@ HTTP 401/503だけで処理が実行されなかったと判断しない。実�
 
 CLIの出力完了も確認する。stdoutは最大4秒、stderrは最大1秒で観測を区切る。出力が詰まる・切れる場合は終了コード5となり、出せる場合はphase=output-flushのエラーを返す。stderrも使えなければ完全なエラー文書は保証できない。終了コードが非ゼロならstdoutが成功文書に見えても成功扱いせず、設定や送信先の現在値を確認する。
 
-Codex callback失敗時の予備stderr配送はruntime.codex.diagnostics、ホストのonLog受信はruntime.logConsumerで確認する。Codex診断は1秒・最大64件で観測し、配送失敗だけでは再起動を勧めない。
-
 Slackログ配送はruntime.connectionsのhealth.diagnosticsで確認する。接続がconnectedでもhealthy:falseなら配送先を調べる。lastFailure.causesは復旧後も残るが、プロセス終了時には失われる。
 
 ## 設計と検証への参照
 
 - [障害時の設計詳細](reliability-design.md)：受付、所有情報、保存、後片付け、通信、履歴、時間制限の契約。
-- [障害検証と実機確認の記録](reliability-verification.md)：回帰テストの対応、隔離検証の対象、過去の実機確認と未確認の境界。
 
-全体の検証は `bun run verify`。偽Codex・Memory資格情報・隔離したファイルとプロセスの検証を、実Slackへの投稿や実モデルの推論の確認と混同しない。文書に残した過去の件数・接続成功は、現在の稼働状態の証拠にはしない。
+全体の検証は `bun run verify`。偽Codex・Memory資格情報・隔離したファイルとプロセスの検証を、実Slack・実Discordへの投稿や実モデルの推論の確認と混同しない。Windows実機とOSサービス管理による自動起動も検証の対象外。文書に残した過去の件数・接続成功は、現在の稼働状態の証拠にはしない。
 
 ## 予定の実行保証
 
@@ -78,14 +75,11 @@ cronはホストのローカル時刻、単発はタイムゾーン付きISO日�
 - イベントDBの保存は `runtime.logs`。
 - daemon.logの保存は `runtime.textLog`。
 - ホストのonLog受信は `runtime.logConsumer`。
-- Codex callback失敗時の予備stderr配送は `runtime.codex.diagnostics`。
 - Slack入力源のログ配送はSlack接続の `health.diagnostics`。
-
-Codexの予備診断は1秒・同時64件まで観測し、出力の失敗と元のcallback原因を保持する。配送先が復旧するとhealthyが戻り、過去のlastFailureは残る。この配送障害だけではdoctorは再起動を勧めない。
 
 ローカル制御の通信・本文確認エラーにはrequestを付け、method・クエリを除いたpath・leasePid・設定したtimeoutMs・経過elapsedMs・中断状態を記録する。timeoutMsがnullなら呼び出し元signalに従う。上位のエラーに包まれても、メッセージに経路と待機予算が残る。requestフィールドには本文・ヘッダー・クエリ値を含めない。通信経路・期待する所有者・期限・signal参照はリクエスト生成時に固定するため、呼び出し元が設定オブジェクトを再利用しても進行中の応答確認は変わらない。AbortControllerによる中断は引き続き有効。
 
-doctorは停止中を異常として非ゼロで返し、起動するコマンドを示す。Slackを設定済みなら、呼び出し元のPATHに返信用のleucoがあるかも調べる。未登録ならcheckoutでbun linkを実行し、BunのbinディレクトリをPATHへ追加してからdaemonを再起動する。起動済みdaemonのPATHは後から変更できないため、呼び出し元で見つかるだけではdaemonからの実行成功まで証明しない。
+doctorは停止中を異常として非ゼロで返し、起動するコマンドを示す。SlackかDiscordを設定済みなら、呼び出し元のPATHに返信用のleucoがあるかも調べる。未登録ならcheckoutでbun linkを実行し、BunのbinディレクトリをPATHへ追加してからdaemonを再起動する。起動済みdaemonのPATHは後から変更できないため、呼び出し元で見つかるだけではdaemonからの実行成功まで証明しない。
 
 SOULは存在するだけでなく、サイズ制限内の読み取り可能な通常ファイルかを調べる。Codexも実行可能なファイルかを確認し、ディレクトリを誤って正常扱いしない。recentFailuresは内部通知の量に関係なく最新10件の失敗を検索し、キャンセルは除外する。過去の失敗履歴と現在の稼働状態は区別する。
 

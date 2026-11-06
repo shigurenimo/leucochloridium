@@ -1,7 +1,5 @@
 import { isVersionRequest } from "@/cli/is-version-request"
-import { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from "@/diagnostic-limits"
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
+import { toPublicDiagnosticMessage } from "@/to-public-diagnostic-message"
 import { errorDetails } from "@/error-details"
 import { serializeCliValue } from "@/cli/serialize-cli-value"
 import { CliError, ERROR_CODES, cliErrorCodeSchema } from "@/cli/cli-error"
@@ -57,10 +55,7 @@ export async function writeCliError(
   const mutationMayHaveOccurred =
     context.mutating &&
     (!knownBeforeExecution || repairMayHaveChangedMetadata || diagnostic.mutationPossible)
-  const message = truncateDiagnosticText(
-    redactPublicText(errorMessage(failure)),
-    MAX_DIAGNOSTIC_MESSAGE_CHARACTERS,
-  )
+  const message = toPublicDiagnosticMessage(errorMessage(failure))
   process.exitCode = ERROR_CODES[code].exitCode
   await writeCliText(
     `${serializeCliValue({ schemaVersion: 1, ok: false, command: context.command, requestId: request.requestId, error: { code: code, message, hint: ERROR_CODES[code].recovery, mutationMayHaveOccurred, details: diagnostic.details } }, jsonMode(args))}\n`,

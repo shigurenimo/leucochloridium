@@ -1,20 +1,14 @@
 import { renderCommandUsage } from "@/cli/render-command-usage"
-import { COMMANDS, GLOBAL_OPTIONS, DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
+import { GLOBAL_OPTIONS, DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
 import type { CommandDefinition, Parameter } from "@/cli/command-catalog"
-import { CliError, ERROR_CODES } from "@/cli/cli-error"
+import { ERROR_CODES } from "@/cli/cli-error"
 import { CLI_OUTPUT_TIMEOUTS_MS } from "@/cli/cli-output-limits"
+import { resolveHelpTarget } from "@/cli/resolve-help-target"
 
 export function renderCliHelp(path: string[] = []): string {
-  const requested = path.join(" ")
-  const exact =
-    COMMANDS.find((command) => command.name === requested) ??
-    COMMANDS.find((command) => requested.startsWith(`${command.name} `))
-  const commands = exact
-    ? [exact]
-    : COMMANDS.filter((command) => requested === "" || command.name.startsWith(`${requested} `))
-  if (commands.length === 0) throw new CliError("USAGE", "Unknown help target. Run leuco --help.")
+  const target = resolveHelpTarget(path)
   const overview = [
-    ...(requested === ""
+    ...(path.length === 0
       ? [
           "leuco / one local Codex companion",
           "",
@@ -32,11 +26,11 @@ export function renderCliHelp(path: string[] = []): string {
     "",
   ]
   return [
-    ...(exact
-      ? [...renderCommand(exact), "Global options and execution rules", "", ...overview]
+    ...(target.command
+      ? [...renderCommand(target.command), "Global options and execution rules", "", ...overview]
       : [
           ...overview,
-          ...commands.flatMap((command) => [
+          ...target.commands.flatMap((command) => [
             renderCommandUsage(command),
             `  ${command.description}`,
             "",

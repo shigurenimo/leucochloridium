@@ -1,5 +1,6 @@
-import { manageDiscordCredentials } from "@/cli/manage-discord-credentials"
-import { isVersionRequest } from "@/cli/is-version-request"
+import { manageChatCredentials } from "@/cli/manage-chat-credentials"
+import { parseCliInvocation } from "@/cli/parse-cli-invocation"
+import type { CliInvocation } from "@/cli/parse-cli-invocation"
 import { withDaemonReservation } from "@/daemon/with-daemon-reservation"
 import { readCliEvents } from "@/cli/read-cli-events"
 import { readDaemonLogLines } from "@/daemon/read-daemon-log-lines"
@@ -12,21 +13,22 @@ import { diagnoseRuntime } from "@/cli/diagnose-runtime"
 import { randomUUID } from "node:crypto"
 import { leucoHomeSchema } from "@/config/leuco-home-schema"
 import { z } from "zod"
-import pkg from "../../package.json" with { type: "json" }
-import { validateCommand } from "@/cli/validate-command"
+import pkg from "leuco/package.json" with { type: "json" }
 import { renderCliHelp } from "@/cli/render-cli-help"
 import { getCliSpecification } from "@/cli/get-cli-specification"
 import { writeCliOutput } from "@/cli/write-cli-output"
 import { writeCliText } from "@/cli/write-cli-text"
 import { CliError } from "@/cli/cli-error"
-import { COMMANDS, DEFAULT_CLI_LIMIT, DEFAULT_CLI_TIMEOUT_MS } from "@/cli/command-catalog"
+import {
+  DEFAULT_CLI_LIMIT,
+  DEFAULT_CLI_THREAD,
+  DEFAULT_CLI_TIMEOUT_MS,
+} from "@/cli/command-catalog"
 import { resolveCommand } from "@/cli/resolve-command"
 import { serializeCliValue } from "@/cli/serialize-cli-value"
 import { jsonMode } from "@/cli/json-mode"
-import { parseArguments } from "@/cli/parse-arguments"
 import { manageSettings } from "@/cli/manage-settings"
 import { requestSlackCommand } from "@/cli/request-slack-command"
-import { manageSlackCredentials } from "@/cli/manage-slack-credentials"
 import { NodeClipboard } from "@/clipboard/node-clipboard"
 import { BunCredentialStore } from "@/secrets/bun-credential-store"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
@@ -38,13 +40,14 @@ import { requestDaemon } from "@/daemon/request-daemon"
 
 export async function runCli(
   args: string[],
-  context: { signal?: AbortSignal; requestId?: string } = {},
+  context: { signal?: AbortSignal; requestId?: string; invocation?: CliInvocation } = {},
 ): Promise<void> {
   const signal = context.signal
   signal?.throwIfAborted()
   const requestId = context.requestId ?? randomUUID()
   const json = jsonMode(args)
-  if (isVersionRequest(args)) {
+  const invocation = context.invocation ?? parseCliInvocation(args)
+  if (invocation.mode === "version") {
     if (json || args.includes("--yaml"))
       await writeCliOutput(
         { version: pkg.version },
@@ -53,21 +56,15 @@ export async function runCli(
     else await writeCliText(`${pkg.version}\n`, { destination: "stdout" })
     return
   }
-  const parsed = parseArguments(args)
-  if (parsed.flags.help || args.length === 0) {
-    const helpPath =
-      parsed.words.length === 0 ||
-      COMMANDS.some((entry) => entry.name.startsWith(`${parsed.words.join(" ")} `))
-        ? parsed.words
-        : resolveCommand(parsed.words).definition.name.split(" ")
+  const parsed = invocation.parsed
+  if (invocation.mode === "help") {
     const help =
       json || parsed.flags.yaml
-        ? serializeCliValue(getCliSpecification(helpPath), json)
+        ? serializeCliValue(getCliSpecification(parsed.words), json)
         : renderCliHelp(parsed.words)
     await writeCliText(`${help}\n`, { destination: "stdout" })
     return
   }
-  validateCommand(parsed)
   if (!Bun.semver.satisfies(Bun.version, pkg.engines.bun))
     throw new CliError(
       "CHECK_FAILED",
@@ -146,7 +143,7 @@ export async function runCli(
       await requestDaemon({
         home,
         path: "/turn",
-        body: { text, key: parsed.flags.thread ?? "cli" },
+        body: { text, key: parsed.flags.thread ?? DEFAULT_CLI_THREAD },
         requestId,
         timeoutMs: Number(parsed.flags["timeout-ms"] ?? DEFAULT_CLI_TIMEOUT_MS),
         signal,
@@ -172,16 +169,16 @@ export async function runCli(
           credentials: new BunCredentialStore(),
           signal,
         }
-        if (command === "discord")
-          return manageDiscordCredentials({ ...services, action, clipboard: new NodeClipboard() })
         return action === "login"
-          ? manageSlackCredentials({
+          ? manageChatCredentials({
               ...services,
-              action: "login",
+              provider: command,
+              action,
               clipboard: new NodeClipboard(),
-              kind: z.enum(["bot", "app"]).parse(parsed.words[2]),
+              // discord login has no kind argument because Discord stores only a bot token.
+              kind: parsed.words[2] ?? "bot",
             })
-          : manageSlackCredentials({ ...services, action: "logout" })
+          : manageChatCredentials({ ...services, provider: command, action })
       })
       await print(credentialStatus)
       return

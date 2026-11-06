@@ -1,8 +1,8 @@
 import { assertSlackFileUrl } from "@/actions/slack/assert-slack-file-url"
 import { awaitAbortableOperation } from "@/await-abortable-operation"
-import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { assertTimerDelay } from "@/assert-timer-delay"
+import { cancelSlackResponseBody } from "@/connectors/slack/cancel-slack-response-body"
 import { errorMessage } from "@/error-message"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 
 /** Validate every redirect before attaching a token; share one deadline across all response headers. */
 export const fetchSlackFile = async (
@@ -40,20 +40,10 @@ class SlackFileFetch {
   }
 
   async run(): Promise<Response> {
-    if (
-      !Number.isSafeInteger(this.props.timeoutMs) ||
-      this.props.timeoutMs < 1 ||
-      this.props.timeoutMs > MAX_TIMER_DELAY_MS
-    )
-      throw new Error(
-        `Slack file timeout must be whole milliseconds between 1 and ${MAX_TIMER_DELAY_MS}`,
-      )
+    const timeoutMs = assertTimerDelay("Slack file timeout", this.props.timeoutMs)
     const timer = setTimeout(
-      () =>
-        this.controller.abort(
-          new Error(`slack file download timed out after ${this.props.timeoutMs}ms`),
-        ),
-      this.props.timeoutMs,
+      () => this.controller.abort(new Error(`slack file download timed out after ${timeoutMs}ms`)),
+      timeoutMs,
     )
     try {
       return await this.followRedirects()
@@ -122,12 +112,7 @@ class SlackFileFetch {
     const response = this.current.response
     if (response === null) return
     if (this.current.cancellation === null)
-      this.current.cancellation = awaitBoundedCleanup(
-        Promise.resolve().then(async () => {
-          await response.body?.cancel()
-        }),
-        "redirect body cancellation",
-      )
+      this.current.cancellation = cancelSlackResponseBody(response)
     await this.current.cancellation
   }
 }

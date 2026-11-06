@@ -1,3 +1,4 @@
+import type { ChatProvider } from "@/cli/chat-providers"
 import type { CredentialStore } from "@/secrets/credential-store"
 import type { LeucoStore } from "@/storage/leuco-store"
 
@@ -6,7 +7,7 @@ type Props = {
   credentials: CredentialStore
   credential: string
   previous: string | null
-  setting?: "slack" | "discord"
+  setting: ChatProvider
   failure: unknown
 }
 
@@ -14,8 +15,7 @@ type Props = {
 export async function handleCredentialSaveFailure(props: Props): Promise<never> {
   const observed = { referenced: false }
   try {
-    observed.referenced =
-      props.store.loadSettings()[props.setting ?? "slack"]?.credential === props.credential
+    observed.referenced = props.store.loadSettings()[props.setting]?.credential === props.credential
   } catch (inspection) {
     throw new AggregateError(
       [props.failure, inspection],

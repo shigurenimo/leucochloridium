@@ -2,14 +2,15 @@ import { copyRedactedError } from "@/secrets/copy-redacted-error"
 import { formatLogLine } from "@/format-log-line"
 import { logDeliveryHealthSchema } from "@/log-delivery-health-schema"
 import { errorDetails } from "@/error-details"
-import { MAX_TIMER_DELAY_MS } from "@/timer-limits"
 import { NodeDiagnosticOutput } from "@/node-diagnostic-output"
 import type { DiagnosticOutput } from "@/diagnostic-output"
 import { Flume, createFlumeDefaultDeps } from "@interactive-inc/flume"
 import { LeucoNodeSlackSockets } from "@/connectors/slack/leuco-node-slack-sockets"
 import type { LeucoSlackSockets } from "@/connectors/slack/leuco-slack-sockets"
 import { withAsyncCleanup } from "@/fs/with-async-cleanup"
+import { awaitAbortableOperation } from "@/await-abortable-operation"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { assertTimerDelay } from "@/assert-timer-delay"
 import type {
   FlumeEvent,
   FlumeLog,
@@ -30,6 +31,7 @@ import {
 
 type LeucoFlumeSlackEventSourceProps = {
   diagnosticOutput?: DiagnosticOutput
+  /** Only redacted from diagnostics; Socket Mode needs just the app token. */
   botToken: string
   appToken: string
   startTimeoutMs?: number
@@ -87,11 +89,11 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
 
   constructor(private readonly props: LeucoFlumeSlackEventSourceProps) {
     super()
-    this.startTimeoutMs = positiveInteger(
+    this.startTimeoutMs = assertTimerDelay(
       "startTimeoutMs",
       props.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS,
     )
-    this.wakeCheckIntervalMs = positiveInteger(
+    this.wakeCheckIntervalMs = assertTimerDelay(
       "wakeCheckIntervalMs",
       props.wakeCheckIntervalMs ?? DEFAULT_WAKE_CHECK_INTERVAL_MS,
     )
@@ -99,13 +101,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       "wakeDriftThresholdMs",
       props.wakeDriftThresholdMs ?? DEFAULT_WAKE_DRIFT_THRESHOLD_MS,
     )
-    for (const timer of [
-      { name: "startTimeoutMs", value: this.startTimeoutMs },
-      { name: "wakeCheckIntervalMs", value: this.wakeCheckIntervalMs },
-    ]) {
-      if (timer.value > MAX_TIMER_DELAY_MS)
-        throw new Error(`${timer.name} must not exceed ${MAX_TIMER_DELAY_MS}ms`)
-    }
     this.wakeClock = props.wakeClock ?? SYSTEM_WAKE_CLOCK
     this.diagnosticOutput = props.diagnosticOutput ?? new NodeDiagnosticOutput()
   }
@@ -205,7 +200,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
     const controller = session.controller
     const source = new FlumeSlackSource({
       appToken: this.props.appToken,
-      botToken: this.props.botToken,
       // Do not set idleTimeoutMs. Flume measures application-level frames,
       // which a healthy but quiet Slack workspace does not guarantee.
     })
@@ -293,7 +287,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
                 action: "socket.close.forced",
                 message: `Terminated ${forcedCloses} Slack sockets after their close deadline`,
                 error: null,
-                detail: { forcedCloses },
                 timestamp: this.wakeClock.now(),
               })
           },
@@ -321,19 +314,17 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         new Error(`Slack event source start timed out after ${this.startTimeoutMs}ms`),
       )
     }, this.startTimeoutMs)
-    const aborted = waitForAbort(controller.signal)
     const opened = flume.open()
     void opened.then(
       (running) => this.closeLateOpen(running, session, onLog),
       () => undefined,
     )
     try {
-      const running = await Promise.race([opened, aborted.promise])
+      const running = await awaitAbortableOperation(opened, controller.signal)
       if (running instanceof Error) throw running
       return running
     } finally {
       clearTimeout(timeout)
-      aborted.dispose()
     }
   }
 
@@ -378,7 +369,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         action: "wake.detected",
         message: `event loop resumed after ${elapsedMs}ms; rebuilding Slack socket`,
         error: null,
-        detail: { elapsedMs, driftMs },
         timestamp: now,
       })
     }
@@ -398,7 +388,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         action: "wake.reconnect.failed",
         message: normalized.message,
         error: normalized,
-        detail: null,
         timestamp: this.wakeClock.now(),
       })
     })
@@ -423,7 +412,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
           action: "wake.close.failed",
           message: normalized.message,
           error: normalized,
-          detail: null,
           timestamp: this.wakeClock.now(),
         })
         throw error
@@ -448,7 +436,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
         action: "wake.reconnected",
         message: "Slack socket rebuilt after host resume",
         error: null,
-        detail: null,
         timestamp: this.wakeClock.now(),
       })
     } catch (error) {
@@ -528,7 +515,6 @@ export class LeucoFlumeSlackEventSource extends LeucoSlackEventSource {
       action,
       message: normalized.message,
       error: normalized,
-      detail: null,
       timestamp: this.wakeClock.now(),
     })
   }
@@ -625,7 +611,6 @@ const toLeucoLog = (log: FlumeLog): LeucoSlackSourceLog => {
     action: log.action,
     message: log.message,
     error: log.error ?? null,
-    detail: log.detail ?? null,
     timestamp: log.timestamp,
   }
 }
@@ -635,16 +620,6 @@ const extractStatus = (log: FlumeLog): LeucoSlackSourceStatus | null => {
   const to = log.detail?.to
   const parsed = leucoSlackSourceStatusSchema.safeParse(to)
   return parsed.success ? parsed.data : null
-}
-
-const waitForAbort = (signal: AbortSignal): { promise: Promise<never>; dispose: () => void } => {
-  const deferred = Promise.withResolvers<never>()
-  const onAbort = (): void => deferred.reject(abortError(signal))
-  signal.addEventListener("abort", onAbort, { once: true })
-  return {
-    promise: deferred.promise,
-    dispose: () => signal.removeEventListener("abort", onAbort),
-  }
 }
 
 const abortError = (signal: AbortSignal): Error => {

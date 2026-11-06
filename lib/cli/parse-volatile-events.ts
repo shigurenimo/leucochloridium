@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { leucoEventReadSchema } from "@/events/leuco-event-read-schema"
+import { leucoEventSchema } from "@/events/leuco-event-schema"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
 import { queryLeucoEventEntries } from "@/events/query-leuco-event-entries"
 
@@ -9,7 +9,7 @@ export function parseVolatileEvents(value: unknown, query: LeucoEventQuery) {
       z.object({
         seq: z.number().int().positive(),
         ts: z.number(),
-        event: leucoEventReadSchema,
+        event: leucoEventSchema,
       }),
     )
     .max(query.limit ?? 1000)

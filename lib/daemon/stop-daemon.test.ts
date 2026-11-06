@@ -12,14 +12,10 @@ vi.mock("@/daemon/request-daemon", () => ({
 afterEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
-  vi.unstubAllGlobals()
 })
 
 it("bounds process-exit observation when the wall clock moves backwards", async () => {
   vi.useFakeTimers()
-  vi.stubGlobal("Bun", {
-    sleep: (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  })
   const observed: { failure: unknown } = { failure: null }
   const pending = stopDaemon({ home: "/memory", requestId: "stop-probe" }).catch(
     (error: unknown) => {
@@ -41,9 +37,6 @@ it("bounds process-exit observation when the wall clock moves backwards", async 
 
 it("ends process-exit observation promptly when the caller cancels after shutdown acknowledgement", async () => {
   vi.useFakeTimers()
-  vi.stubGlobal("Bun", {
-    sleep: (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  })
   const controller = new AbortController()
   const observed: { failure: unknown } = { failure: null }
   const pending = stopDaemon({

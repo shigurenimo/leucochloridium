@@ -1,42 +1,39 @@
 import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
-import { LeucoEventLog } from "@/events/leuco-event-log"
+import { readLeucoEvents } from "@/events/read-leuco-events"
 import { recordMaintenanceOperation } from "@/maintenance/record-maintenance-operation"
 import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { requestDaemon } from "@/daemon/request-daemon"
 import assert from "node:assert/strict"
 import {
   existsSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   writeFileSync,
   mkdirSync,
   symlinkSync,
   renameSync,
 } from "node:fs"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { scheduleRestart } from "@/maintenance/schedule-restart"
 import { isProcessAlive } from "@/daemon/daemon-lease"
 import { appendDaemonLog } from "@/daemon/append-daemon-log"
 import { createConnection } from "node:net"
+import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
-const repository = resolve(import.meta.dir, "..")
-const workspace = realpathSync(mkdtempSync("/tmp/leuco-maint-"))
+const fixture = new VerifierWorkspace("leuco-maint-")
+const workspace = fixture.path
 const home = join(workspace, "state")
+fixture.trackDaemon(home)
 const codexHome = join(workspace, "codex")
 mkdirSync(codexHome)
 writeFileSync(join(codexHome, "auth.json"), "native-auth-sentinel")
 const fakeBin = join(workspace, "bin")
-mkdirSync(fakeBin)
-const fake = join(fakeBin, "codex")
-writeFileSync(
-  fake,
-  `#!/bin/sh\nexec '${process.execPath}' '${join(repository, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-  { mode: 0o700 },
-)
+const fake = writeFakeCodex(fakeBin)
 const trace = join(workspace, "trace.jsonl")
 const env = {
   ...process.env,
@@ -45,28 +42,21 @@ const env = {
   CODEX_HOME: codexHome,
   LEUCO_VERIFY_TRACE: trace,
 }
-const executable = join(repository, "lib/index.ts")
 async function cli(args: string[], code: number | ReadonlyArray<number> = 0, stateHome = home) {
-  const child = Bun.spawn([process.execPath, executable, ...args, "--json"], {
-    cwd: workspace,
-    env: { ...env, LEUCO_HOME: stateHome },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
-  })
-  const timer = setTimeout(() => child.kill(), 20000)
-  try {
-    const stdout = await new Response(child.stdout).text()
-    const stderr = await new Response(child.stderr).text()
-    const actualCode = await child.exited
-    assert.ok(
-      typeof code === "number" ? actualCode === code : code.includes(actualCode),
-      `${args.join(" ")}\n${stdout}\n${stderr}`,
-    )
-    return JSON.parse(actualCode === 0 ? stdout : stderr)
-  } finally {
-    clearTimeout(timer)
-  }
+  const output = await readProcess(
+    spawnCli({
+      args: [...args, "--json"],
+      cwd: workspace,
+      env: { ...env, LEUCO_HOME: stateHome },
+      stdin: "pipe",
+    }),
+    20000,
+  )
+  assert.ok(
+    typeof code === "number" ? output.exitCode === code : code.includes(output.exitCode),
+    `${args.join(" ")}\n${output.stdout}\n${output.stderr}`,
+  )
+  return JSON.parse(output.exitCode === 0 ? output.stdout : output.stderr)
 }
 async function readyAfter(pid: number | null, operationId: string) {
   const deadline = Date.now() + 15000
@@ -103,12 +93,8 @@ try {
   assert.ok(wrongIdentity instanceof Error && wrongIdentity.message.includes("identity changed"))
   assert.equal((await cli(["status"])).data.runtime.instanceId, before.runtime.instanceId)
 
-  const held = Bun.spawn([process.execPath, executable, "ask", "hold", "--json"], {
-    cwd: workspace,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  })
+  const held = spawnCli({ args: ["ask", "hold", "--json"], cwd: workspace, env })
+  fixture.trackProcess(held)
   const activeDeadline = Date.now() + 5000
   const active: { requestId: string | null } = { requestId: null }
   while (Date.now() < activeDeadline) {
@@ -199,8 +185,7 @@ try {
     ),
   )
   assert.equal((await cli(["doctor"])).data.versions.flume, "0.12.0")
-  await held.exited
-  const heldError = JSON.parse(await new Response(held.stderr).text())
+  const heldError = JSON.parse((await readProcess(held, 20000)).stderr)
   assert.equal(heldError.requestId, active.requestId)
   const history = (await cli(["events", "--request", active.requestId!])).data
   assert.ok(history.some((entry: { event: { type: string } }) => entry.event.type === "turn.start"))
@@ -371,6 +356,7 @@ try {
   assert.equal(isProcessAlive(ended.pid), false)
   for (const ownership of ["missing", "stale"]) {
     const changedHome = join(workspace, `lost-owner-${ownership}`)
+    fixture.trackDaemon(changedHome)
     mkdirSync(changedHome)
     const ownerPath = join(changedHome, "daemon.json")
     writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, token: randomUUID() }), {
@@ -428,6 +414,7 @@ try {
     }
   }
   const supersededHome = join(workspace, "superseded")
+  fixture.trackDaemon(supersededHome)
   const original = scheduleRestart(supersededHome)
   const replacement = { ...original, id: randomUUID(), workerPid: null }
   const journal = new NodeMaintenanceStore(supersededHome)
@@ -457,14 +444,11 @@ try {
   assert.ok(!JSON.stringify(boundedStatus).includes("xoxb-synthetic-journal"))
   assert.equal(boundedStatus.maintenance.causes[0].code, "EBOOT")
   assert.ok(readFileSync(join(boundedJournalHome, "maintenance.json")).length < 20000)
-  const boundedEvents = new LeucoEventLog({ eventLogPath: join(boundedJournalHome, "events.db") })
-  try {
-    const entry = boundedEvents.query({ requestId: oversized.id })[0]?.event
-    assert.ok(entry?.type === "maintenance")
-    assert.equal(entry.error, boundedStatus.maintenance.error)
-  } finally {
-    boundedEvents.close()
-  }
+  const boundedEvent = readLeucoEvents(join(boundedJournalHome, "events.db"), 1, {
+    requestId: oversized.id,
+  })[0]?.event
+  assert.ok(boundedEvent?.type === "maintenance")
+  assert.equal(boundedEvent.error, boundedStatus.maintenance.error)
   const limitedHome = join(workspace, "recovery-limit")
   mkdirSync(limitedHome)
   const bounded = new NodeMaintenanceStore(limitedHome)
@@ -533,7 +517,8 @@ try {
   console.log(
     "Maintenance passed: detached self-restart, correlated errors, stale repair, explicit state backup/reset, bounded logs, native auth preserved, no replay",
   )
+} catch (error) {
+  fixture.recordFailure(error)
 } finally {
-  await cli(["stop"]).catch(() => {})
-  rmSync(workspace, { recursive: true, force: true })
+  await fixture.close((stateHome) => cli(["stop"], 0, stateHome))
 }

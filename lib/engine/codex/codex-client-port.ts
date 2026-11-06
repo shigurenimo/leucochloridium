@@ -1,4 +1,3 @@
-import type { LogDeliveryHealth } from "@/log-delivery-health-schema"
 import type { ThreadStartResult } from "@/engine/codex/codex-schemas"
 import type { ThreadResumeParams, ThreadStartParams } from "@/engine/codex/codex-types"
 
@@ -22,7 +21,6 @@ export type CodexClientPort = {
     starting: boolean
     stopping: boolean
     cleaningUp: boolean
-    diagnostics?: LogDeliveryHealth
     activeTurns: number
   }
   isRunning(): boolean

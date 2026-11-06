@@ -18,7 +18,7 @@ export async function stopDaemon(props: Props) {
     assertRecordedDaemonsStopped(new NodeMaintenanceStore(home).readOperation(), isProcessAlive)
     return { running: false }
   }
-  const stopped = z.object({ stopped: z.boolean(), processWillExit: z.boolean() }).parse(
+  const acknowledgement = z.object({ processWillExit: z.boolean() }).parse(
     await requestDaemon({
       home,
       path: "/stop",
@@ -28,13 +28,8 @@ export async function stopDaemon(props: Props) {
       expectedLease: lease,
     }),
   )
-  if (!stopped.stopped)
-    throw new CliError(
-      "STATE_UNCERTAIN",
-      "Shutdown was requested but resource closure was not confirmed; inspect status and events",
-    )
-  if (stopped.processWillExit) {
-    await waitForDaemonExit(lease.pid, signal).catch((cause: unknown) => {
+  if (acknowledgement.processWillExit) {
+    await waitForDaemonExit(lease.pid, 15_000, signal).catch((cause: unknown) => {
       const failure = new CliError(
         "STATE_UNCERTAIN",
         `Leuco resources stopped but process exit was not confirmed${signal?.aborted ? " because observation was cancelled" : ""}; inspect status and logs before another start`,

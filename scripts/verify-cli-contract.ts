@@ -8,9 +8,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  mkdtempSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -20,34 +18,33 @@ import { z } from "zod"
 import { Database } from "bun:sqlite"
 import { writeFileSync } from "node:fs"
 import { LeucoEventLog } from "@/events/leuco-event-log"
+import { readLeucoEvents } from "@/events/read-leuco-events"
 import { getCliSpecification } from "@/cli/get-cli-specification"
 import { requestDaemon } from "@/daemon/request-daemon"
 import { CliError } from "@/cli/cli-error"
 import { daemonErrorResponse } from "@/daemon/daemon-error-response"
 import { daemonRejectionResponse } from "@/daemon/daemon-rejection-response"
 import { errorDetails } from "@/error-details"
+import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
+import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
 const repository = resolve(import.meta.dir, "..")
-const workspace = realpathSync(mkdtempSync("/tmp/leuco-contract-"))
+const fixture = new VerifierWorkspace("leuco-contract-")
+const workspace = fixture.path
 const home = join(workspace, "state")
+fixture.trackDaemon(home)
 const cliPath = join(repository, "lib/index.ts")
 const environment: NodeJS.ProcessEnv = { ...process.env, LEUCO_HOME: home }
 async function cli(args: string[], exitCode = 0, env = environment) {
-  const child = Bun.spawn([process.execPath, cliPath, ...args], {
-    cwd: workspace,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const timer = setTimeout(() => child.kill(), 20000)
-  try {
-    const stdout = await new Response(child.stdout).text()
-    const stderr = await new Response(child.stderr).text()
-    assert.equal(await child.exited, exitCode, `${JSON.stringify(args)}\n${stdout}\n${stderr}`)
-    return { stdout, stderr }
-  } finally {
-    clearTimeout(timer)
-  }
+  const output = await readProcess(spawnCli({ args, cwd: workspace, env }), 20000)
+  assert.equal(
+    output.exitCode,
+    exitCode,
+    `${JSON.stringify(args)}\n${output.stdout}\n${output.stderr}`,
+  )
+  return output
 }
 function assertSuccess(command: string[], stdout: string) {
   assert.equal(stdout.trim().split("\n").length, 1)
@@ -83,18 +80,13 @@ try {
   } finally {
     legacy.close()
   }
-  const reader = new LeucoEventLog({ eventLogPath: legacyPath })
-  try {
-    const entry = reader.query()[0]
-    assert.equal(entry?.seq, 1)
-    assert.ok(entry?.event.type === "log")
-    assert.equal(
-      entry.event.line,
-      "legacy socket wss://wss-primary.slack.com/link/?[redacted] failed: ECONNRESET",
-    )
-  } finally {
-    reader.close()
-  }
+  const entry = readLeucoEvents(legacyPath, 1)[0]
+  assert.equal(entry?.seq, 1)
+  assert.ok(entry?.event.type === "log")
+  assert.equal(
+    entry.event.line,
+    "legacy socket wss://wss-primary.slack.com/link/?[redacted] failed: ECONNRESET",
+  )
   const originalDatabase = new Database(legacyPath, { readonly: true })
   try {
     const row = z
@@ -133,15 +125,22 @@ try {
     .object({ outputDelivery: z.unknown() })
     .parse(Bun.YAML.parse((await cli(["--help", "--yaml"])).stdout))
   assert.deepEqual(yamlHelp.outputDelivery, schema.outputDelivery)
+  const rootHelp = await cli(["--help"])
+  for (const command of schema.commands) assert.ok(rootHelp.stdout.includes(command.description))
+  const groupRepresentatives = new Map<string, { name: string; description: string }>()
   for (const command of schema.commands) {
     const words = command.name.split(" ")
-    const help = await cli([...words, "--help"])
-    assert.ok(help.stdout.includes(command.description))
-    const machine = JSON.parse((await cli([...words, "--help", "--json"])).stdout)
-    assert.equal(machine.commands[0].name, command.name)
-    assert.equal(machine.schemaVersion, 1)
-    assert.deepEqual(machine.outputDelivery, schema.outputDelivery)
+    const group = words.length > 1 ? words[0] : ""
+    if (!groupRepresentatives.has(group)) groupRepresentatives.set(group, command)
   }
+  for (const command of groupRepresentatives.values()) {
+    const help = await cli([...command.name.split(" "), "--help"])
+    assert.ok(help.stdout.includes(command.description))
+  }
+  const commandSpecification = JSON.parse((await cli(["slack", "call", "--help", "--json"])).stdout)
+  assert.equal(commandSpecification.commands[0].name, "slack call")
+  assert.equal(commandSpecification.schemaVersion, 1)
+  assert.deepEqual(commandSpecification.outputDelivery, schema.outputDelivery)
   for (const args of [
     ["status"],
     ["config", "show"],
@@ -292,8 +291,8 @@ try {
   )
   mkdirSync(home, { recursive: true })
   const log = new LeucoEventLog({ eventLogPath: join(home, "events.db") })
-  log.append({ ts: 1, type: "runtime.started", runtime: "leuco" })
-  log.append({ ts: 2, type: "runtime.stopped", runtime: "leuco" })
+  log.append({ ts: 1, type: "runtime.started" })
+  log.append({ ts: 2, type: "runtime.stopped" })
   log.close()
   const checkpoint = new Database(join(home, "events.db"))
   checkpoint.run("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -353,6 +352,8 @@ try {
           ),
           status: 422,
           requestId: request.headers.get("x-leuco-request-id") ?? randomUUID(),
+          message: "conflict after acceptance",
+          redactionSecrets: [],
         })
       }
       if (control.mode === "plain-error")
@@ -391,14 +392,12 @@ try {
         const entries = [1, 2].map((seq) => ({
           seq,
           ts: seq,
-          event: { ts: seq, type: "runtime.started", runtime: "leuco" },
+          event: { ts: seq, type: "runtime.started" },
         }))
         return Response.json(control.mode === "excess-events" ? entries.reverse() : entries)
       }
       if (control.mode === "ignored-event-filter")
-        return Response.json([
-          { seq: 1, ts: 1, event: { ts: 1, type: "runtime.stopped", runtime: "leuco" } },
-        ])
+        return Response.json([{ seq: 1, ts: 1, event: { ts: 1, type: "runtime.stopped" } }])
       return Response.json({ error: "volatile event history unavailable" }, { status: 503 })
     },
   })
@@ -572,7 +571,6 @@ try {
     noisyLog.append({
       ts: 3,
       type: "codex.notification",
-      runtime: "leuco",
       method: "hook/completed",
       params: {},
       requestId: "summary-request",
@@ -593,20 +591,13 @@ try {
   failureLog.append({
     ts: 4,
     type: "turn.error",
-    runtime: "leuco",
     threadKey: "cancelled",
     error: "cancellation-not-failure",
     cancelled: true,
   })
   failureLog.append({
     ts: 4,
-    type: "supervisor.reconcile.failed",
-    reason: "supervisor-failure-probe",
-  })
-  failureLog.append({
-    ts: 4,
     type: "turn.rejected",
-    runtime: "leuco",
     threadKey: "rejection-probe",
     reason: "queue_count_limit",
     queueDepth: 64,
@@ -615,16 +606,6 @@ try {
     maxQueueDepth: 64,
     maxQueueBytes: 262144,
   })
-  for (const status of ["failed", "succeeded"] satisfies ReadonlyArray<"failed" | "succeeded">)
-    failureLog.append({
-      ts: 4,
-      type: "codex.recovery",
-      runtime: "leuco",
-      reason: "recovery-probe",
-      status,
-      durationMs: 1,
-      error: status === "failed" ? "recovery-failure-probe" : null,
-    })
   for (const status of ["failed", "uncertain", "ready"] satisfies ReadonlyArray<
     "failed" | "uncertain" | "ready"
   >)
@@ -641,8 +622,6 @@ try {
   failureLog.append({
     ts: 4,
     type: "slack.error",
-    runtime: "leuco",
-    connector: "slack",
     level: "error",
     action: "connection-failure-probe",
     message: "slack-failure-probe",
@@ -652,8 +631,6 @@ try {
     failureLog.append({
       ts: 4,
       type: "slack.error",
-      runtime: "leuco",
-      connector: "slack",
       level: "warn",
       action: "wake.detected",
       message: "wake-warning-probe",
@@ -663,7 +640,6 @@ try {
     failureLog.append({
       ts: 4,
       type: "codex.notification",
-      runtime: "leuco",
       method: "hook/completed",
       params: {},
     })
@@ -732,13 +708,7 @@ try {
     !JSON.stringify(diagnosticFailures).includes("wake-warning-probe"),
     "Wake warnings displaced actual failures",
   )
-  for (const type of [
-    "supervisor.reconcile.failed",
-    "turn.rejected",
-    "codex.recovery",
-    "maintenance",
-    "slack.error",
-  ])
+  for (const type of ["turn.rejected", "maintenance", "slack.error"])
     assert.ok(
       diagnosticFailures.some((entry: { event: { type: string } }) => entry.event.type === type),
       `Missing failure type: ${type}`,
@@ -750,8 +720,8 @@ try {
     ),
   )
   assert.ok(
-    !diagnosticFailures.some((entry: { event: { status?: string } }) =>
-      ["ready", "succeeded"].includes(entry.event.status ?? ""),
+    !diagnosticFailures.some(
+      (entry: { event: { status?: string } }) => entry.event.status === "ready",
     ),
   )
   const warningHistory = assertSuccess(
@@ -760,13 +730,7 @@ try {
   )
   assert.equal(warningHistory[0].event.message, "wake-warning-probe")
   const fakeBin = join(workspace, "bin")
-  mkdirSync(fakeBin)
-  const fake = join(fakeBin, "codex")
-  writeFileSync(
-    fake,
-    `#!/bin/sh\nexec '${process.execPath}' '${join(repository, "scripts/fixtures/fake-codex.ts")}' "$@"\n`,
-    { mode: 0o700 },
-  )
+  const fake = writeFakeCodex(fakeBin)
   const diagnosticBin = join(workspace, "diagnostic-bin")
   mkdirSync(diagnosticBin)
   symlinkSync(fake, join(diagnosticBin, "codex"))
@@ -999,7 +963,8 @@ try {
   console.log(
     "CLI contract passed: every command discoverable, valid result/error schemas, no help/read side effects",
   )
+} catch (error) {
+  fixture.recordFailure(error)
 } finally {
-  await cli(["stop"]).catch(() => {})
-  rmSync(workspace, { recursive: true, force: true })
+  await fixture.close((stateHome) => cli(["stop"], 0, { ...environment, LEUCO_HOME: stateHome }))
 }

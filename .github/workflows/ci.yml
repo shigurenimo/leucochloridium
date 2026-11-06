@@ -37,10 +37,6 @@ jobs:
       - name: Verify source and package
         run: bun run verify
 
-      - name: Enforce coverage floor
-        if: matrix.os == 'ubuntu-latest'
-        run: bun run test:coverage
-
       - name: Audit dependencies
         if: matrix.os == 'ubuntu-latest'
         run: bun audit

@@ -1,8 +1,8 @@
 /**
- * Outbound port for Slack Web API. The adapter and the `leuco slack call` action
- * depend on this abstract class. Real traffic goes through
- * `LeucoFetchSlackWebClient` (raw fetch over `https://slack.com/api/...`); tests
- * substitute `LeucoMemorySlackWebClient`.
+ * Outbound port for the connector's Slack Web API calls (authTest and reactions).
+ * Real traffic goes through `LeucoFetchSlackWebClient`; tests substitute
+ * `LeucoMemorySlackWebClient`. The `leuco slack call` action constructs the fetch
+ * implementation directly.
  */
 export abstract class LeucoSlackWebClient {
   abstract reactionsAdd(args: { channel: string; timestamp: string; name: string }): Promise<void>

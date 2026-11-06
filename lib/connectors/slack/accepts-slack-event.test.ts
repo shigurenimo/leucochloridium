@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { slackReceptionSchema } from "@/config/config-schema"
+import { receptionRulesSchema } from "@/config/config-schema"
 import { acceptsSlackEvent } from "@/connectors/slack/accepts-slack-event"
 import type { SlackMessageEvent } from "@/connectors/slack/slack-types"
 
@@ -35,7 +35,7 @@ describe("Slack reception rules", () => {
     expect(
       acceptsSlackEvent({
         event: { ...message, ...overrides },
-        reception: slackReceptionSchema.parse(rules),
+        reception: receptionRulesSchema.parse(rules),
         participating,
       }),
     ).toBe(expected)
@@ -53,21 +53,21 @@ describe("Slack reception rules", () => {
     expect(
       acceptsSlackEvent({
         event,
-        reception: slackReceptionSchema.parse({ reactionAdded: ["eyes"] }),
+        reception: receptionRulesSchema.parse({ reactionAdded: ["eyes"] }),
         participating: false,
       }),
     ).toBe(false)
     expect(
       acceptsSlackEvent({
         event,
-        reception: slackReceptionSchema.parse({ reactionRemoved: ["eyes"] }),
+        reception: receptionRulesSchema.parse({ reactionRemoved: ["eyes"] }),
         participating: false,
       }),
     ).toBe(true)
   })
 
   it("rejects misspelled settings and wrong value types", () => {
-    expect(slackReceptionSchema.safeParse({ mention: true }).success).toBe(false)
-    expect(slackReceptionSchema.safeParse({ allowedChannels: "C1" }).success).toBe(false)
+    expect(receptionRulesSchema.safeParse({ mention: true }).success).toBe(false)
+    expect(receptionRulesSchema.safeParse({ allowedChannels: "C1" }).success).toBe(false)
   })
 })

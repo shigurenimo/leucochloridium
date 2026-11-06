@@ -3,24 +3,15 @@ import { sliceTextPrefix } from "@/slice-text-prefix"
 
 export const MAX_CODEX_NOTIFICATION_PARAMS_CHARS = 16_000
 
-const MIN_BOUNDED_JSON_CHARS = 512
-
 /**
  * Preserve small JSON values as-is while replacing oversized diagnostic
  * payloads with a valid, bounded preview.
  */
-export const toBoundedJsonValue = (
-  value: unknown,
-  maxChars = MAX_CODEX_NOTIFICATION_PARAMS_CHARS,
-): unknown => {
-  if (!Number.isSafeInteger(maxChars) || maxChars < MIN_BOUNDED_JSON_CHARS) {
-    throw new Error(`maxChars must be an integer >= ${MIN_BOUNDED_JSON_CHARS}`)
-  }
-
+export const toBoundedJsonValue = (value: unknown): unknown => {
   try {
     const serialized = JSON.stringify(value)
     if (serialized === undefined) return null
-    if (serialized.length <= maxChars) return value
+    if (serialized.length <= MAX_CODEX_NOTIFICATION_PARAMS_CHARS) return value
 
     const metadata = {
       truncated: true,
@@ -28,13 +19,16 @@ export const toBoundedJsonValue = (
       message: "Codex notification params were truncated before diagnostic persistence.",
     }
     const emptyEnvelope = JSON.stringify({ _leuco: metadata, preview: "" })
-    const previewChars = Math.max(0, Math.floor((maxChars - emptyEnvelope.length - 256) / 2))
+    const previewChars = Math.max(
+      0,
+      Math.floor((MAX_CODEX_NOTIFICATION_PARAMS_CHARS - emptyEnvelope.length - 256) / 2),
+    )
     const preview = sliceTextPrefix(serialized, previewChars)
     const envelope = {
       _leuco: { ...metadata, previewChars: preview.length },
       preview,
     }
-    if (JSON.stringify(envelope).length <= maxChars) return envelope
+    if (JSON.stringify(envelope).length <= MAX_CODEX_NOTIFICATION_PARAMS_CHARS) return envelope
 
     return { _leuco: { ...metadata, previewChars: 0 }, preview: "" }
   } catch (error) {

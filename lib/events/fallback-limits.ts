@@ -1,0 +1,1 @@
+export const MEMORY_FALLBACK_CAPACITY = 1000

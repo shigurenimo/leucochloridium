@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto"
 import { runCli } from "@/cli/run-cli"
 import { writeCliError } from "@/cli/write-cli-error"
 import { CliDeadline } from "@/cli/cli-deadline"
+import { parseCliInvocation } from "@/cli/parse-cli-invocation"
 import { CliError, ERROR_CODES } from "@/cli/cli-error"
 import { errorDetails } from "@/error-details"
 
 process.title = "leuco"
+const args = process.argv.slice(2)
 const requestId = randomUUID()
 const execution: { deadline: CliDeadline | null; failed: boolean } = {
   deadline: null,
@@ -29,18 +31,17 @@ const createOutputFailure = () =>
     },
   )
 try {
-  execution.deadline = new CliDeadline(process.argv.slice(2), requestId)
-  await runCli(process.argv.slice(2), { signal: execution.deadline.controller.signal, requestId })
+  const invocation = parseCliInvocation(args)
+  execution.deadline = new CliDeadline(invocation, args, requestId)
+  await runCli(args, { signal: execution.deadline.controller.signal, requestId, invocation })
 } catch (error) {
   execution.failed = true
   execution.deadline?.stopObservation()
   if (!execution.deadline?.expired) {
     try {
-      await writeCliError(
-        outputFailures.length > 0 ? createOutputFailure() : error,
-        process.argv.slice(2),
-        { requestId },
-      )
+      await writeCliError(outputFailures.length > 0 ? createOutputFailure() : error, args, {
+        requestId,
+      })
     } catch (reporting) {
       recordOutputFailure(reporting)
     }
@@ -51,7 +52,7 @@ try {
   if (outputFailures.length > 0) {
     if (!execution.failed && !execution.deadline?.expired) {
       try {
-        await writeCliError(createOutputFailure(), process.argv.slice(2), { requestId })
+        await writeCliError(createOutputFailure(), args, { requestId })
       } catch (error) {
         recordOutputFailure(error)
       }

@@ -8,7 +8,7 @@ const fixture = vi.hoisted(() => ({
   output: vi.fn(),
   update: vi.fn(),
 }))
-vi.mock("@/cli/manage-slack-credentials", () => ({ manageSlackCredentials: fixture.manage }))
+vi.mock("@/cli/manage-chat-credentials", () => ({ manageChatCredentials: fixture.manage }))
 vi.mock("@/cli/write-cli-output", () => ({ writeCliOutput: fixture.output }))
 vi.mock("@/clipboard/node-clipboard", () => ({ NodeClipboard: class {} }))
 vi.mock("@/secrets/bun-credential-store", () => ({ BunCredentialStore: class {} }))

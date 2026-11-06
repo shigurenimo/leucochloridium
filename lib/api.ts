@@ -1,4 +1,4 @@
-import pkg from "../package.json" with { type: "json" }
+import pkg from "leuco/package.json" with { type: "json" }
 
 if (!Bun.semver.satisfies(Bun.version, pkg.engines.bun))
   throw new Error(

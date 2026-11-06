@@ -1,47 +1,18 @@
 import assert from "node:assert/strict"
 import { mkdtempSync, realpathSync, rmSync, readFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { runDaemon } from "@/daemon/run-daemon"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { MemoryCredentialStore } from "@/secrets/memory-credential-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import { DiscordConnector } from "@/connectors/discord/discord-connector"
-import {
-  DiscordEventSource,
-  type DiscordSourceHandlers,
-} from "@/connectors/discord/discord-event-source"
+import { MemoryDiscordEventSource } from "@/connectors/discord/memory-discord-event-source"
 import { discordReceptionSchema } from "@/config/config-schema"
 import { discordCall } from "@/actions/discord/discord-call"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
-class LocalGateway extends DiscordEventSource {
-  handlers: DiscordSourceHandlers | null = null
-  async start(handlers: DiscordSourceHandlers) {
-    this.handlers = handlers
-  }
-  async stop() {
-    this.handlers = null
-  }
-  status() {
-    return this.handlers === null ? "disconnected" : "connected"
-  }
-  async message(id: string, overrides: Record<string, unknown> = {}) {
-    await this.handlers?.onEvent({
-      type: "MESSAGE_CREATE",
-      receivedAt: Date.now(),
-      data: {
-        id,
-        channel_id: "123",
-        guild_id: "456",
-        author: { id: "user" },
-        content: "hello",
-        ...overrides,
-      },
-    })
-  }
-}
-
-const repository = resolve(import.meta.dir, "..")
 const workspace = realpathSync(mkdtempSync(join(tmpdir(), "leuco-discord-")))
 const home = join(workspace, "state")
 const store = new NodeLeucoStore(home)
@@ -71,7 +42,21 @@ globalThis.fetch = Object.assign(
   },
   { preconnect: originalFetch.preconnect },
 )
-const gateway = new LocalGateway()
+const gateway = new MemoryDiscordEventSource()
+async function message(id: string, overrides: Record<string, unknown> = {}): Promise<void> {
+  await gateway.emit({
+    type: "MESSAGE_CREATE",
+    receivedAt: Date.now(),
+    data: {
+      id,
+      channel_id: "123",
+      guild_id: "456",
+      author: { id: "user" },
+      content: "hello",
+      ...overrides,
+    },
+  })
+}
 const codex = new MemoryCodexClient()
 const connector = new DiscordConnector({
   source: gateway,
@@ -79,21 +64,14 @@ const connector = new DiscordConnector({
   reception: discordReceptionSchema.parse({}),
 })
 async function cli(args: string[], success = true): Promise<unknown> {
-  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args, "--json"], {
-    env: { ...process.env, LEUCO_HOME: home },
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const timer = setTimeout(() => child.kill(), 15_000)
-  try {
-    const output =
-      (await new Response(child.stdout).text()) + (await new Response(child.stderr).text())
-    assert.equal((await child.exited) === 0, success, output)
-    assert.ok(!output.includes(botToken), "Discord credential leaked to CLI")
-    return JSON.parse(output).data
-  } finally {
-    clearTimeout(timer)
-  }
+  const result = await readProcess(
+    spawnCli({ args: [...args, "--json"], env: { ...process.env, LEUCO_HOME: home } }),
+    15_000,
+  )
+  const output = result.stdout + result.stderr
+  assert.equal(result.exitCode === 0, success, output)
+  assert.ok(!output.includes(botToken), "Discord credential leaked to CLI")
+  return JSON.parse(output).data
 }
 const running = runDaemon({ home, credentials, codex, connections: [connector] })
 try {
@@ -106,11 +84,11 @@ try {
     if (!readiness.ready) await Bun.sleep(20)
   }
   assert.equal(readiness.ready, true)
-  await gateway.message("1")
+  await message("1")
   assert.equal(codex.turns.length, 0, "Unaddressed message started Codex")
-  await gateway.message("2", { mentions: [{ id: "bot" }] })
+  await message("2", { mentions: [{ id: "bot" }] })
   assert.equal(codex.turns.length, 1)
-  await gateway.message("3", { guild_id: undefined })
+  await message("3", { guild_id: undefined })
   assert.equal(codex.turns.length, 2)
   await cli([
     "discord",

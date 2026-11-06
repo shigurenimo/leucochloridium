@@ -40,9 +40,9 @@ leuco ask --thread notes --json -- 'この構成を確認して'
 
 Codex応答や通知の保持上限を超えた場合は、途中の本文を成功として返さず依頼を失敗させる。上限と診断コードは [Codexの通信と応答保持](.docs/reliability-design.md#codexの通信と応答保持) を参照する。
 
-`--` 以降は本文として扱う。option値が `--` で始まる場合は `--prompt=--text` のように等号形式を使う。ヘルプ・読み取りコマンドはdaemonを起動せず、設定がない場合もホームを作成しない。slack loginは人が用意したクリップボードから直接登録する。AIへ値を渡さない。
+`--` 以降は本文として扱う。option値が `--` で始まる場合は `--prompt=--text` のように等号形式を使う。ヘルプ・読み取りコマンドはdaemonを起動せず、設定がない場合もホームを作成しない。slack login・discord loginは人が用意したクリップボードから直接登録する。AIへ値を渡さない。
 
-標準入力は読まない。必須値の省略はエラーにし、config setへJSONを直接渡す。通常のCLIは30秒で待機を打ち切り、`--timeout-ms` で変更できる。期限切れは終了コード5とSTATE_UNCERTAINを返し、終了処理に最大5秒の猶予を置く。処理が継続している可能性があるため自動再送しない。人が明示した `run --foreground` だけは標準の期限を外す。資格情報登録にも通常の期限を適用する。OS自身の資格情報確認が必要な環境では、OSの解除操作が必要になる。
+標準入力は読まない。必須値の省略はエラーにし、config setへJSONを直接渡す。通常のCLIは30秒で待機を打ち切り、`--timeout-ms` で変更できる。期限切れは終了コード5とSTATE_UNCERTAINを返し、終了処理に最大5秒の猶予を置く。処理が継続している可能性があるため自動再送しない。人が明示した `run --foreground` だけは標準の期限を外す。`start` の起動確認は最大15秒で、CLIの期限が短ければそちらが先に効く。資格情報登録にも通常の期限を適用する。OS自身の資格情報確認が必要な環境では、OSの解除操作が必要になる。
 
 詳細は自動生成の [CLI.md](CLI.md)、AIの運用手順は [同梱スキル](skills/leuco-cli/SKILL.md)。コマンド定義がヘルプ・引数検証・CLI.mdの正本で、`bun run verify` が生成内容の一致と実CLIの契約を検査する。
 
@@ -101,7 +101,7 @@ leuco session reset notes
 
 ```text
 ~/.leuco/
-├─ settings.json   作業場所、SOUL、モデル、Slack資格情報の参照IDと予定
+├─ settings.json   作業場所、SOUL、モデル、Slack・Discordの資格情報参照IDと受信ルール、予定
 ├─ state.json      会話の対応表、予定の最終実行時刻
 ├─ daemon.json     起動中のプロセス識別情報
 ├─ control.sock    同一ユーザー向けのローカル操作用ソケット
@@ -150,7 +150,7 @@ leuco slack logout
 
 `config show` にトークンは含まれない。`config set slack` に平文トークンは渡せない。
 
-Slack Web APIが明示的にHTTP 429を返し、応答の後片付けまで成功した場合だけ、一度再試行する。Retry-Afterの待機は最大30秒、欠落・不正値では1秒。キャンセル後は再試行しない。通信失敗・timeout・429以外のHTTPエラー・結果不明の場合や、ファイル本体の転送は自動再送しない。AIがCLIの失敗後に同じ投稿を自動でやり直してよいという意味ではない。
+Slack Web APIが明示的にHTTP 429を返した場合だけ、Leuco内で一度再試行する。条件は [時刻と待機予算](.docs/reliability-design.md#時刻と待機予算) を参照する。AIがCLIの失敗後に同じ投稿を自動でやり直してよいという意味ではない。
 
 ### 反応するイベントの設定
 
@@ -186,7 +186,7 @@ Slack操作は起動中のdaemonへ依頼し、daemonが保持したトークン
 
 ## Discordを使う場合
 
-Slackと同時に、一つのDiscord Botを接続できる。受信はflumeのGateway、送信はSDKを使わないREST API v10。Discord Developer PortalでBotを作り、**Message Content Intent**を有効にする。対象サーバーへBotを招待し、View Channels / Send Messages / Read Message History、スレッド利用時はSend Messages in Threads、リアクション操作時はAdd Reactionsを許可する。
+Slackと同時に、一つのDiscord Botを接続できる。受信はflumeのGateway、送信はSDKを使わないREST API v10。Discord Developer PortalでBotを作り、Message Content Intentを有効にする。対象サーバーへBotを招待し、View Channels / Send Messages / Read Message History、スレッド利用時はSend Messages in Threads、リアクション操作時はAdd Reactionsを許可する。
 
 ```sh
 leuco stop
@@ -198,7 +198,7 @@ leuco status
 
 `login` はクリップボードからOSストアへ直接保存し、設定には資格情報の参照IDと `messageContent` だけを残す。保存成功はDiscord認証成功を意味しない。起動時にBotの本人確認とGateway接続を行う。削除は停止後に `leuco discord logout`。トークンを引数・設定・環境変数へ渡さず、Codexにも渡さない。
 
-`discordReception` はSlackと同じ種類の受信ルールに、`allowedGuilds` / `deniedGuilds`（サーバーIDの許可／拒否）を追加したもの。**DM・メンション・参加済みスレッドが初期値で有効**。通常投稿とリアクション起動は無効。対象外ではモデルを呼ばない。許可リストの `null` は制限なし、`[]` は全拒否。拒否リストを優先する。サーバー制限はDMには適用せず、チャンネル・ユーザー制限はDMにも適用する。
+`discordReception` はSlackと同じ種類の受信ルールに、`allowedGuilds` / `deniedGuilds`（サーバーIDの許可／拒否）を追加したもの。DM・メンション・参加済みスレッドが初期値で有効。通常投稿とリアクション起動は無効。対象外ではモデルを呼ばない。許可リストの `null` は制限なし、`[]` は全拒否。拒否リストを優先する。サーバー制限はDMには適用せず、チャンネル・ユーザー制限はDMにも適用する。
 
 ```sh
 leuco config set discordReception '{"directMessages":true,"mentions":true,"participatingThreads":true,"channelMessages":false,"reactionAdded":["👀"],"reactionRemoved":[],"allowedGuilds":["123456789"],"allowedChannels":null,"allowedUsers":null}'
@@ -260,7 +260,7 @@ leuco restart
 leuco repair
 ```
 
-statusは準備完了、CodexのPID・初期化・停止状態、Slack接続・予定の健全性、処理中のrequestId、最終活動、待機依頼、直近の失敗、ログ保存の健全性を返す。requestIdと起動ごとのinstanceIdでイベントを関連付け、待ち時間・処理時間も記録する。doctorは設定・状態・制御情報・イベントDB、実効起動設定、依存バージョン、最近の失敗と修復のヒントを調べる。資格情報の取得やモデル呼び出しは行わない。診断失敗にはphaseとcausesを含め、エラーコード・スタック・原因の連鎖を上限付きで返す。
+statusは準備完了、CodexのPID・初期化・停止状態、Slack・Discord接続と予定の健全性、処理中のrequestId、最終活動、待機依頼、直近の失敗、ログ保存の健全性を返す。requestIdと起動ごとのinstanceIdでイベントを関連付け、待ち時間・処理時間も記録する。doctorは設定・状態・制御情報・イベントDB、実効起動設定、依存バージョン、最近の失敗と修復のヒントを調べる。資格情報の取得やモデル呼び出しは行わない。診断失敗にはphaseとcausesを含め、エラーコード・スタック・原因の連鎖を上限付きで返す。
 
 過去の失敗と現在の状態を区別し、requestId・instanceId・発生時刻を照合する。停止中や状態不明の場合も、まずdoctorの診断と案内を確認する。
 
@@ -274,21 +274,11 @@ restartは受付結果を先に返し、独立したプロセスが停止と再�
 
 repairは確認済みの古い制御情報とファイル権限を修復し、応答するdaemonのCodex接続が壊れていれば再起動を受け付ける。停止中なら起動しない。壊れた会話対応表は停止中の `leuco repair --reset-state` でのみバックアップ後に作り直す。設定やOS資格情報、Codex本来の履歴は上書きしない。応答しない生存プロセスを無条件に強制終了しない。ライブSQLiteのDB欠落を検出した場合はrepaired:false・restart:nullとし、doctorでの原因確認を案内する。既存DBの読取異常もissuesへ残し、独立した接続障害の復旧は引き続き受け付ける。
 
-ログは本文を含むため扱いに注意する。既知の資格情報とSlack token形式をマスクし、通知・本文・行の長さを制限する。テキストログは約4MiBでローテーションし、過去3世代を保持する。SQLiteイベントには保存期限・件数・容量の保守があり、実際の制限値と保存失敗はstatusに表示する。起動時にDBが壊れているなど利用不能な場合は、元のDBを上書きせず最大1000件のメモリ履歴へ切り替え、イベントをテキストログにも記録する。statusはmemory-fallbackと保存異常を返し、doctorは非ゼロで診断結果を返す。稼働中のeventsはそのメモリ履歴を取得する。メモリ履歴は停止で失われるため、修復・再起動前に必要な履歴を取得する。daemonへ接続できなくても、eventsは保存済みDBを読める。
+ログと履歴は本文を含むため扱いに注意する。既知の資格情報とSlack token形式をマスクし、通知・本文・行の長さを制限するが、秘密を含む任意の本文すべてを自動判別できるわけではない。資格情報APIの例外は生の文面を出さず、取得できた安全なOSエラーコードを返す。テキストログは約4MiBでローテーションし、過去3世代を保持する。イベントDBの保存期限・件数・容量の実際の制限値と保存失敗はstatusに表示する。
 
-ライブ履歴の取得に失敗し、保存済み履歴だけが読める場合、eventsは終了コード5のSTATE_UNCERTAINを返す。部分的な履歴はerror.details.savedEvents、取得できなかった原因はerror.details.causesに残す。成功や完全な空履歴とは扱わず、処理が実行されなかった証拠にも使わない。制御確認は短い期限付きなので、daemonが応答しなくても保存済み履歴を調べられる。
+イベントDBが壊れているなど利用不能な場合は、元のDBを上書きせず最大1000件のメモリ履歴とテキストログで継続する。statusはmemory-fallbackと保存異常を返し、doctorは非ゼロで診断結果を返す。稼働中のeventsはそのメモリ履歴を返すが、停止で失われるため、修復・再起動前に必要な履歴を取得する。daemonへ接続できなくても、eventsは保存済みDBを読める。
 
-ライブ履歴の形式も検証する。daemonがSQLite保存を報告しているのにDBファイルが消えている場合も、空の成功には置き換えない。通信のタイムアウトなどは標準のcauseに残し、別の診断エラーへ包み直しても元の原因を追えるようにする。
-
-設定保存の成功後にロック解除が失敗する場合もあるため、エラーだけで未保存とは断定しない。処理と後片付けの両方が失敗した場合は、原因を両方残す。ロック情報は通常ファイルとしてサイズ制限付きで読み、FIFOを待って停止しない。JSONへ変換できない値はファイルを置き換える前に拒否する。
-
-資格情報の保存失敗時は設定を読み直し、新しい参照が保存済みならそのOS資格情報を保持する。設定を確認できない場合も見切りで削除せず、復旧用の参照IDと両方の原因を返す。ログアウトは先にSlack無効化を保存してからOS資格情報を削除する。OS側の削除に失敗した場合は無効化済みであることと後片付けに必要な参照IDを返し、トークン値は表示しない。
-
-ファイルのダウンロードは通信待ちの期限と後片付けの期限を分ける。キャンセル・ファイルclose・一時ファイル削除はそれぞれ最大1000msの確認待ちとし、失敗を隠さない。空チャンクはデータの到着と数えず、タイマーが動けるよう処理を譲る。不正なチャンクや使用済みの本文は拒否し、正常な転送・後片付けを確認してから保存先へ公開する。公開とキャンセルが競合した場合は保存先が変わっている可能性を示し、既存ファイルを見切りで巻き戻さない。
-
-通常の処理失敗に加え、未処理の例外・Promiseの失敗も原因を記録して終了処理へ進む。CLIから起動した常駐Botは独立workerで再起動し、失敗した依頼は再送しない。60秒内の自動復旧は3回までとし、それを超えたら失敗理由を記録してループを止める。明示的なrestartで新しい復旧期間を始められる。ライブラリを組み込んだ呼び出し元のプロセスは勝手に再起動しない。正常稼働を装って処理を続けない。終了処理の失敗は元の原因と併記し、片付けを確認できない場合は制御情報を残して二重起動を防ぐ。OSやプロセス自体の停止からの自動起動は、前述のOSサービス管理で行う。
-
-秘密を含む任意の本文すべてを自動判別できるわけではない。資格情報APIの例外は生の文面を出さず、取得できた安全なOSエラーコードを返す。
+結果や後片付けを確認できない操作は、成功とも未実行とも扱わず、STATE_UNCERTAINと原因を返す。CLIから起動した常駐Botは未処理例外の後に独立workerで再起動するが、失敗した依頼は再送せず、自動復旧の回数にも上限がある。ライブラリを組み込んだ呼び出し元のプロセスは再起動しない。OSやプロセス自体の停止からの自動起動は、前述のOSサービス管理で行う。結果の読み方は [障害調査と復旧](.docs/reliability.md)、内部の判断条件は [障害時の設計詳細](.docs/reliability-design.md) を参照する。
 
 ## ローカルの開発版を使う
 
@@ -344,4 +334,4 @@ bun install
 bun run verify
 ```
 
-`verify` はformat/lint、型検査、単体・SQLiteテスト、偽Codexとの実CLI統合検証、実プロセスの異常終了・SQLiteロック・壊れたイベントDB・未処理例外の障害注入、package検証を実行する。実Codexの推論や実Slackへの投稿は行わない。OSストアの実機確認は `bun run scripts/verify-os-credentials.ts` でダミー値の保存・取得・削除を行う。通常のverifyではOSストアを変更しない。
+`verify` はformat/lint、型検査、coverage下限付きの単体テスト、SQLiteテスト、偽Codexとの実CLI統合検証、実プロセスの異常終了・SQLiteロック・壊れたイベントDB・未処理例外の障害注入、package検証を実行する。実Codexの推論や実Slackへの投稿は行わない。OSストアの実機確認は `bun run scripts/verify-os-credentials.ts` でダミー値の保存・取得・削除を行う。通常のverifyではOSストアを変更しない。

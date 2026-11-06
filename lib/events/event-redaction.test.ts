@@ -32,7 +32,6 @@ it("masks nested payloads and property names before sending a failed write to th
   log.append({
     ts: 1,
     type: "codex.notification",
-    runtime: "leuco",
     method: "probe",
     params: { [secret]: [{ value: secret }] },
   })
@@ -45,7 +44,7 @@ it("masks nested payloads and property names before sending a failed write to th
 it("captures a JSON snapshot even when no secret matched", () => {
   const log = new LeucoEventLog()
   const params = { nested: { value: "original" } }
-  log.append({ ts: 1, type: "codex.notification", runtime: "leuco", method: "probe", params })
+  log.append({ ts: 1, type: "codex.notification", method: "probe", params })
   params.nested.value = "later mutation"
   expect(log.query()[0]?.event).toMatchObject({ params: { nested: { value: "original" } } })
   log.close()
@@ -55,7 +54,7 @@ it("masks a complete escaped value before event-line clipping can retain a fragm
   const secret = 'synthetic"private\\\nvalue'
   const log = new LeucoEventLog()
   log.addRedactionSecrets([secret])
-  log.log("warn", `${"x".repeat(15980)}${secret}${"z".repeat(200)}`)
+  log.log("warn", `${"x".repeat(15970)}${secret}${"z".repeat(200)}`)
   const event = log.query()[0]?.event
   expect(event?.type).toBe("log")
   if (event?.type === "log") {
@@ -85,7 +84,6 @@ it("detaches query records and nested payloads from the retained memory history"
     log.append({
       ts: 1,
       type: "codex.notification",
-      runtime: "leuco",
       method: "probe",
       params: { nested: { value: "original" } },
     })

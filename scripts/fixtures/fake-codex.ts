@@ -26,7 +26,6 @@ if (process.env.LEUCO_VERIFY_ENV_GUARD === "1") {
       environmentGuard: {
         slackTokenKeys: names.filter((name) => /^(?:LEUCO_)?SLACK_(?:BOT|APP)_TOKEN$/i.test(name)),
         leucoHomeKeys: names.filter((name) => /^LEUCO_HOME$/i.test(name)),
-        obsoleteProjectKeys: names.filter((name) => /^LEUCO_PROJECT_ID$/i.test(name)),
       },
     })}\n`,
   )

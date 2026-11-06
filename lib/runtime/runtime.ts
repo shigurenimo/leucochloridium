@@ -1,7 +1,7 @@
 import type { DiscordCredentials } from "@/secrets/discord-credentials"
 import { loadDiscordCredentials } from "@/secrets/load-discord-credentials"
 import { executeDiscordCommand } from "@/actions/discord/execute-discord-command"
-import { validateDiscordCommand } from "@/cli/validate-discord-command"
+import { validateDaemonCommand } from "@/cli/validate-daemon-command"
 import { LeucoLogConsumer } from "@/runtime/leuco-log-consumer"
 import { MAX_THREAD_KEY_CHARACTERS, MAX_TURN_INPUT_BYTES } from "@/turn-input-limits"
 import type { LeucoEventQuery } from "@/events/leuco-event-query"
@@ -32,7 +32,6 @@ import type { SlackCredentials } from "@/secrets/slack-credentials"
 import { loadSlackCredentials } from "@/secrets/load-slack-credentials"
 import { executeSlackCommand } from "@/actions/slack/execute-slack-command"
 import type { CliArguments } from "@/cli/parse-arguments"
-import { validateSlackCommand } from "@/cli/validate-slack-command"
 import type { SlackCommandOptions } from "@/runtime/slack-command-options"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import { assertSlackReplyActive } from "@/runtime/assert-slack-reply-active"
@@ -279,9 +278,7 @@ export class LeucoRuntime {
     parsed: CliArguments,
     requestId: string = randomUUID(),
   ): Promise<unknown> {
-    validateDiscordCommand(parsed)
-    if (parsed.words[0] !== "discord" || parsed.words[1] !== "call")
-      throw new Error("Unsupported Discord operation")
+    validateDaemonCommand(parsed, "discord")
     if (this.lifecycle !== "running") throw new Error("Runtime is not running")
     if (this.discordCredentials === null)
       throw new Error(
@@ -335,7 +332,7 @@ export class LeucoRuntime {
   ): Promise<unknown> {
     const requestId = options.requestId
     const signal = options.signal
-    validateSlackCommand(parsed)
+    validateDaemonCommand(parsed, "slack")
     if (this.lifecycle !== "running") throw new Error("Runtime is not running")
     if (this.slackCredentials === null)
       throw new Error(
@@ -559,7 +556,6 @@ export class LeucoRuntime {
     const timeouts = new LeucoTurnTimeouts({
       hardTimeoutMs: this.settings.turnTimeoutMs,
       idleTimeoutMs: this.settings.idleTimeoutMs,
-      clock: { setTimeout, clearTimeout },
     })
     const startedAt = Date.now()
     const startedTick = performance.now()

@@ -6,7 +6,7 @@ it.each(["asc", "desc"] satisfies Array<"asc" | "desc">)(
   (order) => {
     const log = new LeucoEventLog({ diagnosticOutput: null })
     try {
-      log.append({ ts: 1, type: "runtime.started", runtime: "leuco" })
+      log.append({ ts: 1, type: "runtime.started" })
       expect(log.query({ limit: 0, order })).toEqual([])
       expect(log.query({ limit: 1, order })).toHaveLength(1)
     } finally {
@@ -20,7 +20,7 @@ it.each([-1, Number.NaN, Infinity, -Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1])
   (limit) => {
     const log = new LeucoEventLog({ diagnosticOutput: null })
     try {
-      log.append({ ts: 1, type: "runtime.started", runtime: "leuco" })
+      log.append({ ts: 1, type: "runtime.started" })
       for (const order of ["asc", "desc"] satisfies Array<"asc" | "desc">)
         expect(() => log.query({ limit, order })).toThrow(RangeError)
       expect(log.query({ limit: Number.MAX_SAFE_INTEGER })).toHaveLength(1)

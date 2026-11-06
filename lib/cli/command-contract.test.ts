@@ -39,7 +39,7 @@ describe("executable CLI documentation", () => {
         expect(() => validateCommand(parseArguments(example))).not.toThrow()
       expect(
         getCliSpecification(definition.name.split(" ")).commands.map((entry) => entry.name),
-      ).toContain(definition.name)
+      ).toEqual([definition.name])
       expect(renderCliHelp(definition.name.split(" "))).toContain(definition.description)
     })
     for (const parameter of definition.options.filter((option) => option.required)) {
@@ -77,7 +77,7 @@ describe("executable CLI documentation", () => {
       ),
     ).toBe(true)
   })
-  it("selects command groups and rejects guessed paths", () => {
+  it("selects command groups, resolves trailing words like execution and rejects guessed paths", () => {
     expect(getCliSpecification(["slack"]).commands).toHaveLength(5)
     for (const group of ["config", "schedules", "session"]) {
       const commands = getCliSpecification([group]).commands
@@ -86,7 +86,13 @@ describe("executable CLI documentation", () => {
       )
       for (const command of commands) expect(renderCliHelp([group])).toContain(command.name)
     }
-    expect(() => getCliSpecification(["projects"])).toThrow("Unknown help")
-    expect(() => renderCliHelp(["not-real"])).toThrow("Unknown help")
+    expect(
+      getCliSpecification(["ask", "trailing", "text"]).commands.map((entry) => entry.name),
+    ).toEqual(["ask"])
+    expect(renderCliHelp(["slack", "login", "bot"])).toContain(
+      COMMANDS.find((entry) => entry.name === "slack login")?.description,
+    )
+    expect(() => getCliSpecification(["projects"])).toThrow("Unknown command")
+    expect(() => renderCliHelp(["not-real"])).toThrow("Unknown command")
   })
 })

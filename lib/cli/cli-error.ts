@@ -24,7 +24,7 @@ export const ERROR_CODES = {
   NEEDS_HUMAN: {
     exitCode: 4,
     recovery:
-      "Ask the human to copy the required token into the desktop clipboard, then run leuco slack login bot or leuco slack login app. Never request token values in chat.",
+      "Ask the human to copy the required token into the desktop clipboard, then rerun its login command: leuco slack login bot, leuco slack login app or leuco discord login. Never request token values in chat.",
   },
   STATE_UNCERTAIN: {
     exitCode: 5,

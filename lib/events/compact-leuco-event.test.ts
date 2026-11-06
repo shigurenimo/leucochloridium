@@ -8,7 +8,6 @@ it("does not split a Unicode character in truncated turn input", () => {
     compactLeucoEvent({
       ts: 1,
       type: "turn.start",
-      runtime: "leuco",
       threadKey: "cli",
       input: text,
     }),
@@ -19,33 +18,19 @@ it("does not split a Unicode character in truncated turn replies", () => {
     compactLeucoEvent({
       ts: 1,
       type: "turn.complete",
-      runtime: "leuco",
       threadKey: "cli",
       reply: text,
     }),
   ).toMatchObject({ reply: prefix, replyChars: text.length, replyTruncated: true })
 })
-it("keeps the truncation marker after a complete Unicode prefix in log lines", () => {
-  expect(compactLeucoEvent({ ts: 1, type: "log", level: "info", line: text })).toMatchObject({
-    line: `${prefix} [truncated]`,
+it("keeps truncated log lines and their marker within the limit", () => {
+  const logPrefix = "x".repeat(15_987)
+  const compacted = compactLeucoEvent({
+    ts: 1,
+    type: "log",
+    level: "info",
+    line: `${logPrefix}😀${"tail".repeat(10)}`,
   })
-})
-it("does not split a Unicode character in notification previews", () => {
-  const padding = "x".repeat(7_999 - '{"delta":"'.length)
-  const params = { delta: `${padding}😀tail` }
-  expect(
-    compactLeucoEvent({
-      ts: 1,
-      type: "codex.notification",
-      runtime: "leuco",
-      method: "outputDelta",
-      params,
-    }),
-  ).toMatchObject({
-    params: {
-      truncated: true,
-      originalChars: JSON.stringify(params).length,
-      preview: `{"delta":"${padding}`,
-    },
-  })
+  expect(compacted).toMatchObject({ line: `${logPrefix} [truncated]` })
+  if (compacted.type === "log") expect(compacted.line.length).toBeLessThanOrEqual(16_000)
 })

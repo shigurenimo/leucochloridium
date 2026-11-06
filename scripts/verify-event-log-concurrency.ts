@@ -125,7 +125,6 @@ if (process.argv[2] === "hold" || process.argv[2] === "hold-reader") {
     log.append({
       ts: Date.now(),
       type: "codex.notification",
-      runtime: "leuco",
       method: "redaction-probe",
       params: { [secret]: [{ value: secret }] },
     })

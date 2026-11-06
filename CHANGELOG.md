@@ -2,6 +2,21 @@
 
 All notable changes to Leuco are documented here.
 
+## Unreleased
+
+### 変更
+
+- 互換性注意: statusの`runtime.codex.diagnostics`と、それに基づくdoctorの指摘を削除。Codexのログcallback例外は引き続き通信を止めない。
+- 互換性注意: daemon制御APIの失敗はUSAGEを400、それ以外を500で返す。従来の422を前提にした判定は不要。
+- 旧イベント種別`supervisor.reconcile*`・`codex.recovery`とその読取schemaを削除。`recentFailures`と失敗だけの履歴抽出は、失敗・拒否したrequest、failed/uncertainの保守、errorレベルのSlack・textイベントを対象にする。
+- `codex.notification`の保存形を単一の`_leuco`エンベロープに統一。
+- 返されたturn失敗を二重に記録しない。
+- Codex子の環境から`LEUCO_PROJECT_ID`を除去する特別扱いを廃止。
+- `--soul`と`--no-soul`の同時指定をコマンド定義の検証エラーとして返す。
+- Discordのhelp・doctor注記、クリップボード読取とdownload期限切れのエラー文を実際の挙動に合わせた。`start`の起動確認が最大15秒であることを明記。
+- 配布物から`.docs/reliability-verification.md`を除外。`bun run verify`でcoverageの下限も検査する。
+- 内部: Slack・Discordの資格情報管理と受付判定、秘密マスク、daemonのテスト用handlerを共通化し、使われていないファイル・設定（旧TUI用のcomponents.jsonなど）を削除。
+
 ## 0.19.0 - 2026-10-31
 
 ### 変更
@@ -10,7 +25,7 @@ All notable changes to Leuco are documented here.
 - Slack・Discordの受信条件をモデル呼び出し前に制御。標準はDM・メンション・参加済みスレッド、通常投稿・リアクション起動は明示的に有効化する。
 - 互換性注意: Slackの通常投稿は標準でCodexを起動しなくなる。従来の動作にはslackReception.channelMessagesをtrueに設定する。
 
-## 0.18.0 - Unreleased
+## 0.18.0 - 2026-10-31
 
 ### 設計・互換性
 

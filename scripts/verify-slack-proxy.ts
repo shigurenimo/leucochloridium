@@ -8,20 +8,21 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { runDaemon } from "@/daemon/run-daemon"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { MemoryCredentialStore } from "@/secrets/memory-credential-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
+import { spawnCli } from "@scripts/harness/spawn-cli"
+import { readProcess } from "@scripts/harness/read-process"
 
 if (process.platform === "win32")
   throw new Error(
     "Native desktop-helper fixtures are not yet validated on Windows; refusing to read the user's real clipboard.",
   )
 
-const repository = resolve(import.meta.dir, "..")
 const workspace = realpathSync(mkdtempSync("/tmp/leuco-proxy-"))
 const home = join(workspace, "state")
 const clipboardHelpers = join(workspace, "clipboard-helpers")
@@ -108,25 +109,21 @@ globalThis.fetch = Object.assign(
   { preconnect: originalFetch.preconnect },
 )
 async function cli(args: string[], success = true): Promise<string> {
-  const child = Bun.spawn([process.execPath, join(repository, "lib/index.ts"), ...args, "--json"], {
-    cwd: clientDirectory,
-    env: { ...process.env, LEUCO_HOME: home, PATH: clipboardPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const timer = setTimeout(() => child.kill(), 15_000)
-  try {
-    const output =
-      (await new Response(child.stdout).text()) + (await new Response(child.stderr).text())
-    assert.equal((await child.exited) === 0, success, `${args.join(" ")}: ${output}`)
-    assert.ok(
-      !output.includes(botToken) && !output.includes(appToken),
-      "Credential leaked to CLI output",
-    )
-    return success ? JSON.stringify(JSON.parse(output).data) : output
-  } finally {
-    clearTimeout(timer)
-  }
+  const result = await readProcess(
+    spawnCli({
+      args: [...args, "--json"],
+      cwd: clientDirectory,
+      env: { ...process.env, LEUCO_HOME: home, PATH: clipboardPath },
+    }),
+    15_000,
+  )
+  const output = result.stdout + result.stderr
+  assert.equal(result.exitCode === 0, success, `${args.join(" ")}: ${output}`)
+  assert.ok(
+    !output.includes(botToken) && !output.includes(appToken),
+    "Credential leaked to CLI output",
+  )
+  return success ? JSON.stringify(JSON.parse(output).data) : output
 }
 const running = runDaemon({
   home,

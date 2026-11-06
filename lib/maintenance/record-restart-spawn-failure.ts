@@ -2,8 +2,6 @@ import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
 import { recordMaintenanceOperation } from "@/maintenance/record-maintenance-operation"
 import { errorDetails } from "@/error-details"
 import { errorMessage } from "@/error-message"
-import { redactPublicText } from "@/secrets/redact-public-text"
-import { truncateDiagnosticText } from "@/truncate-diagnostic-text"
 
 export function recordRestartSpawnFailure(
   home: string,
@@ -17,10 +15,7 @@ export function recordRestartSpawnFailure(
         ...operation,
         status: "failed",
         updatedAt: Date.now(),
-        error: truncateDiagnosticText(
-          redactPublicText(`Unable to spawn detached restart worker: ${errorMessage(error)}`),
-          4000,
-        ),
+        error: `Unable to spawn detached restart worker: ${errorMessage(error)}`,
         causes: errorDetails(error),
       },
       operation.id,

@@ -1,8 +1,8 @@
 import { getBoundedValidationIssues } from "@/get-bounded-validation-issues"
 import {
-  slackAppMentionEventSchema,
-  slackMessageEventSchema,
-  slackReactionEventSchema,
+  slackAppMentionPayloadSchema,
+  slackMessagePayloadSchema,
+  slackReactionPayloadSchema,
 } from "@/connectors/slack/slack-schemas"
 import type {
   SlackEvent,
@@ -15,33 +15,28 @@ type LeucoSlackEventProcessorProps = {
   botId?: string | null
   /** Hard cap on the dedup map; events older than the TTL are evicted lazily. */
   dedupCapacity?: number
-  /** TTL in ms. Slack redelivers within ~3s; 5 min is generous. */
-  dedupTtlMs?: number
-  /** Clock injection for tests. */
-  now?: () => number
 }
 
 export type ProcessResult = { skip: true; reason: string } | { skip: false; event: SlackEvent }
 
 const DEFAULT_DEDUP_CAPACITY = 10_000
-const DEFAULT_DEDUP_TTL_MS = 5 * 60 * 1000
+/** Slack redelivers within ~3s; 5 min is generous. */
+const DEDUP_TTL_MS = 5 * 60 * 1000
 const FORWARDED_MESSAGE_SUBTYPES = new Set(["bot_message", "file_share", "thread_broadcast"])
 
 /**
  * Pure decision layer for Slack incoming events. Owns:
  *  - schema validation of raw event payloads
  *  - dedup (time-windowed; key → expiresAt)
- *  - filtering of bot self-messages and subtype noise
+ *  - filtering of bot self-messages, subtype noise and non-DM messages
+ *    whose first token mentions another user
  *  - normalization into a `SlackEvent` union
  *
- * No mention gating, no thread tracking. Every channel event the bot sees
- * is forwarded verbatim to the agent; the agent decides whether to respond
- * using the metadata in the envelope.
+ * No mention gating, no thread tracking: the connector tracks the threads the
+ * bot joined and applies the reception rules through `acceptsSlackEvent`.
  */
 export class LeucoSlackEventProcessor {
   private readonly dedupCapacity: number
-  private readonly dedupTtlMs: number
-  private readonly now: () => number
   private readonly seenKeys = new Map<string, number>()
   private botUserId: string | null
   private botId: string | null
@@ -50,14 +45,12 @@ export class LeucoSlackEventProcessor {
     this.botUserId = props.botUserId
     this.botId = props.botId ?? null
     this.dedupCapacity = props.dedupCapacity ?? DEFAULT_DEDUP_CAPACITY
-    this.dedupTtlMs = props.dedupTtlMs ?? DEFAULT_DEDUP_TTL_MS
-    this.now = props.now ?? Date.now
   }
 
   /**
-   * Upgrade the bot identity in place once `auth.test` resolves. Done as a
-   * mutator (rather than rebuilding the processor) so the dedup window
-   * accumulated during the `app.start()` → `auth.test` race window survives.
+   * Set or clear the bot identity for each connector start and stop. A
+   * mutator (rather than a new processor per start) keeps the dedup window
+   * across restarts, so Slack redeliveries that span a restart stay dropped.
    */
   setBotIdentity(botUserId: string | null, botId: string | null): void {
     this.botUserId = botUserId
@@ -65,7 +58,7 @@ export class LeucoSlackEventProcessor {
   }
 
   processAppMention(event: unknown): ProcessResult {
-    const parsed = slackAppMentionEventSchema.safeParse(event)
+    const parsed = slackAppMentionPayloadSchema.safeParse(event)
     if (!parsed.success) {
       return {
         skip: true,
@@ -84,7 +77,7 @@ export class LeucoSlackEventProcessor {
   }
 
   processMessage(event: unknown): ProcessResult {
-    const parsed = slackMessageEventSchema.safeParse(event)
+    const parsed = slackMessagePayloadSchema.safeParse(event)
     if (!parsed.success)
       return {
         skip: true,
@@ -112,7 +105,7 @@ export class LeucoSlackEventProcessor {
   }
 
   processReaction(event: unknown): ProcessResult {
-    const parsed = slackReactionEventSchema.safeParse(event)
+    const parsed = slackReactionPayloadSchema.safeParse(event)
     if (!parsed.success)
       return {
         skip: true,
@@ -183,14 +176,14 @@ export class LeucoSlackEventProcessor {
    * the TTL alone cannot keep up.
    */
   private consume(key: string): boolean {
-    const now = this.now()
+    const now = Date.now()
     const existing = this.seenKeys.get(key)
     if (existing !== undefined && existing > now) return false
 
     // Replacing the entry moves it to the tail of the Map's insertion order,
     // which is what `keys().next().value` evicts when capacity is hit.
     this.seenKeys.delete(key)
-    this.seenKeys.set(key, now + this.dedupTtlMs)
+    this.seenKeys.set(key, now + DEDUP_TTL_MS)
 
     if (this.seenKeys.size > this.dedupCapacity) {
       const first = this.seenKeys.keys().next().value

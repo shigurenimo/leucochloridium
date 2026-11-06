@@ -3,6 +3,7 @@ import { basename } from "node:path"
 import { z } from "zod"
 import type { CliArguments } from "@/cli/parse-arguments"
 import { requiredCliFlag } from "@/cli/required-cli-flag"
+import { SLACK_METHOD_PATTERN } from "@/cli/command-catalog"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 import { fetchSlackFile } from "@/actions/slack/fetch-slack-file"
 import { assertSlackFileResponse } from "@/actions/slack/assert-slack-file-response"
@@ -16,7 +17,7 @@ export async function executeSlackCommand(props: Props): Promise<unknown> {
   const action = parsed.words[1]
   if (action === "call") {
     const method = parsed.words[2]
-    if (!method || !/^[a-zA-Z][a-zA-Z0-9.]+$/.test(method))
+    if (!method || !new RegExp(SLACK_METHOD_PATTERN).test(method))
       throw new Error("A Slack API method is required")
     const body = z
       .custom<Record<string, unknown>>(

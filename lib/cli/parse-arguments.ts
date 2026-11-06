@@ -42,9 +42,8 @@ export function parseArguments(args: readonly string[]): CliArguments {
       throw new CliError("USAGE", `--${name} requires a value`)
     parsed.flags[name] = value
   }
+  // Help and version skip validateCommand, so their output-format conflict is checked here.
   if (parsed.flags.json && parsed.flags.yaml)
     throw new CliError("USAGE", "--json and --yaml cannot be combined")
-  if (parsed.flags.soul !== undefined && parsed.flags["no-soul"])
-    throw new CliError("USAGE", "--soul and --no-soul cannot be combined")
   return parsed
 }

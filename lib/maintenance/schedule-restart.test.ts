@@ -72,9 +72,15 @@ it("keeps the actual asynchronous spawn error in the journal", () => {
   listener(Object.assign(new Error("permission denied xoxb-synthetic-secret"), { code: "EACCES" }))
   expect(fixture.journal.operation).toMatchObject({
     status: "failed",
+    error: "Unable to spawn detached restart worker: permission denied xoxb-synthetic-secret",
     causes: expect.arrayContaining([expect.objectContaining({ code: "EACCES" })]),
   })
-  expect(JSON.stringify(fixture.journal.operation)).not.toContain("xoxb-synthetic-secret")
+  const operation = fixture.journal.operation
+  const causes =
+    operation !== null && typeof operation === "object" && "causes" in operation
+      ? operation.causes
+      : null
+  expect(JSON.stringify(causes)).not.toContain("xoxb-synthetic-secret")
 })
 it("observes and detaches a worker before publication can fail", () => {
   fixture.record

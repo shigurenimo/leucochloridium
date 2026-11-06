@@ -8,7 +8,6 @@ const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
   "SLACK_APP_TOKEN",
   "LEUCO_SLACK_BOT_TOKEN",
   "LEUCO_SLACK_APP_TOKEN",
-  "LEUCO_PROJECT_ID",
   "LEUCO_HOME",
 ])
 

@@ -405,6 +405,29 @@ describe("LeucoCodexClient.runTextTurn", () => {
     await client.stop()
   }, 5000)
 
+  it("keeps the transport running when the host log callback throws", async () => {
+    const onLog = vi.fn(() => {
+      throw new Error("host log failed")
+    })
+    const client = new LeucoCodexClient({
+      bin: "node",
+      args: [
+        "-e",
+        fakeCodexWithCommentaryAndFinal.replace(
+          "setTimeout(() => {",
+          "process.stderr.write('stderr note\\n'); setTimeout(() => {",
+        ),
+      ],
+      onLog,
+    })
+    await client.start()
+
+    await expect(client.runTextTurn("thread-target", "hello")).resolves.toBe("visible answer")
+    expect(onLog).toHaveBeenCalled()
+    expect(client.isRunning()).toBe(true)
+    await client.stop()
+  }, 5000)
+
   it("does not expose commentary when a completed turn has no final answer", async () => {
     const client = new LeucoCodexClient({
       bin: "node",
