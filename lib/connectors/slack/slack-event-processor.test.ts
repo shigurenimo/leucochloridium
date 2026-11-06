@@ -148,9 +148,7 @@ describe("LeucoSlackEventProcessor.processMessage", () => {
 
   it("detects labeled mention syntax returned by Slack search", () => {
     const proc = new LeucoSlackEventProcessor({ botUserId: "UBOT" })
-    const event = expectMessage(
-      proc.processMessage(baseMessage({ text: "<@UBOT|Azamino Aiki> hi" })),
-    )
+    const event = expectMessage(proc.processMessage(baseMessage({ text: "<@UBOT|leuco> hi" })))
     expect(event.mentioned).toBe(true)
     expect(event.text).toBe("hi")
   })

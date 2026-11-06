@@ -1,22 +1,22 @@
 # 障害検証と実機確認の記録
 
-調査の入口は [障害調査と復旧](reliability.md)、現在の契約は [障害時の設計詳細](reliability-design.md) を参照する。ここに記録した過去の検証結果は、現在の稼働状態や最新版の通過件数を示すものではない。現在の結果はverifyの実行出力、実環境はstatus・doctorで確認する。
+調査の入口は [障害調査と復旧](reliability.md)、現在の契約は [障害時の設計詳細](reliability-design.md) を参照する。ここに記録したテストの対応は、現在の稼働状態を示すものではない。現在の結果はverifyの実行出力、実環境はstatus・doctorで確認する。
 
 ## 回帰の証拠
 
-`slack-api-response.test.ts`はauth.testの不正なIDをnullで成功扱いせず、ZodErrorを保持して一度の通信で失敗することを確認する。`slack-auth-diagnostics.test.ts`は差し込まれたclientのnull・空白IDでSocketのstartを呼ばず、認証エラーを一件記録することを確認する。修正前は計10件が失敗した。`verify-slack-http.ts`はBunの実プロセスでも不正なIDの拒否とschemaの原因を確認する。
+`slack-api-response.test.ts`はauth.testの不正なIDをnullで成功扱いせず、ZodErrorを保持して一度の通信で失敗することを確認する。`slack-auth-diagnostics.test.ts`は差し込まれたclientのnull・空白IDでSocketのstartを呼ばず、認証エラーを一件記録することを確認する。`verify-slack-http.ts`はBunの実プロセスでも不正なIDの拒否とschemaの原因を確認する。
 
-`slack-api-response.test.ts`はHTTP 200で返るnull・配列・文字列・数値・ok欠落・不正型・Slackエラーを成功扱いせず、一度しか送信しないことを検証する。修正前は8件すべてが失敗した。`verify-slack-proxy.ts`は同じ応答を偽fetchで実APIクライアントへ返し、実CLIがOPERATION_FAILED・mutationMayHaveOccurred=trueを返し、再送せずrequestIdで失敗ログを調べられることを確認する。
+`slack-api-response.test.ts`はHTTP 200で返るnull・配列・文字列・数値・ok欠落・不正型・Slackエラーを成功扱いせず、一度しか送信しないことを検証する。`verify-slack-proxy.ts`は同じ応答を偽fetchで実APIクライアントへ返し、実CLIがOPERATION_FAILED・mutationMayHaveOccurred=trueを返し、再送せずrequestIdで失敗ログを調べられることを確認する。
 
-Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemCompletedNotificationで、commandExecutionのexitCode・durationMs、MCP・dynamicToolCallのdurationMsがnullを許すことを照合した。`to-bounded-codex-notification.test.ts`は同じnullを含む巨大な出力・結果を要約し、本文を残さないことを検証する。修正前は3件が失敗した。`verify-noninteractive.ts`は実daemonのMCP完了通知で、秘密マスクと文字数上限を守りつつdurationMs=null・hasResult=trueを保持し、結果本文を複製しないことを確認する。
+Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemCompletedNotificationで、commandExecutionのexitCode・durationMs、MCP・dynamicToolCallのdurationMsがnullを許すことを照合した。`to-bounded-codex-notification.test.ts`は同じnullを含む巨大な出力・結果を要約し、本文を残さないことを検証する。`verify-noninteractive.ts`は実daemonのMCP完了通知で、秘密マスクと文字数上限を守りつつdurationMs=null・hasResult=trueを保持し、結果本文を複製しないことを確認する。
 
-`to-bounded-codex-notification.test.ts`はphase省略とnullの両方で巨大なツール結果を要約し、本文をログへ残さないことを確認する。nullのケースは修正前に失敗した。`verify-single-companion.ts`はphase=nullの240万文字の完了通知を送り、依頼が容量超過で失敗してもeventsには文字数と相関情報だけが残り、本文や汎用previewへ戻らないことを確認する。
+`to-bounded-codex-notification.test.ts`はphase省略とnullの両方で巨大なツール結果を要約し、本文をログへ残さないことを確認する。`verify-single-companion.ts`はphase=nullの240万文字の完了通知を送り、依頼が容量超過で失敗してもeventsには文字数と相関情報だけが残り、本文や汎用previewへ戻らないことを確認する。
 
-`handle-daemon-request.test.ts`は再起動APIの相対cwd・SOULと空文字を入力エラーとして拒否し、callbackを呼ばないことを確認する。`maintenance-store.test.ts`は不正なworkingDirectory・cwd・SOULの書き込みで既存記録を保持することを確認する。修正前は計7件が失敗した。`verify-cli-contract.ts`は実daemonで入力エラーとjournal無変更を検証し、`verify-single-companion.ts`はCLIの相対cwd・SOULが呼出元基準で絶対パスとして記録され、通常どおり実行できることを確認する。
+`handle-daemon-request.test.ts`は再起動APIの相対cwd・SOULと空文字を入力エラーとして拒否し、callbackを呼ばないことを確認する。`maintenance-store.test.ts`は不正なworkingDirectory・cwd・SOULの書き込みで既存記録を保持することを確認する。`verify-cli-contract.ts`は実daemonで入力エラーとjournal無変更を検証し、`verify-single-companion.ts`はCLIの相対cwd・SOULが呼出元基準で絶対パスとして記録され、通常どおり実行できることを確認する。
 
-`handle-daemon-request.test.ts`はrestartの廃止オプション・不正なSOUL型・Slack flagsの型違いを実行前に分類し、callback内のUSAGEを未実行扱いにしないことを確認する。修正前は3件が失敗した。`verify-cli-contract.ts`は同じ再起動・Slack入力を実daemonへ送り、構造化されたissuesとmutationMayHaveOccurred=falseが届き、maintenance journalを変更しないことを確認する。
+`handle-daemon-request.test.ts`はrestartの廃止オプション・不正なSOUL型・Slack flagsの型違いを実行前に分類し、callback内のUSAGEを未実行扱いにしないことを確認する。`verify-cli-contract.ts`は同じ再起動・Slack入力を実daemonへ送り、構造化されたissuesとmutationMayHaveOccurred=falseが届き、maintenance journalを変更しないことを確認する。
 
-`read-control-json.test.ts`は容量超過・受信timeout・キャンセル処理のtimeout・不正JSONの元の原因と実行前判定を確認する。`handle-daemon-request.test.ts`はturn・restart・Slackで壊れたJSONを受けてもcallbackを呼ばず、構造化されたUSAGEを返すことを確認する。修正前は8件が失敗した。`verify-cli-contract.ts`は実daemonへ4MiB超の本文を送り、CLI側までphase=control-body・executionStarted=false・mutationMayHaveOccurred=falseが届くことを確認する。
+`read-control-json.test.ts`は容量超過・受信timeout・キャンセル処理のtimeout・不正JSONの元の原因と実行前判定を確認する。`handle-daemon-request.test.ts`はturn・restart・Slackで壊れたJSONを受けてもcallbackを呼ばず、構造化されたUSAGEを返すことを確認する。`verify-cli-contract.ts`は実daemonへ4MiB超の本文を送り、CLI側までphase=control-body・executionStarted=false・mutationMayHaveOccurred=falseが届くことを確認する。
 
 - `build-codex-child-env.test.ts` は大小文字が混在するtoken名とLEUCO_HOMEを確認し、親の環境と通常のCodex認証が保持されることを検査する。`verify-single-companion.ts` は偽Codexの実環境をキー名だけで観測し、tokenがなく、Leucoホームが一つであることを確認する。
 
@@ -168,75 +168,45 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 
 各matcherの全一致を範囲として集め、開始位置で並べてから重なる範囲をまとめる。メモリは一致数に比例するため、旧実装（iteratorから順に取り出す方式、同条件でRSS約95MiB）より大きい。元の文字列だけを照合するため、出力したマーカーを新しい一致として処理しない。
 
-## 実環境の確認方法と過去の記録
-
-2026-10-29にmacOS、Bun 1.4.4、codex-cli 0.163.0で通常のCODEX_HOMEを引き継ぐ一回実行を確認し、実モデルから指定した確認文字列LEUCO_OKが返った。偽Codexによる検証とは区別する。
+## 実環境の確認方法
 
 Slackの実接続は、人が各トークンを一つずつコピーして登録してから確認する。テスト用の補助コマンドとMemory資格情報ストアでの登録検証を、実Slack認証の成功とみなさない。デスクトップ補助コマンドのnative fixtureはmacOS/Linux用で、Windowsでは実クリップボードを誤って読まないよう明示的に停止する。
 
 資格情報登録後の実Slack確認は `bun run scripts/verify-live-slack.ts` を明示的に実行する。auth.testとSocket Mode接続を確認して切断し、受信内容からagentを起動せずSlackへ投稿しない。通常のverifyには含めない。
 
-## 改修時の確認記録
+## 入力・保存・予定の回帰
 
-`handle-daemon-request.test.ts`はmodel・agent・instructions・codexBinを含むturnを実行前に拒否し、長い未知項目名へ埋めた制御credentialが応答に残らないことを確認する。`get-bounded-validation-issues.test.ts`も既知の秘密がpath/messageの短縮位置を跨ぐ場合と元のError不変を確認する。修正前はこの6ケースが失敗した。`verify-cli-contract.ts`では実daemonとrequestDaemonを通しても未対応modelがUSAGE/変更なしになることを確認する。
+`handle-daemon-request.test.ts`はmodel・agent・instructions・codexBinを含むturnを実行前に拒否し、長い未知項目名へ埋めた制御credentialが応答に残らないことを確認する。`get-bounded-validation-issues.test.ts`も既知の秘密がpath/messageの短縮位置を跨ぐ場合と元のError不変を確認する。`verify-cli-contract.ts`では実daemonとrequestDaemonを通しても未対応modelがUSAGE/変更なしになることを確認する。
 
-`handle-daemon-request.test.ts`は空白入力の4通りにUSAGE・validation・executionStarted=falseとtextのissuesを付け、callbackを呼ばないことを確認する。修正前は4件とも情報が欠けて失敗した。callbackがUSAGEを返す／throwする2通りは実行前扱いにならない。`verify-cli-contract.ts`は実daemonへ不正なturnを送り、requestDaemonを通してもUSAGE・該当項目・mutationMayHaveOccurred=falseが保持されることを確認する。
+`handle-daemon-request.test.ts`は空白入力の4通りにUSAGE・validation・executionStarted=falseとtextのissuesを付け、callbackを呼ばないことを確認する。callbackがUSAGEを返す／throwする2通りは実行前扱いにならない。`verify-cli-contract.ts`は実daemonへ不正なturnを送り、requestDaemonを通してもUSAGE・該当項目・mutationMayHaveOccurred=falseが保持されることを確認する。
 
-空文字・半角空白・改行tab・全角空白について、CLI、制御API、SDK、予定の各入口で拒否することを確認する。修正前はCLI・SDK・予定の検証10件が失敗した。RuntimeではCodexのturn・thread作成・queue変更がなく、意味のあるSDK本文と予定promptは空白・改行を保持する。`verify-cli-contract.ts`でも空白のaskと予定作成を副作用なしのUSAGEとして確認する。
+空文字・半角空白・改行tab・全角空白について、CLI、制御API、SDK、予定の各入口で拒否することを確認する。RuntimeではCodexのturn・thread作成・queue変更がなく、意味のあるSDK本文と予定promptは空白・改行を保持する。`verify-cli-contract.ts`でも空白のaskと予定作成を副作用なしのUSAGEとして確認する。
 
-LEUCO_HOMEを空文字にして隔離した実CLIで設定を保存すると、修正前は作業場所にsettings.jsonが作られた。修正後はUSAGEで拒否する。`verify-cli-contract.ts`は同じ入力でファイル一覧・ディレクトリ権限が変わらず、help/versionは表示できることを確認する。`runtime-home.test.ts`は明示的なhomeと環境変数の両方で空文字を設定読込前に拒否し、有効な明示homeの優先順位を保持することを確認する。
+LEUCO_HOMEを空文字にした隔離CLIの設定保存はUSAGEで拒否する。`verify-cli-contract.ts`は同じ入力でファイル一覧・ディレクトリ権限が変わらず、help/versionは表示できることを確認する。`runtime-home.test.ts`は明示的なhomeと環境変数の両方で空文字を設定読込前に拒否し、有効な明示homeの優先順位を保持することを確認する。
 
-`verify-reliability.ts`はSQLiteの実書込失敗と回復の後、doctorのhealthy=trueを維持しつつ、履歴欠落の可能性と調査先をhintsで案内することを確認する。修正前はこの案内がなく失敗した。書込失敗前は、過去のCodex失敗が残っていても同じ案内が出ないことを確認する。
+`verify-reliability.ts`はSQLiteの実書込失敗と回復の後、doctorのhealthy=trueを維持しつつ、履歴欠落の可能性と調査先をhintsで案内することを確認する。書込失敗前は、過去のCodex失敗が残っていても同じ案内が出ないことを確認する。
 
-`repair-runtime.test.ts`はバックアップの同期失敗、close失敗、両方の失敗を注入し、元の状態を置き換えずcloseと予約解除を行い、EIO・EBUSYを保持することを確認する。成功時も同期・closeより前に空状態を保存しない。修正前は新しい4ケースが失敗した。実FSのバックアップ完全一致・0600・並行更新の保護は`verify-storage-cleanup.ts`で引き続き確認する。
+`repair-runtime.test.ts`はバックアップの同期失敗、close失敗、両方の失敗を注入し、元の状態を置き換えずcloseと予約解除を行い、EIO・EBUSYを保持することを確認する。成功時も同期・closeより前に空状態を保存しない。実FSのバックアップ完全一致・0600・並行更新の保護は`verify-storage-cleanup.ts`で引き続き確認する。
 
-`run-cli-reservation.test.ts`と`repair-runtime.test.ts`は中止済みsignalを渡した設定保存・予定追加・会話リセット・資格情報操作・状態復旧の6ケースで、元の中止理由を返し、書込・資格情報操作・予約解除・成功出力へ進まないことを確認する。修正前は6件とも失敗した。`verify-storage-cleanup.ts`は隔離した実FSで設定保存と会話リセットがホームを作らず、復旧が破損状態の元byte列とファイル一覧を変えないことを確認する。
+`run-cli-reservation.test.ts`と`repair-runtime.test.ts`は中止済みsignalを渡した設定保存・予定追加・会話リセット・資格情報操作・状態復旧の6ケースで、元の中止理由を返し、書込・資格情報操作・予約解除・成功出力へ進まないことを確認する。`verify-storage-cleanup.ts`は隔離した実FSで設定保存と会話リセットがホームを作らず、復旧が破損状態の元byte列とファイル一覧を変えないことを確認する。
 
-`repair-runtime.test.ts`は最初の破損判定後、state.lock取得時に状態が正常化した場合、バックアップ・空状態の保存をせずSTATE_CONFLICT/phase=state-resetで終え、予約を解除することを確認する。修正前は保存が呼ばれ失敗した。`verify-storage-cleanup.ts`は実際の別プロセスでstate.lockを保持し、repairの予約を確認してから会話と実行記録を保存する。repairがその書込後に状態を再確認し、両方を保持して不要なバックアップを作らないことを確認する。
+`repair-runtime.test.ts`は最初の破損判定後、state.lock取得時に状態が正常化した場合、バックアップ・空状態の保存をせずSTATE_CONFLICT/phase=state-resetで終え、予約を解除することを確認する。`verify-storage-cleanup.ts`は実際の別プロセスでstate.lockを保持し、repairの予約を確認してから会話と実行記録を保存する。repairがその書込後に状態を再確認し、両方を保持して不要なバックアップを作らないことを確認する。
 
-`verify-storage-cleanup.ts`は不正・途中で切れたUTF-8を含む状態を明示的に復旧し、作成したバックアップが元のbyte列に完全一致して0600であることを確認する。修正前はUTF-8の置換文字へ変わり失敗した。`read-regular-text.test.ts`は同じbyte列を短いreadで読み、元のまま返してcloseすること、既存のBOM・多バイト文字・不完全な末尾の通常テキスト表示が変わらないことを確認する。復旧のunitはバイト読込境界をMemory化し、バックアップ保存失敗と予約解除失敗の両原因を保持する。
+`verify-storage-cleanup.ts`は不正・途中で切れたUTF-8を含む状態を明示的に復旧し、作成したバックアップが元のbyte列に完全一致して0600であることを確認する。`read-regular-text.test.ts`は同じbyte列を短いreadで読み、元のまま返してcloseすること、既存のBOM・多バイト文字・不完全な末尾の通常テキスト表示が変わらないことを確認する。復旧のunitはバイト読込境界をMemory化し、バックアップ保存失敗と予約解除失敗の両原因を保持する。
 
-存在しない予定を隔離した実CLIで削除すると、修正前はUSAGE/mutationMayHaveOccurred=falseにもかかわらず空のホームを作成した。修正後はホームなしのまま終了する。`manage-settings.test.ts`は不在・曖昧な対象でupdateSettingsを呼ばないことと、書込直前に対象が消えた場合の再照合・並行変更の保持を確認する。`verify-cli-contract.ts`も未作成ホームへの削除を入力エラーの副作用検証に含める。
+存在しない予定を隔離した実CLIで削除しても、ホームを作らずに終了する。`manage-settings.test.ts`は不在・曖昧な対象でupdateSettingsを呼ばないことと、書込直前に対象が消えた場合の再照合・並行変更の保持を確認する。`verify-cli-contract.ts`も未作成ホームへの削除を入力エラーの副作用検証に含める。
 
-`manage-settings.test.ts`はtimezone・timeZone・repeat・threadを予定へ指定した4通りについて、USAGE・予定のindex・未対応項目名を返し、updateSettingsを呼ばず既存設定を保持することを確認する。修正前は4件とも成功して項目を削除していた。`verify-cli-contract.ts`は実CLIでtimezone付きの予定を拒否し、ホーム未作成時の副作用なしと既存settings.jsonのbyte単位の不変を確認する。
+`manage-settings.test.ts`はtimezone・timeZone・repeat・threadを予定へ指定した4通りについて、USAGE・予定のindex・未対応項目名を返し、updateSettingsを呼ばず既存設定を保持することを確認する。`verify-cli-contract.ts`は実CLIでtimezone付きの予定を拒否し、ホーム未作成時の副作用なしと既存settings.jsonのbyte単位の不変を確認する。
 
-`schedule-failure-diagnostics.test.ts`の予定名を、秘密文字列が省略位置を跨ぐ長さへ拡張したところ、修正前は8通りともログ全体の上限または保存行との一致で失敗した。修正後は発火・失敗・削除待ちのcallback本文全体が4000文字以内で、原因コードとrequestIdを維持する。予定名を省略しても秘密の断片を残さないよう、全体を秘匿してから制限する。
+`schedule-failure-diagnostics.test.ts`は秘密文字列が省略位置を跨ぐ長さの予定名でも、発火・失敗・削除待ちのcallback本文全体が4000文字以内で、原因コードとrequestIdを維持することを確認する。予定名を省略しても秘密の断片を残さないよう、全体を秘匿してから制限する。
 
-`schedule-diagnostic-log.test.ts`はRuntimeとMemory境界で、予定の読込失敗が原因付きの1イベントと1回のテキスト出力になることを確認する。出力先が失敗しても元のEACCESを保持し、logConsumerの不健全と実行なしを確認する。修正前は2件とも重複した履歴で失敗した。`schedule-failure-diagnostics.test.ts`は読込・実行前保存・turn・削除の失敗について、onTextLogあり／なしの8通りで巨大本文の制限、秘密情報の除去、原因コード、turnのrequestId一致、元のError不変を確認する。
+`schedule-diagnostic-log.test.ts`はRuntimeとMemory境界で、予定の読込失敗が原因付きの1イベントと1回のテキスト出力になることを確認する。出力先が失敗しても元のEACCESを保持し、logConsumerの不健全と実行なしを確認する。`schedule-failure-diagnostics.test.ts`は読込・実行前保存・turn・削除の失敗について、onTextLogあり／なしの8通りで巨大本文の制限、秘密情報の除去、原因コード、turnのrequestId一致、元のError不変を確認する。
 
-`cli-integer-boundaries.test.ts`はeventsのsinceについて、通常・構造化helpの上限、0と最大安全整数の受理、負数・小数・指数表記・精度を失う整数の拒否を確認する。修正前はエラーの上限がundefinedになり9件中7件が失敗し、カタログへ既存の実効上限を明示した後は9件が成功する。
+`cli-integer-boundaries.test.ts`はeventsのsinceについて、通常・構造化helpの上限、0と最大安全整数の受理、負数・小数・指数表記・精度を失う整数の拒否を確認する。
 
-2026-10-29の改修確認では、全体のverify、単体366件、SQLite 8件、CLI・障害注入・配布・bun linkの検証が通過した。通常のCodex環境を使った実モデルとの往復も確認済み。
+`scripts/verify-storage-cleanup.ts` はロック解除の権限エラー・FIFOロック・JSON化できない値と、ダウンロードの停止し得る待ち・一時ファイル削除の権限エラーを、期限付きの子プロセスと隔離した実FSで検査する。停止した子プロセスは親から期限付きで終了させ、既存保存先の保持と元の転送エラー・EACCES / EPERMの保持を確認する。
 
-その後、BotとAppのトークンをそれぞれクリップボードから登録し、実Slackの認証とSocket Mode接続を確認した。常駐起動後、利用者がSlackへの実際の返信も確認した。接続検証scriptは確認後に切断するため、それだけではBotは常駐しない。
-
-実利用で判明した停止中の正常誤判定と、返信用CLIの未登録を見逃す問題をdoctorで修正した。停止中はCHECK_FAILEDと起動案内を返し、Slack設定時に呼び出し元のPATHでleucoが見つからない場合はbun linkとPATH設定・再起動を案内する。隔離したCLI検証で停止中・CLI未登録・登録後の判定を再現する。
-
-実BotへのCLI依頼でも、Bot自身がstatusとdoctorを実行し、Codex稼働・Slack接続・SQLiteとテキストログ保存の正常を確認した。この診断依頼はSlackへ投稿しない。
-
-続く確認で、制御情報破損時も停止中と案内していた問題を修正し、稼働不明と状態リセット不可を返すようにした。起動中の終了はstartのエラーから子PID・終了コード・signal・マスク済み直近ログを直接調べられる。実CLI検証で、修正前の誤判定と原因不足を再現し、修正後の情報・ログ長制限・トークン形式のマスクを確認する。
-
-実Botの過去の正常終了には停止受付の理由がなく、きっかけを断定できなかった。今後は停止理由をログへ残し、制御リクエストはrequestIdを引き継ぐ。隔離CLIで停止依頼の相関と実SIGTERM後の理由保存を確認する。SIGKILLや電源断のように記録できない終了とは区別する。
-
-ログの可読性の確認で、Codexの構造化WARN / ERRORがinfoへ変わり、stderrの受信断片が別の行として保存される問題を修正した。重要度の判定はCodexの構造化stderr境界に限定し、任意の受信本文から推測しない。単体で分割行・最終行・長文の上限と復帰を検査し、隔離した実プロセスでも分割した疑似トークンがマスクされ、warnとして保存されることを確認する。
-
-events --summaryは内部通知とinfoログを読み出し時に除外する。SQLiteではSQLの件数制限より前に、メモリ履歴では配列の件数制限より前に絞り込む。実CLIで大量の通知後も重要イベントを取得でき、壊れたDBによるメモリ履歴でも同じ規則になることを確認する。
-
-診断も件数制限の前に失敗を検索し、大量の通知後に失敗履歴を見失わないようにした。キャンセルは除外する。SOULのファイル種別・読み取り・サイズとCodexの実行可否も確認する。ディレクトリ指定を正常扱いしていた修正前の失敗を実CLIで再現した。設定・起動環境・制御・履歴の診断を分け、Memory境界でも各設定の読み取り失敗を独立して保持することを検査する。
-
-前面実行と停止確認はCLIの出力・振り分けから分けた。startが先頭の引数をcommandと決めつけ、先に置いた--cwdを失う問題も修正した。隔離したCLIでoptionを前後へ置いて同じ実行先になることを確認する。
-
-履歴の読み出しでは、ライブ側の取得失敗を保存済み履歴の成功で隠していた問題を再現した。現在は部分履歴をSTATE_UNCERTAINのdetailsへ残し、原因と不足の可能性を示す。隔離した制御サーバーで、メモリ履歴の拒否・制御の拒否・応答停止を確認し、保存済み履歴が短い期限で読めることを検査する。予定の重複と不正日時も入力エラーに分類し、実CLIとMemory設定で保存前の拒否と既存設定の保持を確認する。
-
-同じ隔離サーバーで不正なイベント応答とSQLiteファイルの消失も再現し、空履歴や不正形式を成功として返さないことを検査する。通信エラーをCliErrorへ変換するときは元のErrorをcauseでも保持する。タイムアウトをさらに診断エラーへ包んでも、causesに元のエラー種別が残ることを実プロセスで確認する。
-
-保存と後片付けの確認では、ロック解除の権限エラーが成功扱いになること、元のエラーと解除エラーの片方が失われること、FIFOロックの読み取りが停止すること、undefinedを既存JSONへ書いてしまうことを隔離した実FSで再現した。scripts/verify-storage-cleanup.tsで権限変更とFIFOを検査し、停止した子プロセスは親から期限付きで終了させる。処理と後片付けの結果は同期用の共通関数で保持し、ファイルを開く前にJSON化できることも確認する。
-
-資格情報では、設定保存後の失敗を保存前と誤認して参照中の秘密を削除する問題と、ログアウト設定の保存前に秘密を削除する問題をMemory実装で再現した。保存済み参照を再確認してから巻き戻し、参照を確認できない場合は保持する。ログアウトは無効化を先に保存する。OS側の後片付けに失敗した場合も参照IDと原因を残す。実トークン・実クリップボードはこの検証では読み書きしない。
-
-ダウンロードでは、応答・読み取り・キャンセルがAbortSignalを無視すると期限後も返らないことと、一時ファイル削除の権限エラーが隠れることを再現した。文字列チャンクをバイト列と誤認して保存先を空ファイルへ置き換える問題、空チャンクの連続でタイマーを動かせず処理が止まる問題も再現した。転送の所有者を一つにまとめ、待ちの中断・期限付きの後片付け・公開前のキャンセル確認を行う。
-
-scripts/verify-storage-cleanup.tsは停止し得る各ケースを期限付きの子プロセスで実行する。修正前は親による強制終了が必要だった各待ちが修正後は戻り、既存保存先を保持することを確認する。削除権限の変更では元の転送エラーとEACCES / EPERMが残ることを検査する。正常なUTF-8・空チャンクを含む転送・0600の保存も確認し、純粋な期限処理は実FSを使わない単体で検査する。
+`manage-chat-credentials.test.ts` は設定保存後の失敗で参照中の秘密を削除しないこと、ログアウトが無効化を保存してからOSストアを削除すること、後片付けの失敗で参照IDと原因を残すことをMemory実装で確認する。実トークン・実クリップボードは読み書きしない。
 
 ## 試験プロセスの後片付け
 
@@ -245,6 +215,8 @@ verify-reliability.tsは起動した全ての隔離ホームを追跡し、試�
 `LEUCO_VERIFY_FAIL_AFTER_DEGRADED_START=1 bun run scripts/verify-reliability.ts` で、異常系daemonの起動直後に意図的な失敗を入れられる。終了コード1とInjected fixture cleanup failureを確認し、メッセージに出た隔離ホームの親ディレクトリと、そのパスを使うプロセスが残っていないことを検査する。通常の製品CLIにはこの試験用設定を渡さない。
 
 メンテナンスの補助イベント保存は、壊れたDBと閉じたstderrを組み合わせた子プロセスで検査する。通常の戻り値に加えてプロセスの終了コード0とjournalのSQLITE_NOTADBを確認し、終了直前の非同期EPIPEを成功と見誤らない。保存・close・注記の複合障害と、別operationへの所有権移動はMemory境界の単体で確認する。
+
+## 所有情報・診断・Codex応答の回帰
 
 HTTP状態だけで実行前の拒否と判定しないことを、実行後に503を返す偽Slack callbackで検査する。実CLIの終了コード5・mutationMayHaveOccurred:trueと、受付記録が一度だけ残ることを確認する。実行前のreadiness拒否は終了コード3・executionStarted:falseで区別し、本文が不正な503はphase=error-bodyとして未確認にする。
 
@@ -264,7 +236,7 @@ Runtimeの起動・turn、scheduleの保存判断、SlackのError付き／本文
 
 所有情報が消失／停止済みPIDへ変わった実FSの再起動試験で、statusとstopが終了コード5・phase=identityを返し、stopがexecutionStarted:falseとなることを検査する。doctorに生存PID・running:null・ownership:unknownが残り、staleLeaseや状態リセット可能を返さないことも確認する。oldPid/newPidと不在／古いleaseの4通りはMemory境界の単体で確認し、未認証のcontrol要求が送られないことを検査する。
 
-主エラーへ17MiBの合成文字列と途中のSlack形式を渡し、修正前のjournal書き込み上限エラーを再現する。Memoryで新規保存・既存ID更新を確認し、実FSでもjournalとイベントに同じ4,000文字以内のマスク済みエラーが残り、実CLIのstatusから原因コードを読めることを検査する。直前に英字・アンダースコアが続くBot/Appトークン形式のマスクも単体で確認する。実トークンは使わない。
+主エラーへ17MiBの合成文字列と途中のSlack形式を渡す。Memoryで新規保存・既存ID更新を確認し、実FSでもjournalとイベントに同じ4,000文字以内のマスク済みエラーが残り、実CLIのstatusから原因コードを読めることを検査する。直前に英字・アンダースコアが続くBot/Appトークン形式のマスクも単体で確認する。実トークンは使わない。
 
 Socket Mode形式の合成接続URLを使い、ws/wss・大文字プロトコル、引用符入りJSON、クエリなしURLを単体で確認する。偽Codexのstderrにも同じURLを送り、foreground表示と保存イベントに接続先が残り、合成ticketが出ないことを実CLIで検査する。実トークンや実接続URLはfixtureへ持ち込まない。
 
@@ -304,7 +276,7 @@ Date.parseが受け付ける年・日付のみ、zoneなし、非閏年2月29日
 
 - `schedule-cleanup-clock.test.ts` はturn待機中に時計を前後2分動かしてから削除を失敗させ、失敗直後には削除を再試行せず、60秒後に削除だけを行いturnが一度であることを確認する。
 
-  同テストで、再試行待ちのtickでもstate=errorと元の失敗が残り、削除成功でreadyへ戻ることを確認する。修正前は一覧の読込だけでreadyへ戻り2件とも失敗した。statusのテストは待機中の健全性判定がhealthy=false/restartRecommended=falseであること、lastFailure snapshotの変更が内部へ届かないこと、対象の削除・無効化・時刻変更後に失敗表示も解放されることを確認する。
+  同テストで、再試行待ちのtickでもstate=errorと元の失敗が残り、削除成功でreadyへ戻ることを確認する。statusのテストは待機中の健全性判定がhealthy=false/restartRecommended=falseであること、lastFailure snapshotの変更が内部へ届かないこと、対象の削除・無効化・時刻変更後に失敗表示も解放されることを確認する。
 
 - `schedule-cleanup-status.test.ts` は削除失敗後のpending/nextRetryAt、返したstatusの変更による内部汚染なし、削除・無効化・日時変更後の古い待機の解放とdurable記録・一度限りの実行を確認する。時計のテストは削除回復後のpending=0も確認し、`verify-single-companion.ts` は実daemonのstatusへcleanupが届くことを確認する。
 

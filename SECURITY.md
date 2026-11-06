@@ -36,7 +36,7 @@ Slack private file取得では認証付きの通信先を検証する。Slack We
 
 Discord Bot tokenもクリップボードからOSストアへ直接登録し、起動時だけ読み込む。資格情報はdaemonで保持し、既知のDiscord token環境変数をCodex子プロセスから除く。API通信は固定したDiscord RESTホストだけへ送信し、redirectや相対pathのtraversalを拒否する。既知の保存済みtokenをAPI応答・ログからマスクする。
 
-Discord受信本文・添付URL・リアクションは外部入力。受信ルールはモデル呼び出し前に適用する。final answerは内部出力で、投稿・リアクションは明示的なCLI操作。受信ルールやJEVのような分類器は操作の権限を増やすものではない。
+Discord受信本文・添付URL・リアクションは外部入力。受信ルールはモデル呼び出し前に適用する。final answerは内部出力で、投稿・リアクションは明示的なCLI操作。受信ルールや外部の分類器は操作の権限を増やすものではない。
 
 ## 保存
 
