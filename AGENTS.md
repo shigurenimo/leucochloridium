@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Leucoは一匹のCodexを常駐させるBun専用CLI。使い方は [README.md](README.md)、コマンドは [CLI.md](CLI.md)、アクセス境界は [SECURITY.md](SECURITY.md)。
 

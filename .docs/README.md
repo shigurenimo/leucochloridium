@@ -5,7 +5,7 @@
 - [README](../README.md)：起動、Codexとの共有、Slack、Discord、予定、運用。
 - [CLI.md](../CLI.md)：コマンドの引数、結果、副作用、再試行時の注意。
 - [同梱スキル](../skills/leuco-cli/SKILL.md)：AIがCLIで調査・操作する手順。
-- [CLAUDE.md](../CLAUDE.md)：コードの構造、境界、不変条件、検証。
+- [AGENTS.md](../AGENTS.md)：コードの構造、境界、不変条件、検証。
 - [SECURITY.md](../SECURITY.md)：資格情報とアクセス権限の境界。
 
 CLI仕様の正本は `lib/cli/command-catalog.ts`。helpとCLI.mdは同じ定義から生成する。変更後は `bun run docs:cli`、検証は `bun run verify` を使う。実Slackへの投稿やCodex推論は検証に使わない。
