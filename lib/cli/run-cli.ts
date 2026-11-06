@@ -9,6 +9,8 @@ import { launchOverrides } from "@/cli/launch-overrides"
 import { repairRuntime } from "@/maintenance/repair-runtime"
 import { scheduleRestart } from "@/maintenance/schedule-restart"
 import { readMaintenance } from "@/maintenance/read-maintenance"
+import { readMaintenanceOperation } from "@/maintenance/read-maintenance-operation"
+import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { diagnoseRuntime } from "@/cli/diagnose-runtime"
 import { randomUUID } from "node:crypto"
 import { leucoHomeSchema } from "@/config/leuco-home-schema"
@@ -93,7 +95,7 @@ export async function runCli(
     return
   }
   if (command === "start") {
-    await print(await startDaemon(home, parsed, signal))
+    await print(await startDaemon(home, parsed, { signal, requestId }))
     return
   }
   if (command === "restart") {
@@ -115,17 +117,22 @@ export async function runCli(
   }
   if (command === "repair") {
     await print(
-      await repairRuntime(home, { resetState: parsed.flags["reset-state"] === true, signal }),
+      await repairRuntime(home, {
+        resetState: parsed.flags["reset-state"] === true,
+        signal,
+        requestId,
+      }),
     )
     return
   }
   if (command === "status") {
     const lease = readDaemonLease(home)
     if (lease === null || !isProcessAlive(lease.pid)) {
-      const maintenance = readMaintenance(home)
-      if (maintenance !== null && "oldPid" in maintenance)
-        assertRecordedDaemonsStopped(maintenance, isProcessAlive)
-      await print({ running: false, maintenance })
+      assertRecordedDaemonsStopped(
+        readMaintenanceOperation(new NodeMaintenanceStore(home)),
+        isProcessAlive,
+      )
+      await print({ running: false, maintenance: readMaintenance(home) })
       return
     }
     await print(
@@ -246,7 +253,7 @@ export async function runCli(
     return
   }
   if (command === "doctor") {
-    const report = await diagnoseRuntime(home, signal)
+    const report = await diagnoseRuntime(home, signal, requestId)
     if (!report.healthy)
       throw new CliError("CHECK_FAILED", "Environment or daemon checks failed", report)
     await print(report)

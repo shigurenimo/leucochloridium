@@ -35,3 +35,11 @@ it("permits the acquiring process itself but still checks every other recorded P
   expect(() => assertRecordedDaemonsStopped(operation, (pid) => pid === 42, 42)).not.toThrow()
   expect(() => assertRecordedDaemonsStopped(operation, () => true, 42)).toThrow("still alive")
 })
+it("skips recorded PIDs whose exit was confirmed even when the number is reused", () => {
+  const confirmed = operationSchema.parse({ ...operation, oldPidExited: true, newPidExited: true })
+  expect(() => assertRecordedDaemonsStopped(confirmed, () => true)).not.toThrow()
+  const oldOnly = operationSchema.parse({ ...operation, oldPidExited: true })
+  expect(() => assertRecordedDaemonsStopped(oldOnly, () => true)).toThrow(
+    expect.objectContaining({ details: expect.objectContaining({ pid: 43 }) }),
+  )
+})

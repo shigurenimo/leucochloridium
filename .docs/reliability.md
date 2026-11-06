@@ -18,7 +18,7 @@ JSON / YAML版ヘルプのoutputDeliveryから、出力期限と未確認時の�
 
 ## 復旧の判断
 
-停止が確認でき、常駐させる意図がある場合は `leuco start` を使う。起動中やSlack再接続中はstatusを観測する。応答しないPID、所有情報の破損、STATE_UNCERTAINは停止確認ではない。所有情報を削除したり、daemonを重ねて起動したりしない。
+停止が確認でき、常駐させる意図がある場合は `leuco start` を使う。起動中やSlack再接続中はstatusを観測する。応答しないPID、所有情報の破損、STATE_UNCERTAINは停止確認ではない。所有情報を削除したり、daemonを重ねて起動したりしない。phase=identityは終了を確認していない記録済みPIDが生きている状態、phase=maintenance-journalはmaintenance.jsonを読めない状態で、どちらもstartを含む操作が実行前に止まる。maintenance.jsonを保ったまま、内容とPIDを調べる。
 
 `leuco repair` は所有者だけの権限と確認済みの古い制御情報を修復する。稼働中のCodexや入力接続に復旧が必要なら再起動を依頼する。設定・資格情報は自動で上書きしない。ローカル権限の修正後に失敗する場合があるため、STATE_CONFLICTやNOT_RUNNINGでも変更前とは断定しない。
 

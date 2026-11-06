@@ -68,3 +68,28 @@ it.each(["../auth.test", "chat.postMessage?token=x", "chat/postMessage", " "])(
     ).toThrow()
   },
 )
+
+it.each([
+  ["GET", "/users/@me"],
+  ["GET", "/channels/123/messages?limit=10"],
+  ["PUT", "/channels/1/messages/2/reactions/%F0%9F%91%8D/@me"],
+  ["DELETE", "/channels/1/messages/2", "--body", "{}"],
+])("accepts a Discord call the daemon would dispatch: %s %s", (...args) => {
+  expect(() => validateCommand(parseArguments(["discord", "call", ...args]))).not.toThrow()
+})
+
+it.each([
+  ["GET", "https://evil.test", "Invalid endpoint"],
+  ["GET", "//evil.test", "Invalid endpoint"],
+  ["GET", "/channels/1#fragment", "Invalid endpoint"],
+  ["GET", "/../evil", "Invalid endpoint"],
+  ["GET", "/channels/%2e%2e/evil", "traversal"],
+  ["GET", "/%5cevil", "traversal"],
+  ["GET", "/channels/%E0%A4", "percent-encoding"],
+  ["GET", "/users/@me --body {}", "--body"],
+])("rejects a Discord call before daemon dispatch: %s %s", (method, endpoint, message) => {
+  const words = endpoint.split(" ")
+  expect(() => validateCommand(parseArguments(["discord", "call", method, ...words]))).toThrow(
+    expect.objectContaining({ code: "USAGE", message: expect.stringContaining(message) }),
+  )
+})

@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest"
 import { FlumeSource, type FlumeSourceStartContext } from "@interactive-inc/flume"
+import type { DiscordSourceLog } from "@/connectors/discord/discord-event-source"
 import { FlumeDiscordEventSource } from "@/connectors/discord/flume-discord-event-source"
 
 class LocalSource extends FlumeSource {
   readonly name = "discord"
   closeError: Error | null = null
   connectError: Error | null = null
-  async connect(_context: FlumeSourceStartContext): Promise<Error | null> {
+  startContext: FlumeSourceStartContext | null = null
+  async connect(context: FlumeSourceStartContext): Promise<Error | null> {
+    this.startContext = context
     if (this.connectError !== null) return this.connectError
     this.setStatus("connected")
     return null
@@ -46,6 +49,35 @@ describe("flume Discord adapter", () => {
     expect(await received.promise).toBe("MESSAGE_CREATE")
     await source.stop()
     expect(source.status()).toBe("disconnected")
+  })
+  it("passes Gateway log levels, actions and redacted causes to the connector", async () => {
+    const local = new LocalSource()
+    const source = new FlumeDiscordEventSource({
+      botToken: "fake-token",
+      intents: 0,
+      source: local,
+    })
+    const logs: DiscordSourceLog[] = []
+    const received = Promise.withResolvers<void>()
+    await source.start({
+      onEvent: async () => {},
+      onStatus: () => {},
+      onLog: (log) => {
+        if (log.action !== "ws.error") return
+        logs.push(log)
+        received.resolve()
+      },
+    })
+    local.startContext?.log.error({
+      action: "ws.error",
+      message: "socket failed for fake-token",
+      error: new Error("reset fake-token"),
+    })
+    await received.promise
+    expect(logs.map((log) => [log.level, log.action, log.message, log.error?.message])).toEqual([
+      ["error", "ws.error", "socket failed for [redacted]", "reset [redacted]"],
+    ])
+    await source.stop()
   })
   it("does not hide rollback failures after a failed startup", async () => {
     const local = new LocalSource()

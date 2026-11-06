@@ -19,6 +19,8 @@ export const operationSchema = z.strictObject({
   oldLeaseId: z.string().nullable(),
   recovery: z.object({ attempt: z.number().int().positive(), startedAt: z.number() }).nullable(),
   newPid: z.number().int().positive().nullable(),
+  oldPidExited: z.literal(true).optional(),
+  newPidExited: z.literal(true).optional(),
   error: z.string().nullable(),
   causes: errorDetailsSchema.optional(),
   eventLogError: z.string().nullable().optional(),

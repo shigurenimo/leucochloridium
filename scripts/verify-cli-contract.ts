@@ -19,6 +19,7 @@ import { Database } from "bun:sqlite"
 import { writeFileSync } from "node:fs"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { readLeucoEvents } from "@/events/read-leuco-events"
+import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { getCliSpecification } from "@/cli/get-cli-specification"
 import { requestDaemon } from "@/daemon/request-daemon"
 import { CliError } from "@/cli/cli-error"
@@ -756,13 +757,11 @@ try {
   assert.equal(readFileSync(join(home, "daemon.json"), "utf8"), "invalid-lease-sentinel")
   rmSync(join(home, "daemon.json"))
   rmSync(join(home, "state.json"))
-  await cli([
-    "config",
-    "set",
-    "slack",
-    JSON.stringify({ credential: "11111111-1111-4111-8111-111111111111" }),
-    "--json",
-  ])
+  const settingsStore = new NodeLeucoStore(home)
+  settingsStore.updateSettings((settings) => ({
+    ...settings,
+    slack: { credential: "11111111-1111-4111-8111-111111111111", ackMode: "mention" },
+  }))
   const missingCli = assertFailure(
     (await cli(["doctor", "--json"], 1, diagnosticEnvironment)).stderr,
     "CHECK_FAILED",
@@ -779,7 +778,15 @@ try {
     linkedCli.errors.some((message: string) => message.includes("bun link")),
     false,
   )
-  await cli(["config", "set", "slack", "null", "--json"])
+  const referenceSnapshot = readFileSync(join(home, "settings.json"), "utf8")
+  const referenceChange = assertFailure(
+    (await cli(["config", "set", "slack", "null", "--json"], 2)).stderr,
+    "USAGE",
+  )
+  assert.equal(referenceChange.mutationMayHaveOccurred, false)
+  assert.match(referenceChange.message, /leuco slack logout/)
+  assert.equal(readFileSync(join(home, "settings.json"), "utf8"), referenceSnapshot)
+  settingsStore.updateSettings((settings) => ({ ...settings, slack: null }))
   const agentEnvironment = {
     ...environment,
     PATH: fakeBin,

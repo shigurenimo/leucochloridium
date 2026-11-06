@@ -1,5 +1,7 @@
 import { assertRecordedDaemonsStopped } from "@/maintenance/assert-recorded-daemons-stopped"
+import { readMaintenanceOperation } from "@/maintenance/read-maintenance-operation"
 import { recordRestartSpawnFailure } from "@/maintenance/record-restart-spawn-failure"
+import { reportRestartSpawnFailure } from "@/maintenance/report-restart-spawn-failure"
 import { errorDetails } from "@/error-details"
 import { getRecoveryWindow } from "@/maintenance/get-recovery-window"
 import { CliError } from "@/cli/cli-error"
@@ -43,7 +45,7 @@ export function scheduleRestart(
         },
       )
     const store = new NodeMaintenanceStore(home)
-    const previous = store.readOperation()
+    const previous = readMaintenanceOperation(store)
     if (
       previous?.workerPid &&
       isProcessAlive(previous.workerPid) &&
@@ -103,7 +105,7 @@ export function scheduleRestart(
       status: "accepted",
       workerPid: child.pid ?? null,
     }
-    child.on("error", (error) => recordRestartSpawnFailure(home, accepted, error))
+    child.on("error", (error) => reportRestartSpawnFailure({ home, operation: accepted, error }))
     child.unref()
     try {
       if (!recordMaintenanceOperation(home, accepted, operation.id))

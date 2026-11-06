@@ -15,6 +15,7 @@ import type { LeucoRuntimeProps } from "@/runtime/runtime"
 import { NodeLeucoStore } from "@/storage/node-leuco-store"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { acquireDaemonLease, releaseDaemonLease } from "@/daemon/daemon-lease"
+import { releaseDaemonOwnership } from "@/daemon/release-daemon-ownership"
 import { handleDaemonRequest } from "@/daemon/handle-daemon-request"
 import { awaitBoundedCleanup } from "@/await-bounded-cleanup"
 import { errorDetails } from "@/error-details"
@@ -45,7 +46,23 @@ export async function runDaemon(props: Props): Promise<void> {
     shutdownRequestId: undefined,
   }
   const failures: unknown[] = []
+  const resources: {
+    runtime: LeucoRuntime | null
+    server: Bun.Server<undefined> | null
+    eventLog: LeucoEventLog | null
+  } = { runtime: null, server: null, eventLog: null }
   const textLog = new DaemonTextLog({ home: props.home })
+  const log = (line: string, level: LogLevel = "info", requestId?: string): void => {
+    const record = `[${level}]${requestId ? ` requestId=${requestId}` : ""} ${line}`
+    const failure = textLog.write(record)
+    if (failure !== null)
+      resources.eventLog?.error(
+        "Text log persistence failed; inspect runtime.textLog.lastFailure",
+        failure,
+        requestId,
+      )
+    if (process.stderr.isTTY) process.stderr.write(`${formatLogLine(record)}\n`)
+  }
   const stopped = new Promise<void>((resolve) => {
     state.resolve = resolve
   })
@@ -53,7 +70,7 @@ export async function runDaemon(props: Props): Promise<void> {
     if (state.stop) return
     const message = `Daemon shutdown requested: ${reason}`
     resources.eventLog?.log("info", message, requestId)
-    textLog.write(`${message}${requestId ? ` requestId=${requestId}` : ""}`)
+    log(message, "info", requestId)
     state.stop = true
     state.shutdownRequestId = requestId
     state.ready = false
@@ -68,19 +85,16 @@ export async function runDaemon(props: Props): Promise<void> {
   const onAbort = (): void => onSignal("abort")
   process.on("SIGTERM", onTerminate)
   process.on("SIGINT", onInterrupt)
-  const resources: {
-    runtime: LeucoRuntime | null
-    server: Bun.Server<undefined> | null
-    eventLog: LeucoEventLog | null
-  } = { runtime: null, server: null, eventLog: null }
   const fatal = (error: unknown): void => {
     if (failures.length === 0)
       failures.push(
         new Error(`Daemon fatal asynchronous failure: ${errorMessage(error)}`, { cause: error }),
       )
     resources.eventLog?.error("Daemon fatal asynchronous failure", error, props.requestId)
-    textLog.write(
+    log(
       `Fatal asynchronous failure: ${resources.eventLog?.redactText(errorMessage(error)) ?? errorMessage(error)}`,
+      "error",
+      props.requestId,
     )
     if (props.ownsProcess && !state.stop) {
       try {
@@ -110,17 +124,6 @@ export async function runDaemon(props: Props): Promise<void> {
       ...(props.cwd === undefined ? {} : { cwd: props.cwd }),
       ...(props.soul === undefined ? {} : { soul: props.soul }),
     })
-    const log = (line: string, level: LogLevel = "info", requestId?: string): void => {
-      const record = `[${level}]${requestId ? ` requestId=${requestId}` : ""} ${line}`
-      const failure = textLog.write(record)
-      if (failure !== null)
-        resources.eventLog?.error(
-          "Text log persistence failed; inspect runtime.textLog.lastFailure",
-          failure,
-          requestId,
-        )
-      if (process.stderr.isTTY) process.stderr.write(`${formatLogLine(record)}\n`)
-    }
     const eventLog = new LeucoEventLog({
       eventLogPath: join(props.home, "events.db"),
       onFallback: (event) => {
@@ -162,7 +165,8 @@ export async function runDaemon(props: Props): Promise<void> {
         return operation
       },
       runTextTurn: (key, text, requestId) => runtime.runTextTurn(key, text, requestId),
-      runDiscordCommand: (parsed, requestId) => runtime.runDiscordCommand(parsed, requestId),
+      runDiscordCommand: (parsed, requestId, signal) =>
+        runtime.runDiscordCommand(parsed, requestId, signal),
       runSlackCommand: (parsed, options) => runtime.runSlackCommand(parsed, options),
       stop: (requestId) => stop("control request", requestId),
       awaitStop: () => runtime.stop(),
@@ -192,8 +196,10 @@ export async function runDaemon(props: Props): Promise<void> {
         : new Error(`Daemon execution failed: ${errorMessage(error)}`, { cause: error }),
     )
     resources.eventLog?.error("Daemon execution failed", error, props.requestId)
-    textLog.write(
+    log(
       `Daemon execution failed: ${resources.eventLog?.redactText(errorMessage(error)) ?? errorMessage(error)}`,
+      "error",
+      props.requestId,
     )
   } finally {
     state.ready = false
@@ -222,7 +228,7 @@ export async function runDaemon(props: Props): Promise<void> {
           causes: errorDetails(drain),
           requestId,
         })
-        textLog.write(`${message}${requestId ? ` requestId=${requestId}` : ""}`)
+        log(message, "warn", requestId)
       }
     }
     for (const close of [
@@ -237,10 +243,17 @@ export async function runDaemon(props: Props): Promise<void> {
       }
     }
     try {
-      if (failures.length === failureCountBeforeCleanup) releaseDaemonLease(props.home, lease)
-      else
-        textLog.write(
+      const ownership = releaseDaemonOwnership({
+        lease,
+        isCleanupComplete: failures.length === failureCountBeforeCleanup,
+        release: (owned) => releaseDaemonLease(props.home, owned),
+        maintenance: new NodeMaintenanceStore(props.home),
+      })
+      if (ownership === "retained")
+        log(
           "Shutdown incomplete; lease retained until the process exits. Do not start a duplicate.",
+          "error",
+          state.shutdownRequestId ?? props.requestId,
         )
     } catch (error) {
       failures.push(error)

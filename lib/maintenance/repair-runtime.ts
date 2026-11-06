@@ -1,5 +1,7 @@
 import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { assertRecordedDaemonsStopped } from "@/maintenance/assert-recorded-daemons-stopped"
+import { readMaintenanceOperation } from "@/maintenance/read-maintenance-operation"
+import { recordDaemonExits } from "@/maintenance/record-daemon-exits"
 import { withDaemonReservation } from "@/daemon/with-daemon-reservation"
 import { errorDetails } from "@/error-details"
 import { withFileLock } from "@/fs/with-file-lock"
@@ -18,7 +20,7 @@ import { inspectDiagnosticHistory } from "@/cli/inspect-diagnostic-history"
 
 export async function repairRuntime(
   home: string,
-  options: { resetState: boolean; signal?: AbortSignal },
+  options: { resetState: boolean; signal?: AbortSignal; requestId?: string },
 ) {
   options.signal?.throwIfAborted()
   const store = new NodeLeucoStore(home)
@@ -35,8 +37,8 @@ export async function repairRuntime(
   }
   const lease = readDaemonLease(home)
   const alive = lease !== null && isProcessAlive(lease.pid)
-  if (!alive)
-    assertRecordedDaemonsStopped(new NodeMaintenanceStore(home).readOperation(), isProcessAlive)
+  const maintenance = new NodeMaintenanceStore(home)
+  if (!alive) assertRecordedDaemonsStopped(readMaintenanceOperation(maintenance), isProcessAlive)
   try {
     store.loadState()
   } catch (error) {
@@ -106,6 +108,8 @@ export async function repairRuntime(
       )
     actions.push("Removed confirmed stale daemon lease and control socket")
   }
+  if (!alive && recordDaemonExits(maintenance, (pid) => !isProcessAlive(pid)))
+    actions.push("Recorded confirmed exit of daemon PIDs in the maintenance journal")
   withFileLock({ lockPath: join(home, "lifecycle.lock") }, () => {
     if (readDaemonLease(home) === null && existsSync(join(home, "control.sock"))) {
       rmSync(join(home, "control.sock"))
@@ -118,6 +122,7 @@ export async function repairRuntime(
       path: "/status",
       expectedLease: lease ?? undefined,
       timeoutMs: 2000,
+      requestId: options.requestId,
       signal: options.signal,
     })
     const health = inspectRuntimeHealth(status)
@@ -151,6 +156,7 @@ export async function repairRuntime(
         expectedLease: lease ?? undefined,
         body: {},
         timeoutMs: 5000,
+        requestId: options.requestId,
         signal: options.signal,
       }),
       ...(history.eventLogValid ? {} : { issues: history.errors }),

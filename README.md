@@ -95,7 +95,7 @@ leuco stop
 leuco session reset notes
 ```
 
-`session reset` はLeucoの対応表を消す。Codexに保存された履歴自体は消さない。失敗した依頼は自動再実行せず、次の依頼時にCodex接続を復旧する。処理中にCodexが終了してもdaemonは維持し、失敗した依頼の原因とrequestIdを記録する。
+`session reset` はLeucoの対応表を消す。Codexに保存された履歴自体は消さない。失敗した依頼は自動再実行せず、次の依頼時にCodex接続を復旧する。Codexが保存履歴の不正でturnを失敗させた場合は、その会話キーの対応表だけを消し、依頼は再実行せず `CODEX_HISTORY_RESET` で再送を案内する。次の依頼は新しい会話で始まる。処理中にCodexが終了してもdaemonは維持し、失敗した依頼の原因とrequestIdを記録する。
 
 `LEUCO_HOME` の標準値は `~/.leuco`。空文字はエラーになるため、標準値へ戻すときは環境変数を解除する。相対パスは呼出元の作業ディレクトリを基準に解決する。ライブラリの明示的な`home`も空文字を受け付けない。
 
@@ -148,7 +148,7 @@ leuco slack login bot
 leuco slack logout
 ```
 
-`config show` にトークンは含まれない。`config set slack` に平文トークンは渡せない。
+`config show` にトークンは含まれない。`config set slack` に平文トークンは渡せない。`config set slack` / `config set discord` で資格情報の参照IDを変えたり `null` にしたりする更新は拒否する。参照の変更はlogin・logoutだけで行い、`ackMode` などを変えるときは `config show` の参照IDを保ったまま渡す。
 
 Slack Web APIが明示的にHTTP 429を返した場合だけ、Leuco内で一度再試行する。条件は [時刻と待機予算](.docs/reliability-design.md#時刻と待機予算) を参照する。AIがCLIの失敗後に同じ投稿を自動でやり直してよいという意味ではない。
 
@@ -209,7 +209,7 @@ leuco restart
 
 Discordのスレッドは独立したチャンネル。GatewayでBotのスレッド参加を確認した場合、またはBot自身のスレッド内投稿を確認した場合に、その後の投稿を受け付ける。退出・削除も反映する。参加記録は最大500件で、再起動時はGatewayの同期情報から再構築する。会話はDM／チャンネル／Discordスレッドごとに分かれる（通常チャンネル内の「返信」は同じ会話）。
 
-`discord.messageContent` は標準で `true`。Portalでintentを許可できない場合は `config show` で取得した資格情報の参照IDを保ったまま `discord` 設定の `messageContent` を `false` にできるが、メンションなしのサーバー投稿・スレッドでは本文や添付情報が取得できない場合がある。詳細は [Discord Gateway仕様](https://docs.discord.com/developers/events/gateway#message-content-intent) を参照。
+`discord.messageContent` は標準で `true`。Portalでintentを許可できない場合は、`config show` の `discord.credential` をそのまま渡して `leuco config set discord '{"credential":"<config showの参照ID>","messageContent":false}'` とする。ただし、メンションなしのサーバー投稿・スレッドでは本文や添付情報が取得できない場合がある。`config set` で参照IDを変える・`null` にする更新はUSAGEで拒否され、設定は変わらない。参照の変更は `leuco discord login` / `leuco discord logout` だけで行う。詳細は [Discord Gateway仕様](https://docs.discord.com/developers/events/gateway#message-content-intent) を参照。
 
 返信は明示的なCLI操作で送る。Codexのfinal answerは自動投稿しない。
 
@@ -314,6 +314,8 @@ Runtime自身が作ったイベントログはstopで閉じる。eventLogを渡�
 会話キーはUTF-16単位で512まで。例えば `😀` は2単位として数える。CLIの `--thread` とライブラリの `runTextTurn` で同じ上限を使う。
 
 Slackを直接操作する場合は `runtime.runSlackCommand(parsed, { upload, requestId, signal })` を使う。第二引数は省略可能な `SlackCommandOptions`。Slack通信の失敗・キャンセルでは、causeも既知の秘密をマスクしたコピーで返し、コード・スタックを上限付きで保持する。CLIの切断とruntime停止はSlack通信・429待機へキャンセルを伝える。停止は進行中の操作を最大1500ms確認し、確認不能なら失敗を返す。キャンセルは外部で受理された操作の取り消しを保証しないため、自動再送しない。
+
+Discordを直接操作する場合は `runtime.runDiscordCommand(parsed, requestId, signal)` を使う。requestIdとsignalは省略可能。CLIの切断とruntime停止はDiscord通信へキャンセルを伝える。停止は進行中の操作を最大1500ms確認し、確認不能なら失敗を返す。キャンセルは外部で受理された操作の取り消しを保証しないため、自動再送しない。
 
 ```ts
 import { LeucoRuntime } from "leuco"

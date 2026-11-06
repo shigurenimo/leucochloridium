@@ -7,8 +7,8 @@ describe("LeucoSlackAdapter.addReaction / removeReaction", () => {
     const client = new LeucoMemorySlackWebClient()
     const adapter = new LeucoSlackAdapter({ client })
 
-    await adapter.addReaction("C1", "1.0", "thumbsup")
-    await adapter.removeReaction("C1", "1.0", "thumbsup")
+    expect(await adapter.addReaction("C1", "1.0", "thumbsup")).toBeNull()
+    expect(await adapter.removeReaction("C1", "1.0", "thumbsup")).toBeNull()
 
     expect(client.calls.reactionsAdd).toEqual([
       { channel: "C1", timestamp: "1.0", name: "thumbsup" },
@@ -18,7 +18,7 @@ describe("LeucoSlackAdapter.addReaction / removeReaction", () => {
     ])
   })
 
-  it("swallows reaction errors silently", async () => {
+  it("ignores idempotent reaction misses", async () => {
     const client = new LeucoMemorySlackWebClient({
       reactionsAdd: () => {
         throw new Error("already_reacted")
@@ -29,7 +29,23 @@ describe("LeucoSlackAdapter.addReaction / removeReaction", () => {
     })
     const adapter = new LeucoSlackAdapter({ client })
 
-    await expect(adapter.addReaction("C1", "1.0", "x")).resolves.toBeUndefined()
-    await expect(adapter.removeReaction("C1", "1.0", "x")).resolves.toBeUndefined()
+    await expect(adapter.addReaction("C1", "1.0", "x")).resolves.toBeNull()
+    await expect(adapter.removeReaction("C1", "1.0", "x")).resolves.toBeNull()
+  })
+
+  it("returns other reaction failures without throwing", async () => {
+    const scope = Object.assign(new Error("missing_scope"), { code: "slack_webapi_platform_error" })
+    const client = new LeucoMemorySlackWebClient({
+      reactionsAdd: () => {
+        throw scope
+      },
+      reactionsRemove: () => Promise.reject("invalid_auth"),
+    })
+    const adapter = new LeucoSlackAdapter({ client })
+
+    expect(await adapter.addReaction("C1", "1.0", "x")).toBe(scope)
+    const removed = await adapter.removeReaction("C1", "1.0", "x")
+    expect(removed).toBeInstanceOf(Error)
+    expect(removed?.message).toBe("invalid_auth")
   })
 })

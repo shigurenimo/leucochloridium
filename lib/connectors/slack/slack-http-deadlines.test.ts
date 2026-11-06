@@ -201,6 +201,48 @@ it("never completes sharing after an external upload times out", async () => {
   expect(fetchFn).toHaveBeenCalledTimes(2)
 })
 
+it("gives the external byte transfer its own deadline while API calls keep theirs", async () => {
+  vi.useFakeTimers()
+  const fetchFn = vi.fn(async (url: string | URL | Request): Promise<Response> => {
+    if (String(url).endsWith("/files.getUploadURLExternal"))
+      return Response.json({
+        ok: true,
+        upload_url: "https://files.slack.com/upload/test",
+        file_id: "F1",
+      })
+    if (String(url).endsWith("/files.completeUploadExternal")) return new Promise(() => {})
+    return new Promise((resolve) => setTimeout(() => resolve(new Response(null)), 40))
+  })
+  const client = new LeucoFetchSlackWebClient({
+    botToken: "test",
+    requestTimeoutMs: 20,
+    uploadTimeoutMs: 50,
+    fetchFn,
+  })
+  const observed: { failure: unknown } = { failure: null }
+  const pending = client
+    .filesUpload({
+      content: new Uint8Array([1]),
+      filename: "test.txt",
+      title: "Test",
+      channelId: "C1",
+      threadTs: null,
+      initialComment: null,
+    })
+    .catch((error: unknown) => {
+      observed.failure = error
+    })
+  await vi.advanceTimersByTimeAsync(40)
+  expect(observed.failure).toBeNull()
+  expect(fetchFn).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(20)
+  await pending
+  expect(String(observed.failure)).toContain(
+    "slack files.completeUploadExternal timed out after 20ms",
+  )
+  expect(vi.getTimerCount()).toBe(0)
+})
+
 it("preserves the JSON parsing cause", async () => {
   const body = new ReadableStream<Uint8Array>({
     start(stream) {

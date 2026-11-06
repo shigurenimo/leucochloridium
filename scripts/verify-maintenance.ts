@@ -5,10 +5,12 @@ import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { requestDaemon } from "@/daemon/request-daemon"
 import assert from "node:assert/strict"
 import {
+  appendFileSync,
   existsSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
   mkdirSync,
   symlinkSync,
@@ -17,14 +19,23 @@ import {
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { scheduleRestart } from "@/maintenance/schedule-restart"
+import { RESTART_OLD_DAEMON_EXIT_TIMEOUT_MS } from "@/maintenance/restart-worker-limits"
 import { isProcessAlive } from "@/daemon/daemon-lease"
 import { appendDaemonLog } from "@/daemon/append-daemon-log"
+import { launchDaemonProcess } from "@/daemon/launch-daemon-process"
 import { createConnection } from "node:net"
 import { VerifierWorkspace } from "@scripts/harness/verifier-workspace"
 import { writeFakeCodex } from "@scripts/harness/write-fake-codex"
 import { spawnCli } from "@scripts/harness/spawn-cli"
 import { readProcess } from "@scripts/harness/read-process"
 
+if (process.argv[2] === "schedule-restart") {
+  scheduleRestart(process.argv[3]!, {
+    workingDirectory: process.argv[4]!,
+    codexHome: process.argv[5]!,
+  })
+  process.exit(0)
+}
 const fixture = new VerifierWorkspace("leuco-maint-")
 const workspace = fixture.path
 const home = join(workspace, "state")
@@ -166,6 +177,12 @@ try {
     ),
     JSON.stringify({ operationId: restart.id, events: shutdownEvents }),
   )
+  const shutdownText = readFileSync(join(home, "daemon.log"), "utf8")
+  for (const record of [
+    `[info] requestId=${restart.id} Daemon shutdown requested: control request`,
+    `[warn] requestId=${restart.id} Control server force-closed`,
+  ])
+    assert.ok(shutdownText.includes(record), `daemon.log lacks the level-tagged record: ${record}`)
   const interrupted = (await cli(["events", "--request", uploadId])).data
   assert.ok(
     interrupted.some(
@@ -196,12 +213,29 @@ try {
     ),
   )
   await cli(["repair"])
-  await cli(["stop"])
-  const deadDeadline = Date.now() + 3000
+  // A signal bypasses stop's own observation, so only the daemon's orderly release can confirm the exit.
+  process.kill(after.pid, "SIGTERM")
+  const deadDeadline = Date.now() + 10000
   while (isProcessAlive(after.pid) && Date.now() < deadDeadline) await Bun.sleep(20)
   assert.equal(isProcessAlive(after.pid), false)
   const savedMaintenance = readFileSync(join(home, "maintenance.json"), "utf8")
+  const confirmedExits = JSON.parse(savedMaintenance)
+  assert.equal(confirmedExits.oldPid, before.pid)
+  assert.equal(confirmedExits.oldPidExited, true, "Restart did not record the old daemon exit")
+  assert.equal(confirmedExits.newPid, after.pid)
+  assert.equal(
+    confirmedExits.newPidExited,
+    true,
+    "Orderly daemon shutdown did not record its own exit",
+  )
+  assert.equal(existsSync(join(home, "daemon.json")), false)
   try {
+    writeFileSync(
+      join(home, "maintenance.json"),
+      JSON.stringify({ ...confirmedExits, oldPid: process.pid, newPid: process.pid }),
+    )
+    assert.equal((await cli(["status"])).data.running, false, "A confirmed exit blocked PID reuse")
+    assert.equal((await cli(["stop"])).data.running, false)
     for (const status of ["accepted", "stopping", "starting", "uncertain"]) {
       writeFileSync(
         join(home, "maintenance.json"),
@@ -227,7 +261,21 @@ try {
     writeFileSync(join(home, "maintenance.json"), "invalid-journal-sentinel")
     const unreadable = (await cli(["doctor"], 1)).error.details
     assert.equal(unreadable.maintenance.status, "unreadable")
+    assert.equal(unreadable.daemon.running, null)
     assert.ok(!unreadable.errors.some((message: string) => message.includes("Run leuco start")))
+    assert.ok(
+      unreadable.failures.some(
+        (failure: { phase: string }) => failure.phase === "maintenance-journal",
+      ),
+    )
+    for (const command of ["status", "stop", "restart", "repair", "start"]) {
+      const refused = (await cli([command], 5)).error
+      assert.equal(refused.code, "STATE_UNCERTAIN", command)
+      assert.equal(refused.details.phase, "maintenance-journal", command)
+      assert.equal(refused.details.executionStarted, false, command)
+    }
+    assert.equal(readFileSync(join(home, "maintenance.json"), "utf8"), "invalid-journal-sentinel")
+    assert.equal(existsSync(join(home, "daemon.json")), false)
   } finally {
     writeFileSync(join(home, "maintenance.json"), savedMaintenance)
   }
@@ -295,6 +343,53 @@ try {
   assert.ok(!framedLog.includes("synthetic-framing-token"))
   appendDaemonLog(home, "x".repeat(17000))
   assert.match((await cli(["logs", "--limit", "1"])).data.lines[0], /truncated log entry/)
+  const stdioChild = join(workspace, "stdio-child.ts")
+  const stdioGo = join(workspace, "stdio-go")
+  writeFileSync(
+    stdioChild,
+    [
+      'import { existsSync } from "node:fs"',
+      "const deadline = Date.now() + 10000",
+      `while (!existsSync(${JSON.stringify(stdioGo)}) && Date.now() < deadline) await Bun.sleep(20)`,
+      'process.stderr.write("child-stderr-after-rotation\\n")',
+      'process.stdout.write("child-stdout-after-rotation\\n")',
+    ].join("\n"),
+  )
+  const liveLog = join(home, "daemon.log")
+  const liveInode = statSync(liveLog).ino
+  const stdioProcess = launchDaemonProcess({
+    home,
+    arguments: [stdioChild],
+    cwd: workspace,
+    env: process.env,
+  })
+  for (const generation of [1, 2, 3, 4]) {
+    appendFileSync(liveLog, `${"s".repeat(4 * 1024 * 1024)}\n`)
+    appendDaemonLog(home, `stdio-rotation-${generation}`)
+    assert.equal(statSync(liveLog).ino, liveInode, "Rotation replaced the stdio-bound daemon.log")
+    assert.ok(statSync(liveLog).size < 1024, "Rotation did not truncate the live daemon.log")
+    assert.ok(readFileSync(`${liveLog}.1`, "utf8").endsWith(`${"s".repeat(64)}\n`))
+  }
+  writeFileSync(stdioGo, "")
+  const stdioDeadline = Date.now() + 10000
+  while (!stdioProcess.exited && Date.now() < stdioDeadline) await Bun.sleep(20)
+  assert.equal(stdioProcess.exitCode, 0, "Stdio probe child did not exit cleanly")
+  const liveText = readFileSync(liveLog, "utf8")
+  for (const marker of ["child-stderr-after-rotation", "child-stdout-after-rotation"]) {
+    assert.ok(liveText.includes(marker), `Child stdio did not reach the live daemon.log: ${marker}`)
+    for (const suffix of [".1", ".2", ".3"])
+      assert.ok(!readFileSync(`${liveLog}${suffix}`, "utf8").includes(marker))
+  }
+  assert.ok(liveText.includes("stdio-rotation-4"))
+  for (const suffix of ["", ".1", ".2", ".3"])
+    assert.equal(statSync(`${liveLog}${suffix}`).mode & 0o777, 0o600, `daemon.log${suffix}`)
+  assert.equal(existsSync(`${liveLog}.4`), false)
+  assert.deepEqual(
+    readdirSync(home).filter((name) => name.endsWith(".tmp")),
+    [],
+    "Rotation left a temporary copy",
+  )
+  rmSync(stdioGo)
   const restarted = (await cli(["restart"])).data
   await readyAfter(null, restarted.id)
   renameSync(fake, `${fake}.unavailable`)
@@ -312,10 +407,41 @@ try {
     }
     assert.ok(failed.value, "Replacement startup failure was not recorded")
     assert.ok(typeof failed.value.error === "string")
+    assert.equal(failed.value.newPidExited, true, "Failed replacement exit was not recorded")
+    assert.match(
+      readFileSync(join(home, "daemon.log"), "utf8"),
+      /\[error\] requestId=\S+ Daemon execution failed: /,
+      "daemon.log lacks the level-tagged execution failure",
+    )
     assert.equal((await cli(["status"])).data.running, false)
   } finally {
     renameSync(`${fake}.unavailable`, fake)
   }
+  const preOwnershipExit = (await cli(["restart", `--cwd=${join(workspace, "missing-cwd")}`])).data
+  const preOwnershipDeadline = Date.now() + 12000
+  const exitedEarly: { value: MaintenanceOperation | null } = { value: null }
+  while (Date.now() < preOwnershipDeadline) {
+    const operation = new NodeMaintenanceStore(home).readOperation()
+    if (
+      operation !== null &&
+      operation.id === preOwnershipExit.id &&
+      operation.status === "failed"
+    ) {
+      exitedEarly.value = operation
+      break
+    }
+    await Bun.sleep(100)
+  }
+  assert.ok(exitedEarly.value, "Replacement exit before ownership was not recorded")
+  assert.ok(exitedEarly.value.newPid !== null)
+  assert.equal(isProcessAlive(exitedEarly.value.newPid), false)
+  assert.equal(
+    exitedEarly.value.newPidExited,
+    true,
+    "Worker did not record the replacement exit it observed before ownership",
+  )
+  assert.equal(existsSync(join(home, "daemon.json")), false)
+  assert.equal((await cli(["status"])).data.running, false)
   const recovery = (await cli(["restart"])).data
   await readyAfter(null, recovery.id)
   assert.equal(readFileSync(join(codexHome, "auth.json"), "utf8"), "native-auth-sentinel")
@@ -354,7 +480,70 @@ try {
   })
   assert.equal(await ended.exited, 0)
   assert.equal(isProcessAlive(ended.pid), false)
-  for (const ownership of ["missing", "stale"]) {
+  for (const ownership of ["control-closed", "lease-released"]) {
+    const slowHome = join(workspace, `slow-stop-${ownership}`)
+    fixture.trackDaemon(slowHome)
+    mkdirSync(slowHome)
+    const stopping = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 3000)"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    fixture.trackProcess(stopping)
+    const slowOwner = join(slowHome, "daemon.json")
+    writeFileSync(slowOwner, JSON.stringify({ pid: stopping.pid, token: randomUUID() }), {
+      mode: 0o600,
+    })
+    // A worker inherits its scheduler's environment, so schedule from a child that sees the fake Codex.
+    const scheduled = await readProcess(
+      Bun.spawn(
+        [process.execPath, import.meta.path, "schedule-restart", slowHome, workspace, codexHome],
+        {
+          cwd: workspace,
+          env: { ...env, LEUCO_HOME: slowHome },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ),
+      10000,
+    )
+    assert.equal(scheduled.exitCode, 0, scheduled.stderr)
+    if (ownership === "lease-released") rmSync(slowOwner)
+    const journal = new NodeMaintenanceStore(slowHome)
+    const accepted = journal.readOperation()!
+    assert.equal(accepted.oldPid, stopping.pid)
+    const observed: { stoppingWhileAlive: boolean; outcome: MaintenanceOperation | null } = {
+      stoppingWhileAlive: false,
+      outcome: null,
+    }
+    const slowDeadline = performance.now() + RESTART_OLD_DAEMON_EXIT_TIMEOUT_MS + 15000
+    while (performance.now() < slowDeadline) {
+      const operation = journal.readOperation()!
+      if (operation.status === "stopping" && isProcessAlive(stopping.pid))
+        observed.stoppingWhileAlive = true
+      if (["ready", "failed", "uncertain"].includes(operation.status)) {
+        observed.outcome = operation
+        break
+      }
+      await Bun.sleep(20)
+    }
+    assert.equal(
+      observed.stoppingWhileAlive,
+      true,
+      `Worker did not wait for the ${ownership} old daemon`,
+    )
+    const replacedOperation = observed.outcome
+    assert.ok(
+      replacedOperation !== null && replacedOperation.status === "ready",
+      `Replacement was not started after the ${ownership} old daemon exited: ${JSON.stringify(replacedOperation)}`,
+    )
+    assert.equal(replacedOperation.oldPidExited, true)
+    const replaced = (await cli(["status"], 0, slowHome)).data
+    assert.equal(replaced.ready, true)
+    assert.equal(replaced.pid, replacedOperation.newPid)
+    await cli(["stop"], 0, slowHome)
+  }
+  const lostOwners = ["missing", "stale"].map((ownership) => {
     const changedHome = join(workspace, `lost-owner-${ownership}`)
     fixture.trackDaemon(changedHome)
     mkdirSync(changedHome)
@@ -369,8 +558,17 @@ try {
     const replacementLease = JSON.stringify({ pid: ended.pid, token: randomUUID() })
     if (ownership === "missing") rmSync(ownerPath)
     else writeFileSync(ownerPath, replacementLease, { mode: 0o600 })
-    try {
-      const deadline = performance.now() + 5000
+    return { ownership, changedHome, ownerPath, pending, replacementLease }
+  })
+  try {
+    for (const lost of lostOwners) {
+      const ownership = lost.ownership
+      const changedHome = lost.changedHome
+      const ownerPath = lost.ownerPath
+      const pending = lost.pending
+      const replacementLease = lost.replacementLease
+      // The worker waits for the still-alive recorded PID (the verifier itself) before giving up.
+      const deadline = performance.now() + RESTART_OLD_DAEMON_EXIT_TIMEOUT_MS + 10000
       while (performance.now() < deadline && isProcessAlive(pending.workerPid!)) await Bun.sleep(30)
       assert.equal(
         isProcessAlive(pending.workerPid!),
@@ -384,7 +582,7 @@ try {
         "Worker launched a replacement while the old PID was still alive",
       )
       assert.equal(outcome.status, "uncertain")
-      assert.match(outcome.error!, /still alive/)
+      assert.match(outcome.error!, /still stopping/)
       assert.equal(isProcessAlive(process.pid), true)
       const unavailable = await cli(["status"], 5, changedHome)
       assert.equal(unavailable.error.details.phase, "identity")
@@ -404,13 +602,18 @@ try {
       assert.equal(new NodeMaintenanceStore(changedHome).readOperation()!.id, pending.id)
       const repaired = await cli(["repair"], 5, changedHome)
       assert.equal(repaired.error.details.phase, "identity")
-      await cli(["start"], 1, changedHome)
+      const startUnverified = await cli(["start"], 5, changedHome)
+      assert.equal(startUnverified.error.details.phase, "identity")
+      assert.equal(startUnverified.error.details.pid, process.pid)
+      assert.equal(startUnverified.error.details.executionStarted, false)
       assert.equal(new NodeMaintenanceStore(changedHome).readOperation()!.newPid, null)
       if (ownership === "missing") assert.equal(existsSync(ownerPath), false)
       else assert.equal(readFileSync(ownerPath, "utf8"), replacementLease)
-    } finally {
-      if (isProcessAlive(pending.workerPid!)) process.kill(pending.workerPid!, "SIGTERM")
-      await cli(["stop"], 0, changedHome).catch(() => {})
+    }
+  } finally {
+    for (const lost of lostOwners) {
+      if (isProcessAlive(lost.pending.workerPid!)) process.kill(lost.pending.workerPid!, "SIGTERM")
+      await cli(["stop"], 0, lost.changedHome).catch(() => {})
     }
   }
   const supersededHome = join(workspace, "superseded")

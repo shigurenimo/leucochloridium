@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, test } from "vitest"
 import { SqliteEventLog } from "@/event-log/sqlite-event-log"
 import { LeucoEventLog } from "@/events/leuco-event-log"
+import { maintainLeucoEventLog } from "@/events/maintain-leuco-event-log"
 
 describe("LeucoEventLog", () => {
   let dir: string
@@ -127,5 +128,95 @@ describe("LeucoEventLog", () => {
     const eventLog = new LeucoEventLog({ eventLogPath: join(dir, "events.db") })
     eventLog.close()
     eventLog.close()
+  })
+})
+
+describe("maintainLeucoEventLog", () => {
+  const dayMs = 24 * 60 * 60 * 1_000
+  const now = 100 * dayMs
+  const maxBytes = 512 * 1_024
+  const targetBytes = 384 * 1_024
+
+  type Props = {
+    path: string
+    expiredRows: number
+    recentRows: number
+  }
+
+  function seedEventDatabase(props: Props): void {
+    new LeucoEventLog({ eventLogPath: props.path }).close()
+    const database = new Database(props.path)
+    try {
+      const insert = database.query("INSERT INTO logs (ts, type, event) VALUES (?, ?, ?)")
+      const event = JSON.stringify({ type: "log", level: "info", line: "x".repeat(1_000) })
+      database.transaction(() => {
+        for (const index of Array.from({ length: props.expiredRows }).keys())
+          insert.run(now - 2 * dayMs - index, "log", event)
+        for (const index of Array.from({ length: props.recentRows }).keys())
+          insert.run(now - 1_000 + index, "log", event)
+      })()
+    } finally {
+      database.close()
+    }
+  }
+
+  function readDatabaseSize(path: string): { rows: number; bytes: number } {
+    const database = new Database(path, { readonly: true })
+    try {
+      const rows = database.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM logs").get()
+      const pages = database.query<{ page_count: number }, []>("PRAGMA page_count").get()
+      const pageSize = database.query<{ page_size: number }, []>("PRAGMA page_size").get()
+      return {
+        rows: rows?.count ?? 0,
+        bytes: (pages?.page_count ?? 0) * (pageSize?.page_size ?? 0),
+      }
+    } finally {
+      database.close()
+    }
+  }
+
+  function maintain(path: string): void {
+    maintainLeucoEventLog({
+      path,
+      maxRows: 100_000,
+      maxAgeMs: dayMs,
+      maxBytes,
+      targetBytes,
+      now: () => now,
+    })
+  }
+
+  test("does not count pages freed by expired rows as bytes of the remaining rows", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "leuco-event-maintenance-"))
+    try {
+      const path = join(workspace, "events.db")
+      seedEventDatabase({ path, expiredRows: 2_000, recentRows: 200 })
+      expect(readDatabaseSize(path).bytes).toBeGreaterThan(maxBytes)
+
+      maintain(path)
+
+      const size = readDatabaseSize(path)
+      expect(size.rows).toBe(200)
+      expect(size.bytes).toBeLessThanOrEqual(maxBytes)
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  test("drops only enough of the oldest retained rows to reach the byte target", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "leuco-event-maintenance-"))
+    try {
+      const path = join(workspace, "events.db")
+      seedEventDatabase({ path, expiredRows: 2_000, recentRows: 1_000 })
+
+      maintain(path)
+
+      const size = readDatabaseSize(path)
+      expect(size.bytes).toBeLessThanOrEqual(maxBytes)
+      expect(size.rows).toBeGreaterThan(250)
+      expect(size.rows).toBeLessThan(330)
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 })

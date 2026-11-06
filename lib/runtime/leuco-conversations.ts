@@ -1,4 +1,5 @@
 import { errorDetails } from "@/error-details"
+import { errorMessage } from "@/error-message"
 import { createHash } from "node:crypto"
 import { resolve } from "node:path"
 import type { LeucoStore } from "@/storage/leuco-store"
@@ -52,6 +53,51 @@ export class LeucoConversations {
 
   clearLiveThreads(): void {
     this.liveThreads.clear()
+  }
+
+  /** Removes only the failing mapping; the failed request itself is never re-run here. */
+  discardCorruptedThread(
+    key: string,
+    threadId: string,
+    failure: { requestId: string; error: Error },
+  ): Error {
+    this.liveThreads.delete(threadId)
+    try {
+      this.props.store.updateState((state) => ({
+        ...state,
+        threads: Object.fromEntries(
+          Object.entries(state.threads).filter(
+            (entry) => entry[0] !== key || entry[1].id !== threadId,
+          ),
+        ),
+      }))
+    } catch (cleanup) {
+      this.props.eventLog.error(
+        `Codex rejected the history of thread ${threadId} for ${key}, but the saved mapping could not be removed`,
+        cleanup,
+        failure.requestId,
+      )
+      return new AggregateError(
+        [failure.error, cleanup],
+        `${failure.error.message}; removing the saved conversation failed: ${errorMessage(cleanup)}`,
+        { cause: failure.error },
+      )
+    }
+    this.props.eventLog.append({
+      ts: Date.now(),
+      type: "log",
+      level: "warn",
+      line: `Codex rejected the history of thread ${threadId} for ${key} (invalid history); removed the saved mapping without retrying the request`,
+      requestId: failure.requestId,
+      causes: errorDetails(this.props.eventLog.redactError(failure.error)),
+    })
+    return Object.assign(
+      new Error(
+        "Codex rejected the saved conversation history; the conversation was reset and this request was not retried. Send it again to start a new conversation",
+        { cause: failure.error },
+      ),
+      { code: "CODEX_HISTORY_RESET" },
+    )
   }
 
   async ensure(key: string, turn: TurnContext): Promise<string | Error> {

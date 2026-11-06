@@ -1,5 +1,7 @@
 import { NodeMaintenanceStore } from "@/maintenance/node-maintenance-store"
 import { assertRecordedDaemonsStopped } from "@/maintenance/assert-recorded-daemons-stopped"
+import { readMaintenanceOperation } from "@/maintenance/read-maintenance-operation"
+import { recordDaemonExits } from "@/maintenance/record-daemon-exits"
 import { readRegularJson } from "@/fs/read-regular-json"
 import { CliError } from "@/cli/cli-error"
 import { lstatSync, rmSync } from "node:fs"
@@ -36,14 +38,12 @@ export function acquireDaemonLease(home: string): DaemonLease {
     const previous = readDaemonLease(home)
     if (previous !== null && isProcessAlive(previous.pid))
       throw new CliError("STATE_CONFLICT", "Leuco is already running or starting; use leuco status")
-    assertRecordedDaemonsStopped(
-      new NodeMaintenanceStore(home).readOperation(),
-      isProcessAlive,
-      process.pid,
-    )
+    const maintenance = new NodeMaintenanceStore(home)
+    assertRecordedDaemonsStopped(readMaintenanceOperation(maintenance), isProcessAlive, process.pid)
     const lease = { pid: process.pid, token: randomUUID() }
     rmSync(join(home, "control.sock"), { force: true })
     atomicWriteJson({ path: join(home, "daemon.json"), data: lease, mode: 0o600 })
+    recordDaemonExits(maintenance, (pid) => pid !== process.pid && !isProcessAlive(pid))
     return lease
   })
 }

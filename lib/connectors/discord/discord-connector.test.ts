@@ -17,13 +17,15 @@ function fixture(reception: unknown = {}) {
     api,
     reception: discordReceptionSchema.parse(reception),
   })
-  const turns: Array<{ key: string; text: string }> = []
+  const turns: Array<{ key: string; text: string; requestId?: string }> = []
   const logs: string[] = []
+  const textLogs: Array<{ line: string; level?: string; requestId?: string }> = []
   const context: ConnectorContext = {
     eventLog: new LeucoEventLog(),
     onLog: (line) => logs.push(line),
-    runTextTurn: async (key, text) => {
-      turns.push({ key, text })
+    onTextLog: (line, level, requestId) => textLogs.push({ line, level, requestId }),
+    runTextTurn: async (key, text, requestId) => {
+      turns.push({ key, text, requestId })
       return "internal reply"
     },
   }
@@ -38,8 +40,15 @@ function fixture(reception: unknown = {}) {
       author: { id: "USER" },
       ...overrides,
     })
-  return { source, api, connector, turns, context, emit, message, logs }
+  const logEvents = () =>
+    context.eventLog.query().flatMap((entry) => (entry.event.type === "log" ? [entry.event] : []))
+  return { source, api, connector, turns, context, emit, message, logs, textLogs, logEvents }
 }
+
+const later = <T>(value: T) =>
+  new Promise<T>((resolve) => {
+    setTimeout(() => resolve(value), 20)
+  })
 
 describe("Discord connector", () => {
   it("only starts turns for DM, mention or joined-thread messages by default; ignores bots and duplicates", async () => {
@@ -94,6 +103,26 @@ describe("Discord connector", () => {
     expect(test.turns.map((turn) => turn.key)).toEqual(["discord:THREAD"])
     await test.connector.stop()
   })
+  it("remembers non-thread channels and only warns when its own post lookup fails", async () => {
+    const test = fixture()
+    test.api.mockImplementation(async (_method, endpoint) => {
+      if (endpoint === "/users/@me") return { id: "BOT", bot: true }
+      if (endpoint === "/channels/DOWN") throw new Error("lookup unavailable")
+      return { id: endpoint.split("/").pop(), type: 0 }
+    })
+    await test.connector.start(test.context)
+    await test.message("1", { author: { id: "BOT", bot: true } })
+    await test.message("2", { author: { id: "BOT", bot: true } })
+    await test.message("3", { author: { id: "BOT", bot: true } })
+    expect(test.api.mock.calls.filter((call) => call[1] === "/channels/C1")).toHaveLength(1)
+    await test.message("4", { channel_id: "DOWN", author: { id: "BOT", bot: true } })
+    expect(test.connector.getStatus().lastFailure).toBeNull()
+    const warning = test.logEvents().find((event) => event.line.includes("lookup"))
+    expect(warning?.level).toBe("warn")
+    expect(warning?.causes?.[0]?.message).toBe("lookup unavailable")
+    expect(test.textLogs.map((entry) => entry.level)).toEqual(["warn"])
+    await test.connector.stop()
+  })
   it("tracks membership sync and leaving threads", async () => {
     const test = fixture()
     await test.connector.start(test.context)
@@ -131,6 +160,68 @@ describe("Discord connector", () => {
     })
     expect(test.turns).toHaveLength(2)
     expect(test.turns[0]?.text).toContain('"message_id":"1"')
+    await test.connector.stop()
+  })
+  it("hands events to the turn queue in arrival order without waiting for each turn", async () => {
+    const test = fixture()
+    const gate = Promise.withResolvers<string | Error>()
+    test.context.runTextTurn = (key, text, requestId) => {
+      test.turns.push({ key, text, requestId })
+      return gate.promise
+    }
+    await test.connector.start(test.context)
+    const first = test.message("1", { guild_id: undefined, channel_id: "DM1" })
+    const second = test.message("2", { channel_id: "C2", mentions: [{ id: "BOT" }] })
+    expect(
+      await Promise.race([Promise.all([first, second]).then(() => "accepted"), later("blocked")]),
+    ).toBe("accepted")
+    expect(test.turns.map((turn) => turn.key)).toEqual(["discord:DM1", "discord:C2"])
+    expect(test.connector.getStatus().lastFailure).toBeNull()
+    gate.resolve(new Error("Turn queue is full; retry after the current work finishes"))
+    await later(null)
+    expect(test.connector.getStatus().lastFailure?.message).toContain("Turn queue is full")
+    const failures = test.logEvents().filter((event) => event.line.includes("turn failed"))
+    expect(failures.map((event) => [event.level, event.requestId])).toEqual(
+      test.turns.map((turn) => ["error", turn.requestId]),
+    )
+    expect(test.textLogs.map((entry) => [entry.level, entry.requestId])).toEqual(
+      test.turns.map((turn) => ["error", turn.requestId]),
+    )
+    await test.connector.stop()
+  })
+  it("keeps Gateway log levels and causes so connection failures reach the summary", async () => {
+    const test = fixture()
+    await test.connector.start(test.context)
+    test.source.emitLog({
+      level: "info",
+      action: "ws.open",
+      message: "connected",
+      error: null,
+    })
+    test.source.emitLog({
+      level: "warn",
+      action: "heartbeat.zombie",
+      message: "heartbeat ack missing",
+      error: null,
+    })
+    test.source.emitLog({
+      level: "error",
+      action: "ws.error",
+      message: "socket failed",
+      error: new Error("socket failed", { cause: new Error("reset") }),
+    })
+    expect(test.logs).toEqual(["[discord] ws.open: connected"])
+    expect(test.logEvents().map((event) => [event.level, event.line])).toEqual([
+      ["warn", "[discord] heartbeat.zombie: heartbeat ack missing"],
+      ["error", "[discord] ws.error: socket failed"],
+    ])
+    expect(test.logEvents()[0]?.causes).toBeUndefined()
+    expect(test.logEvents()[1]?.causes?.map((cause) => cause.message)).toEqual([
+      "socket failed",
+      "reset",
+    ])
+    expect(test.textLogs.map((entry) => entry.level)).toEqual(["warn", "error"])
+    expect(test.connector.getStatus().lastFailure?.message).toBe("socket failed")
     await test.connector.stop()
   })
   it("drains accepted turns during shutdown and suppresses late failures", async () => {

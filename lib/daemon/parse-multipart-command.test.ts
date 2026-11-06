@@ -29,3 +29,27 @@ it("rejects unused multipart fields instead of silently ignoring them", () => {
   form.set("attachment", new Blob(["unused bytes"]), "unused.txt")
   expect(() => parseMultipartCommand(form)).toThrow("Unsupported multipart field")
 })
+
+it.each<[string, (form: FormData) => void]>([
+  ["a non-text command", (form) => form.set("command", new Blob(["{}"]), "command.json")],
+  ["an oversized command", (form) => form.set("command", "x".repeat(4 * 1024 * 1024 + 1))],
+  ["invalid command JSON", (form) => form.set("command", "{")],
+  ["a missing command", () => {}],
+])("classifies %s as a pre-execution control-body rejection", (_label, prepare) => {
+  const form = new FormData()
+  prepare(form)
+  expect(() => parseMultipartCommand(form)).toThrow(
+    expect.objectContaining({
+      code: "USAGE",
+      details: { phase: "control-body", executionStarted: false },
+    }),
+  )
+})
+
+it("retains the JSON syntax failure as cause", () => {
+  const form = new FormData()
+  form.set("command", "{")
+  expect(() => parseMultipartCommand(form)).toThrow(
+    expect.objectContaining({ cause: expect.any(SyntaxError) }),
+  )
+})

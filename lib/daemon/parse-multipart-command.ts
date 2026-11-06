@@ -20,8 +20,21 @@ export function parseMultipartCommand(form: {
       })
   }
   const command = form.get("command")
-  if (typeof command !== "string") throw new Error("Multipart command must be JSON text")
+  if (typeof command !== "string") throw rejectCommandField("Multipart command must be JSON text")
   if (Buffer.byteLength(command, "utf8") > MAX_CONTROL_JSON_BYTES)
-    throw new Error(`Multipart command exceeds ${MAX_CONTROL_JSON_BYTES} bytes`)
-  return JSON.parse(command)
+    throw rejectCommandField(`Multipart command exceeds ${MAX_CONTROL_JSON_BYTES} bytes`)
+  try {
+    return JSON.parse(command)
+  } catch (error) {
+    throw rejectCommandField("Multipart command is not valid JSON", error)
+  }
+}
+
+function rejectCommandField(message: string, cause?: unknown): CliError {
+  const failure = new CliError("USAGE", message, {
+    phase: "control-body",
+    executionStarted: false,
+  })
+  if (cause !== undefined) failure.cause = cause
+  return failure
 }

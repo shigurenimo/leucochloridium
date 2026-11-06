@@ -5,6 +5,7 @@ import { MemoryCredentialStore } from "@/secrets/memory-credential-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
 import { LeucoEventLog } from "@/events/leuco-event-log"
 import { executeDiscordCommand } from "@/actions/discord/execute-discord-command"
+import { errorDetails } from "@/error-details"
 
 vi.mock("@/actions/discord/execute-discord-command", () => ({
   executeDiscordCommand: vi.fn(async () => ({ id: "1" })),
@@ -47,7 +48,11 @@ describe("Discord runtime credentials", () => {
     expect(JSON.stringify(await test.runtime.runDiscordCommand(command))).not.toContain(secret)
     await test.runtime.runDiscordCommand(command)
     expect(test.credentials.reads).toEqual([reference])
-    expect(executeDiscordCommand).toHaveBeenLastCalledWith({ parsed: command, botToken: secret })
+    expect(executeDiscordCommand).toHaveBeenLastCalledWith({
+      parsed: command,
+      botToken: secret,
+      signal: expect.any(AbortSignal),
+    })
     test.eventLog.log("info", secret)
     expect(JSON.stringify(test.eventLog.query())).not.toContain(secret)
     await test.runtime.runTextTurn("cli", "hello")
@@ -67,8 +72,95 @@ describe("Discord runtime credentials", () => {
     const pending = Promise.withResolvers<unknown>()
     vi.mocked(executeDiscordCommand).mockImplementationOnce(() => pending.promise)
     const operation = test.runtime.runDiscordCommand(command)
-    await test.runtime.stop()
+    const rejected = expect(operation).rejects.toThrow("Discord operation cancelled")
+    const stopping = test.runtime.stop()
     pending.resolve({ debug: secret })
-    await expect(operation).rejects.toThrow("stopped during Discord operation")
+    await stopping
+    await rejected
+  })
+})
+
+describe("Discord runtime cancellation", () => {
+  async function startedFixture() {
+    const test = fixture()
+    await test.credentials.set(reference, JSON.stringify({ botToken: secret }))
+    await test.runtime.start()
+    return test
+  }
+  function abortableCommand(settleDelayMs = 0) {
+    const seen: AbortSignal[] = []
+    vi.mocked(executeDiscordCommand).mockImplementationOnce(
+      async (props) =>
+        new Promise((_resolve, reject) => {
+          seen.push(props.signal)
+          props.signal.addEventListener(
+            "abort",
+            () => setTimeout(() => reject(props.signal.reason), settleDelayMs),
+            { once: true },
+          )
+        }),
+    )
+    return seen
+  }
+  it("does not execute work already cancelled by the caller", async () => {
+    const test = await startedFixture()
+    const controller = new AbortController()
+    controller.abort(new Error("caller cancelled"))
+    await expect(
+      test.runtime.runDiscordCommand(command, "pre-cancelled", controller.signal),
+    ).rejects.toThrow("Discord operation cancelled")
+    expect(executeDiscordCommand).not.toHaveBeenCalled()
+  })
+  it("propagates caller cancellation and correlates the failure", async () => {
+    const test = await startedFixture()
+    const controller = new AbortController()
+    const seen = abortableCommand()
+    const operation = test.runtime.runDiscordCommand(
+      command,
+      "cancelled-request",
+      controller.signal,
+    )
+    const rejected = expect(operation).rejects.toThrow(
+      "external effects may already have been accepted",
+    )
+    controller.abort(new Error("caller cancelled"))
+    await rejected
+    expect(seen[0]?.aborted).toBe(true)
+    expect(JSON.stringify(test.eventLog.query({ requestId: "cancelled-request" }))).toContain(
+      "caller cancelled",
+    )
+  })
+  it("cancels in-flight Discord work on stop and waits for it to settle", async () => {
+    const test = await startedFixture()
+    const seen = abortableCommand(20)
+    const settled: string[] = []
+    const operation = test.runtime.runDiscordCommand(command).catch((error: unknown) => {
+      settled.push(String(error))
+    })
+    await test.runtime.stop()
+    expect(seen[0]?.aborted).toBe(true)
+    expect(settled).toEqual([expect.stringContaining("Discord operation cancelled")])
+    await operation
+  })
+  it("reports unconfirmed Discord shutdown instead of waiting forever", async () => {
+    vi.useFakeTimers()
+    try {
+      const test = await startedFixture()
+      const delayed = Promise.withResolvers<unknown>()
+      vi.mocked(executeDiscordCommand).mockReturnValueOnce(delayed.promise)
+      const operation = test.runtime.runDiscordCommand(command).catch((error: unknown) => error)
+      const stopping = test.runtime.stop().catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(
+        errorDetails(await stopping).some((cause) =>
+          cause.message.includes("Discord operations shutdown timed out"),
+        ),
+      ).toBe(true)
+      active.splice(active.indexOf(test.runtime), 1)
+      delayed.resolve({ id: "1" })
+      expect(String(await operation)).toContain("Discord operation cancelled")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

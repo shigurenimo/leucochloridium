@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
+import { CodexTurnError } from "@/engine/codex/codex-turn-error"
+import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 
 const fakeCodexRespondingWithError = [
   "let buffer = '';",
@@ -77,7 +79,7 @@ const fakeCodexWithCorrelatedNotifications = [
   "setInterval(() => {}, 1_000_000);",
 ].join("\n")
 
-const fakeCodexCompletingWithStatus = (status: string): string =>
+const fakeCodexCompletingWithStatus = (status: string, turnError: unknown = null): string =>
   [
     "let buffer = '';",
     "process.stdin.setEncoding('utf8');",
@@ -94,7 +96,7 @@ const fakeCodexCompletingWithStatus = (status: string): string =>
     "    }",
     "    if (msg.method === 'turn/start' && msg.id != null) {",
     "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-status' } } }) + '\\n');",
-    `      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: msg.params.threadId, turn: { id: 'turn-status', status: ${JSON.stringify(status)}, error: null } } }) + '\\n');`,
+    `      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: msg.params.threadId, turn: { id: 'turn-status', status: ${JSON.stringify(status)}, error: ${JSON.stringify(turnError)} } } }) + '\\n');`,
     "    }",
     "  }",
     "});",
@@ -463,12 +465,44 @@ describe("LeucoCodexClient.runTextTurn", () => {
 
       const result = await client.runTextTurn("thread-target", "hello")
 
-      expect(result).toBeInstanceOf(Error)
-      if (result instanceof Error) expect(result.message).toContain(status)
+      expect(result).toBeInstanceOf(CodexTurnError)
+      if (result instanceof CodexTurnError) {
+        expect(result.message).toContain(status)
+        expect(result.status).toBe(status)
+        expect(result.turnMessage).toBeNull()
+      }
       await client.stop()
     },
     5000,
   )
+
+  it("keeps Codex's failed-turn message so stored history corruption is detected", async () => {
+    const turnMessage =
+      "Invalid 'input[381].arguments': string too long. type: invalid_request_error"
+    const client = new LeucoCodexClient({
+      bin: "node",
+      args: [
+        "-e",
+        fakeCodexCompletingWithStatus("failed", {
+          message: turnMessage,
+          codexErrorInfo: null,
+          additionalDetails: null,
+        }),
+      ],
+    })
+    await client.start()
+
+    const result = await client.runTextTurn("thread-target", "hello")
+
+    expect(result).toBeInstanceOf(CodexTurnError)
+    if (result instanceof CodexTurnError) {
+      expect(result.status).toBe("failed")
+      expect(result.turnMessage).toBe(turnMessage)
+      expect(result.message).toBe(turnMessage)
+      expect(isCodexHistoryCorruptionError(result)).toBe(true)
+    }
+    await client.stop()
+  }, 5000)
 
   it("fails promptly when the child closes its stdin but remains alive", async () => {
     const logs: string[] = []

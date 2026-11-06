@@ -28,6 +28,7 @@ import type { ConnectorIdentity, Connector, ConnectorContext } from "@/connector
 import { errorMessage } from "@/error-message"
 import { errorDetails } from "@/error-details"
 import { sliceTextPrefix } from "@/slice-text-prefix"
+import type { LogLevel } from "@/log-level"
 
 type LeucoSlackConnectorProps = {
   eventSource: LeucoSlackEventSource
@@ -35,6 +36,24 @@ type LeucoSlackConnectorProps = {
   reception?: ReceptionRules
   /** When the bot adds the in-progress / done / error reactions. Defaults like `slack.ackMode` in settings. */
   ackMode?: SlackAckMode
+}
+
+type AckReaction = {
+  operation: "add" | "remove"
+  channel: string
+  ts: string
+  name: string
+  requestId: string
+}
+
+type SlackFailureReport = {
+  level: Exclude<LogLevel, "info">
+  requestId: string
+  action: string
+  message: string
+  line: string
+  /** Already masked and bounded with `eventLog.redactError`. */
+  failure: Error
 }
 
 const ACK_ICONS = {
@@ -88,7 +107,7 @@ export class LeucoSlackConnector implements Connector {
     this.lifecycleGeneration = generation
     this.activeGeneration = generation
     this.ctx = ctx
-    this.adapter = new LeucoSlackAdapter({ client: this.props.webClient, onLog: ctx.onLog })
+    this.adapter = new LeucoSlackAdapter({ client: this.props.webClient })
 
     try {
       await this.startGeneration(ctx, generation)
@@ -342,15 +361,14 @@ export class LeucoSlackConnector implements Connector {
     )
     if (!this.isGenerationActive(generation)) return
     if (reply instanceof Error) {
-      ctx.onLog(`[${this.name}] reaction turn failed: ${reply.message}`)
-      ctx.eventLog.append({
-        requestId,
-        ts: Date.now(),
-        type: "slack.error",
+      const failure = ctx.eventLog.redactError(reply)
+      reportSlackFailure(ctx, {
         level: "error",
+        requestId,
         action: "turn.failed",
         message: "Slack reaction turn failed",
-        error: reply.message,
+        line: `[${this.name}] reaction turn failed: ${failure.message}`,
+        failure,
       })
     }
   }
@@ -367,11 +385,18 @@ export class LeucoSlackConnector implements Connector {
     if (!ctx || !adapter) return
 
     const threadKey = `${this.name}:${msg.channel}:${msg.threadTs}`
-    const reactionTs = msg.ts
     const wantsAck = this.shouldAck(msg)
+    const ack = (operation: AckReaction["operation"], name: string): Promise<void> =>
+      this.acknowledge(ctx, adapter, {
+        operation,
+        channel: msg.channel,
+        ts: msg.ts,
+        name,
+        requestId,
+      })
 
     try {
-      if (wantsAck) await adapter.addReaction(msg.channel, reactionTs, ACK_ICONS.progress)
+      if (wantsAck) await ack("add", ACK_ICONS.progress)
       if (!this.isGenerationActive(generation)) return
 
       const monologue = await ctx.runTextTurn(threadKey, formatMessageInput(msg), requestId)
@@ -379,37 +404,54 @@ export class LeucoSlackConnector implements Connector {
 
       if (monologue instanceof Error) {
         const failure = ctx.eventLog.redactError(monologue)
-        ctx.eventLog.append({
-          ts: Date.now(),
-          type: "slack.error",
+        reportSlackFailure(ctx, {
           level: "error",
           requestId,
           action: "turn.failed",
           message: `${msg.channel}/${msg.threadTs}: ${failure.message}`,
-          error: failure.message,
-          causes: errorDetails(failure),
+          line: `[${this.name}] turn failed: ${failure.message}`,
+          failure,
         })
-        const line = `[${this.name}] turn failed: ${failure.message}`
-        if (ctx.onTextLog === undefined) ctx.onLog(line, "error", requestId)
-        else ctx.onTextLog(line, "error", requestId)
-        if (wantsAck && this.isGenerationActive(generation))
-          await adapter.addReaction(msg.channel, reactionTs, ACK_ICONS.error)
+        if (wantsAck && this.isGenerationActive(generation)) await ack("add", ACK_ICONS.error)
       } else {
         logMonologue(
           (line) => ctx.onLog(line, "info", requestId),
           msg.ts,
           ctx.eventLog.redactText(monologue),
         )
-        if (wantsAck && this.isGenerationActive(generation))
-          await adapter.addReaction(msg.channel, reactionTs, ACK_ICONS.success)
+        if (wantsAck && this.isGenerationActive(generation)) await ack("add", ACK_ICONS.success)
       }
     } finally {
       // The adapter is captured from the generation that added this icon.
       // Cleanup must outlive the generation gate: stop() waits for accepted
       // handlers to drain, and leaving a stale hourglass makes a cancelled
       // turn look permanently stuck after restart.
-      if (wantsAck) await adapter.removeReaction(msg.channel, reactionTs, ACK_ICONS.progress)
+      if (wantsAck) await ack("remove", ACK_ICONS.progress)
     }
+  }
+
+  /** Ack icons are best effort: a failure is recorded as a warning on the triggering request. */
+  private async acknowledge(
+    ctx: ConnectorContext,
+    adapter: LeucoSlackAdapter,
+    reaction: AckReaction,
+  ): Promise<void> {
+    const outcome =
+      reaction.operation === "add"
+        ? await adapter.addReaction(reaction.channel, reaction.ts, reaction.name)
+        : await adapter.removeReaction(reaction.channel, reaction.ts, reaction.name)
+    if (outcome === null) return
+    const failure = ctx.eventLog.redactError(outcome)
+    const action = `reactions.${reaction.operation}`
+    const message = `${action} failed (channel=${reaction.channel} ts=${reaction.ts} :${reaction.name}:)`
+    reportSlackFailure(ctx, {
+      level: "warn",
+      requestId: reaction.requestId,
+      action,
+      message,
+      line: `[${this.name}] ${message}: ${failure.message}`,
+      failure,
+    })
   }
 
   private trackEnvelope(envelope: LeucoSlackEnvelope, generation: number): Promise<void> {
@@ -492,6 +534,22 @@ export class LeucoSlackConnector implements Connector {
 }
 
 const activeThreadKey = (channel: string, threadTs: string): string => `${channel}:${threadTs}`
+
+/** One structured event plus one text line; the standard runtime mirrors text without re-recording it. */
+const reportSlackFailure = (ctx: ConnectorContext, report: SlackFailureReport): void => {
+  ctx.eventLog.append({
+    ts: Date.now(),
+    type: "slack.error",
+    level: report.level,
+    requestId: report.requestId,
+    action: report.action,
+    message: report.message,
+    error: report.failure.message,
+    causes: errorDetails(report.failure),
+  })
+  if (ctx.onTextLog === undefined) ctx.onLog(report.line, report.level, report.requestId)
+  else ctx.onTextLog(report.line, report.level, report.requestId)
+}
 
 const formatDispatch = (event: SlackEvent): string => {
   if (event.kind === "message") {

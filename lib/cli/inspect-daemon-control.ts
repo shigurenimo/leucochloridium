@@ -3,12 +3,17 @@ import { readDaemonLease, isProcessAlive } from "@/daemon/daemon-lease"
 import { requestDaemon } from "@/daemon/request-daemon"
 import { inspectRuntimeHealth } from "@/runtime/inspect-runtime-health"
 import type { readMaintenance } from "@/maintenance/read-maintenance"
+import { getRecordedDaemonPids } from "@/maintenance/get-recorded-daemon-pids"
 
 export async function inspectDaemonControl(
   home: string,
-  signal?: AbortSignal,
-  maintenance: ReturnType<typeof readMaintenance> = null,
+  context: {
+    signal?: AbortSignal
+    requestId?: string
+    maintenance?: ReturnType<typeof readMaintenance>
+  } = {},
 ) {
+  const maintenance = context.maintenance ?? null
   const errors: string[] = []
   const failures: Array<{ phase: string; causes: ReturnType<typeof errorDetails> }> = []
   const ownership: { lease: ReturnType<typeof readDaemonLease>; valid: boolean } = {
@@ -27,14 +32,13 @@ export async function inspectDaemonControl(
   const leaseProcessAlive = ownership.lease !== null && isProcessAlive(ownership.lease.pid)
   const recordedPid =
     !leaseProcessAlive && maintenance !== null && "oldPid" in maintenance
-      ? ([maintenance.oldPid, maintenance.newPid].find(
-          (pid) => pid !== null && isProcessAlive(pid),
-        ) ?? null)
+      ? (getRecordedDaemonPids(maintenance).find((pid) => isProcessAlive(pid)) ?? null)
       : null
   const processAlive = leaseProcessAlive || recordedPid !== null
+  const journalUnreadable = maintenance !== null && maintenance.status === "unreadable"
   const maintenanceUnresolved =
     maintenance !== null &&
-    (maintenance.status === "unreadable" ||
+    (journalUnreadable ||
       maintenance.status === "uncertain" ||
       ("workerAlive" in maintenance && maintenance.workerAlive))
   if (ownership.valid && !processAlive)
@@ -63,7 +67,8 @@ export async function inspectDaemonControl(
         home,
         path: "/status",
         timeoutMs: 2000,
-        signal,
+        requestId: context.requestId,
+        signal: context.signal,
         expectedLease: ownership.lease ?? undefined,
       })
     } catch (error) {
@@ -80,7 +85,8 @@ export async function inspectDaemonControl(
     controlError: observed.error,
     leaseValid: ownership.valid,
     processAlive,
-    staleLease: ownership.lease !== null && !processAlive,
+    // An unreadable journal leaves recorded daemon PIDs unverified, so the lease is not provably stale.
+    staleLease: ownership.lease !== null && !processAlive && !journalUnreadable,
     errors,
     failures,
   }

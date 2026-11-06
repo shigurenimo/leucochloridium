@@ -4,6 +4,7 @@ import {
   DiscordEventSource,
   type DiscordSourceHandlers,
 } from "@/connectors/discord/discord-event-source"
+import { copyRedactedError } from "@/secrets/copy-redacted-error"
 
 type Props = { botToken: string; intents: number; source?: FlumeSource }
 
@@ -53,7 +54,15 @@ export class FlumeDiscordEventSource extends DiscordEventSource {
           handlers.onStatus(this.state)
         }
         if (item.log.level !== "debug")
-          handlers.onLog(item.log.message.replaceAll(this.props.botToken, "[redacted]"))
+          handlers.onLog({
+            level: item.log.level,
+            action: item.log.action,
+            message: item.log.message.replaceAll(this.props.botToken, "[redacted]"),
+            error:
+              item.log.error === undefined
+                ? null
+                : copyRedactedError(item.log.error, [this.props.botToken]),
+          })
       },
     })
     const opened = await flume.open()

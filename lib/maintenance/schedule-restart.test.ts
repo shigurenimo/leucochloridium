@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => {
     alive: vi.fn(),
     record: vi.fn(),
     spawn: vi.fn(),
+    appendLog: vi.fn(),
     child: { pid: 42, on: vi.fn(), unref: vi.fn() },
   }
 })
@@ -35,6 +36,7 @@ vi.mock("@/maintenance/node-maintenance-store", () => ({
 vi.mock("@/maintenance/record-maintenance-operation", () => ({
   recordMaintenanceOperation: fixture.record,
 }))
+vi.mock("@/daemon/append-daemon-log", () => ({ appendDaemonLog: fixture.appendLog }))
 vi.mock("@/fs/with-file-lock", () => ({
   withFileLock: (_props: unknown, operation: () => unknown) => operation(),
 }))
@@ -49,6 +51,7 @@ beforeEach(() => {
   fixture.spawn.mockReset().mockReturnValue(fixture.child)
   fixture.child.on.mockReset().mockReturnValue(fixture.child)
   fixture.child.unref.mockReset()
+  fixture.appendLog.mockReset()
   fixture.record.mockReset().mockImplementation((_home: string, operation: unknown) => {
     fixture.journal.operation = operation
     return true
@@ -81,6 +84,24 @@ it("keeps the actual asynchronous spawn error in the journal", () => {
       ? operation.causes
       : null
   expect(JSON.stringify(causes)).not.toContain("xoxb-synthetic-secret")
+})
+it("keeps an asynchronous spawn and failure-journal error out of the daemon's uncaught exceptions", () => {
+  const requestId = "0f4bd1f6-8f0e-4e57-9d3a-6a1c3f6f1e2b"
+  scheduleRestart("/memory", {}, { requestId })
+  const listener = fixture.child.on.mock.calls.find((call) => call[0] === "error")?.[1]
+  fixture.record.mockImplementationOnce(() => {
+    throw Object.assign(new Error("journal unavailable"), { code: "EMFILE" })
+  })
+  expect(() =>
+    listener(Object.assign(new Error("spawn unavailable"), { code: "EMFILE" })),
+  ).not.toThrow()
+  expect(fixture.appendLog).toHaveBeenCalledOnce()
+  expect(fixture.appendLog).toHaveBeenCalledWith(
+    "/memory",
+    expect.stringMatching(
+      new RegExp(`^\\[error\\] requestId=${requestId} .*spawn unavailable.*journal unavailable`),
+    ),
+  )
 })
 it("observes and detaches a worker before publication can fail", () => {
   fixture.record

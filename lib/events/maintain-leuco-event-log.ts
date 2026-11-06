@@ -22,6 +22,10 @@ type PageSizeRow = {
   page_size: number
 }
 
+type FreelistCountRow = {
+  freelist_count: number
+}
+
 type CountRow = {
   count: number
 }
@@ -63,22 +67,26 @@ function trimRows(database: Database, maxRows: number): void {
 function trimBytes(database: Database, props: Props): void {
   const pageCount = database.prepare<PageCountRow, []>("PRAGMA page_count").get()?.page_count ?? 0
   const pageSize = database.prepare<PageSizeRow, []>("PRAGMA page_size").get()?.page_size ?? 0
-  const bytes = pageCount * pageSize
 
-  if (bytes <= props.maxBytes) return
+  if (pageCount * pageSize <= props.maxBytes) return
 
+  // Pages freed by the row and age deletes stay in the file until VACUUM, so they must not count as row bytes.
+  const freePages =
+    database.prepare<FreelistCountRow, []>("PRAGMA freelist_count").get()?.freelist_count ?? 0
+  const usedBytes = Math.max(0, pageCount - freePages) * pageSize
   const rows =
     database.prepare<CountRow, []>("SELECT COUNT(*) AS count FROM logs").get()?.count ?? 0
-  if (rows === 0) return
 
-  const bytesPerRow = Math.max(1, bytes / rows)
-  const rowsToDrop = Math.min(rows, Math.ceil((bytes - props.targetBytes) / bytesPerRow))
+  if (rows > 0 && usedBytes > props.targetBytes) {
+    const bytesPerRow = Math.max(1, usedBytes / rows)
+    const rowsToDrop = Math.min(rows, Math.ceil((usedBytes - props.targetBytes) / bytesPerRow))
 
-  database
-    .prepare<unknown, [number]>(
-      "DELETE FROM logs WHERE seq IN (SELECT seq FROM logs ORDER BY seq ASC LIMIT ?)",
-    )
-    .run(rowsToDrop)
+    database
+      .prepare<unknown, [number]>(
+        "DELETE FROM logs WHERE seq IN (SELECT seq FROM logs ORDER BY seq ASC LIMIT ?)",
+      )
+      .run(rowsToDrop)
+  }
   database.run("PRAGMA wal_checkpoint(TRUNCATE)")
   database.run("VACUUM")
 }

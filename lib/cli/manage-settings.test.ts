@@ -16,6 +16,103 @@ describe("single settings commands", () => {
     await manageSettings(parseArguments(["config", "set", "soul", "null"]), store)
     expect(store.loadSettings().soul).toBeNull()
   })
+  it.each([
+    ["slack", "null"],
+    ["slack", '{"credential":"11111111-1111-4111-8111-111111111111","ackMode":"off"}'],
+    ["discord", "null"],
+    ["discord", '{"credential":"11111111-1111-4111-8111-111111111111"}'],
+  ])("rejects config set %s %s that changes a credential reference", async (key, value) => {
+    const store = new MemoryLeucoStore({
+      slack: { credential: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d", ackMode: "off" },
+      discord: { credential: "7e6d9bcc-a07c-4c72-93f0-7eb651f9711d", messageContent: true },
+    })
+    const before = store.loadSettings()
+    const update = vi.spyOn(store, "updateSettings")
+    await expect(
+      manageSettings(parseArguments(["config", "set", key, value]), store),
+    ).rejects.toMatchObject({
+      code: "USAGE",
+      message: expect.stringContaining(`leuco ${key} logout`),
+      details: { phase: "credential-reference", setting: key },
+    })
+    expect(update).not.toHaveBeenCalled()
+    expect(store.loadSettings()).toEqual(before)
+  })
+  it("rejects planting a credential reference that login never saved", async () => {
+    const store = new MemoryLeucoStore()
+    await expect(
+      manageSettings(
+        parseArguments([
+          "config",
+          "set",
+          "slack",
+          '{"credential":"11111111-1111-4111-8111-111111111111"}',
+        ]),
+        store,
+      ),
+    ).rejects.toMatchObject({
+      code: "USAGE",
+      message: expect.stringContaining("leuco slack login bot"),
+      details: { currentCredential: null },
+    })
+    expect(store.loadSettings().slack).toBeNull()
+  })
+  it("saves other chat fields when the credential reference stays identical", async () => {
+    const store = new MemoryLeucoStore({
+      slack: { credential: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d", ackMode: "off" },
+      discord: { credential: "7e6d9bcc-a07c-4c72-93f0-7eb651f9711d", messageContent: true },
+    })
+    await manageSettings(
+      parseArguments([
+        "config",
+        "set",
+        "slack",
+        '{"credential":"6e6d9bcc-a07c-4c72-93f0-7eb651f9711d","ackMode":"always"}',
+      ]),
+      store,
+    )
+    await manageSettings(
+      parseArguments([
+        "config",
+        "set",
+        "discord",
+        '{"credential":"7e6d9bcc-a07c-4c72-93f0-7eb651f9711d","messageContent":false}',
+      ]),
+      store,
+    )
+    expect(store.loadSettings()).toMatchObject({
+      slack: { credential: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d", ackMode: "always" },
+      discord: { credential: "7e6d9bcc-a07c-4c72-93f0-7eb651f9711d", messageContent: false },
+    })
+  })
+  it("rechecks the credential reference against the settings acquired for the write", async () => {
+    const store = new MemoryLeucoStore({
+      slack: { credential: "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d", ackMode: "off" },
+    })
+    const update = store.updateSettings.bind(store)
+    vi.spyOn(store, "updateSettings").mockImplementationOnce((transform) => {
+      update((settings) => ({
+        ...settings,
+        slack: { credential: "11111111-1111-4111-8111-111111111111", ackMode: "off" },
+      }))
+      update(transform)
+    })
+    await expect(
+      manageSettings(
+        parseArguments([
+          "config",
+          "set",
+          "slack",
+          '{"credential":"6e6d9bcc-a07c-4c72-93f0-7eb651f9711d","ackMode":"always"}',
+        ]),
+        store,
+      ),
+    ).rejects.toMatchObject({ code: "USAGE", details: { phase: "credential-reference" } })
+    expect(store.loadSettings().slack).toEqual({
+      credential: "11111111-1111-4111-8111-111111111111",
+      ackMode: "off",
+    })
+  })
   it("saves reception rules without credentials and rejects invalid rules atomically", async () => {
     const store = new MemoryLeucoStore()
     await expect(

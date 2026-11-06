@@ -3,7 +3,9 @@ import { createMemoryDaemonHandler } from "@/daemon/memory-daemon-handler"
 
 function fixture(ready = true) {
   const runDiscordCommand = vi.fn(
-    async (_parsed: unknown, _requestId: string): Promise<unknown> => ({ id: "1" }),
+    async (_parsed: unknown, _requestId: string, _signal: AbortSignal): Promise<unknown> => ({
+      id: "1",
+    }),
   )
   const daemon = createMemoryDaemonHandler({
     token: "control",
@@ -12,10 +14,11 @@ function fixture(ready = true) {
   })
   const log = daemon.log
   const handler = daemon.handler
-  const request = (words: string[], token = "control") =>
+  const request = (words: string[], token = "control", signal?: AbortSignal) =>
     handler(
       new Request("http://localhost/discord", {
         method: "POST",
+        signal,
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "application/json",
@@ -37,6 +40,21 @@ describe("Discord daemon proxy", () => {
       id: "1",
     })
     expect(test.runDiscordCommand).toHaveBeenCalledOnce()
+  })
+  it("passes the control request's cancellation signal to the Discord operation", async () => {
+    const test = fixture()
+    const controller = new AbortController()
+    const words = ["discord", "call", "POST", "/channels/1/messages"]
+    expect((await test.request(words, "control", controller.signal)).status).toBe(200)
+    expect(test.runDiscordCommand).toHaveBeenCalledWith(
+      { words, flags: {} },
+      "6e6d9bcc-a07c-4c72-93f0-7eb651f9711d",
+      expect.any(AbortSignal),
+    )
+    const signal = test.runDiscordCommand.mock.calls[0]?.[2]
+    expect(signal?.aborted).toBe(false)
+    controller.abort(new Error("client disconnected"))
+    expect(signal?.aborted).toBe(true)
   })
   it("masks known secrets in upstream errors and does not run while stopping", async () => {
     const test = fixture()

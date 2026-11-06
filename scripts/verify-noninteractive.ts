@@ -143,7 +143,21 @@ try {
       .exitCode,
     0,
   )
-  await run(["slack", "upload-file", "--channel", "C123", "--file", fifo], 1)
+  const directory = join(workspace, "upload-directory")
+  mkdirSync(directory)
+  const preDispatchRejections = [
+    ["slack", "upload-file", "--channel", "C123", "--file", fifo],
+    ["slack", "upload-file", "--channel", "C123", "--file", directory],
+    ["slack", "upload-file", "--channel", "C123", "--file", join(workspace, "missing-upload")],
+    ["discord", "call", "GET", "https://evil.invalid/users/@me"],
+    ["discord", "call", "GET", "/channels/%2e%2e/users"],
+    ["discord", "call", "GET", "/users/@me", "--body", "{}"],
+  ]
+  for (const args of preDispatchRejections) {
+    const rejected = JSON.parse((await run([...args, "--json"], 2)).stderr)
+    assert.equal(rejected.error.code, "USAGE", args.join(" "))
+    assert.equal(rejected.error.mutationMayHaveOccurred, false, args.join(" "))
+  }
   const begin = Date.now()
   const timed = await run(["ask", "hold", "--timeout-ms", "80", "--json"], 5)
   const failure = JSON.parse(timed.stderr)

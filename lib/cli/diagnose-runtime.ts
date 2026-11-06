@@ -13,7 +13,7 @@ const reportedPersistenceFailureSchema = z.object({
   runtime: z.object({ logs: z.object({ failedWrites: z.number().int().positive() }) }),
 })
 
-export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
+export async function diagnoseRuntime(home: string, signal?: AbortSignal, requestId?: string) {
   const store = new NodeLeucoStore(home)
   const configuration = readDiagnosticConfiguration(store, new NodeMaintenanceStore(home))
   const environment = inspectLaunchEnvironment({
@@ -22,7 +22,7 @@ export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
     launch: configuration.launch,
   })
   const maintenance = readMaintenance(home)
-  const control = await inspectDaemonControl(home, signal, maintenance)
+  const control = await inspectDaemonControl(home, { signal, requestId, maintenance })
   const history = inspectDiagnosticHistory(home, control.daemon)
   const errors = [
     ...configuration.errors,
@@ -45,8 +45,11 @@ export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
     errors.push(
       `Latest restart is ${maintenance.status}: ${maintenance.error ?? "Inspect maintenance progress and logs"}`,
     )
-  if (maintenance?.status === "unreadable")
+  if (maintenance?.status === "unreadable") {
     errors.push("Maintenance journal is invalid; preserve it for inspection")
+    if (maintenance.causes)
+      failures.push({ phase: "maintenance-journal", causes: maintenance.causes })
+  }
   return {
     ...environment,
     discordConfigured: configuration.settings.discord !== null,
@@ -70,7 +73,11 @@ export async function diagnoseRuntime(home: string, signal?: AbortSignal) {
     failures,
     repairable: {
       staleLease: control.staleLease,
-      invalidState: !configuration.stateValid && control.leaseValid && !control.processAlive,
+      invalidState:
+        !configuration.stateValid &&
+        control.leaseValid &&
+        !control.processAlive &&
+        maintenance?.status !== "unreadable",
     },
     healthy: errors.length === 0,
     hints: [

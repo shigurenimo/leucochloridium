@@ -639,3 +639,42 @@ it.each(["/status", "/turn", "/stop", "/restart", "/slack"])(
     expect(ready).not.toHaveBeenCalled()
   },
 )
+
+it.each<[string, (form: FormData) => void]>([
+  ["non-text command", (form) => form.set("command", new Blob(["{}"]), "command.json")],
+  ["invalid command JSON", (form) => form.set("command", "{")],
+  ["oversized command", (form) => form.set("command", "x".repeat(4 * 1024 * 1024 + 1))],
+  [
+    "oversized file",
+    (form) => form.set("file", new Blob([new Uint8Array(100 * 1024 * 1024 + 1)]), "upload"),
+  ],
+])("classifies a multipart %s as a pre-execution control-body rejection", async (_label, edit) => {
+  const operation = vi.fn(async () => ({}))
+  const daemon = createMemoryDaemonHandler({
+    token: "secret",
+    secrets: ["secret"],
+    overrides: { runSlackCommand: operation },
+  })
+  const form = new FormData()
+  form.set(
+    "command",
+    JSON.stringify({ words: ["slack", "upload-file"], flags: { file: "/c/r", channel: "C1" } }),
+  )
+  form.set("file", new Blob(["bytes"]), "upload")
+  edit(form)
+  const response = await daemon.handler(
+    new Request("http://localhost/slack", {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+      body: form,
+    }),
+  )
+  expect(response.status).toBe(400)
+  expect(await response.json()).toMatchObject({
+    failure: { code: "USAGE", details: { phase: "control-body", executionStarted: false } },
+  })
+  expect(daemon.log.query()).toEqual([
+    expect.objectContaining({ event: expect.objectContaining({ level: "warn" }) }),
+  ])
+  expect(operation).not.toHaveBeenCalled()
+})

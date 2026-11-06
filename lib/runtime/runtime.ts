@@ -17,6 +17,7 @@ import type { LeucoSettings } from "@/config/config-schema"
 import type { Connector } from "@/connectors/connector"
 import { LeucoCodexClient } from "@/engine/codex/codex-client"
 import type { CodexClientPort } from "@/engine/codex/codex-client-port"
+import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 import { LeucoTurnTimeouts } from "@/engine/turn-timeouts"
 import { toBoundedCodexNotification } from "@/engine/codex/to-bounded-codex-notification"
 import { LeucoEventLog } from "@/events/leuco-event-log"
@@ -77,6 +78,8 @@ export class LeucoRuntime {
   private readonly conversations: LeucoConversations
   private readonly pending: PendingTurn[] = []
   private discordCredentials: DiscordCredentials | null = null
+  private readonly discordShutdown = new AbortController()
+  private readonly discordOperations = new Set<Promise<unknown>>()
   private slackCredentials: SlackCredentials | null = null
   private readonly slackShutdown = new AbortController()
   private readonly slackOperations = new Map<
@@ -274,9 +277,28 @@ export class LeucoRuntime {
     }
   }
 
-  async runDiscordCommand(
+  runDiscordCommand(
     parsed: CliArguments,
     requestId: string = randomUUID(),
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const operation = this.performDiscordCommand(
+      parsed,
+      requestId,
+      signal ? AbortSignal.any([signal, this.discordShutdown.signal]) : this.discordShutdown.signal,
+    )
+    this.discordOperations.add(operation)
+    void operation.then(
+      () => this.discordOperations.delete(operation),
+      () => this.discordOperations.delete(operation),
+    )
+    return operation
+  }
+
+  private async performDiscordCommand(
+    parsed: CliArguments,
+    requestId: string,
+    signal: AbortSignal,
   ): Promise<unknown> {
     validateDaemonCommand(parsed, "discord")
     if (this.lifecycle !== "running") throw new Error("Runtime is not running")
@@ -285,17 +307,26 @@ export class LeucoRuntime {
         "Discord is not configured; stop Leuco, copy the bot token and run leuco discord login",
       )
     try {
+      signal.throwIfAborted()
       const reply = await executeDiscordCommand({
         parsed,
         botToken: this.discordCredentials.botToken,
+        signal,
       })
-      if (this.lifecycle !== "running") throw new Error("Runtime stopped during Discord operation")
+      signal.throwIfAborted()
       return this.eventLog.redactValue(reply)
     } catch (error) {
-      const message = this.eventLog.redactText(errorMessage(error))
+      const failure = signal.aborted
+        ? new Error(
+            "Discord operation cancelled; external effects may already have been accepted; inspect before replaying",
+            { cause: error },
+          )
+        : error
+      const safeFailure = this.eventLog.redactError(failure)
+      const message = safeFailure.message
       this.lastFailure = { ts: Date.now(), requestId, phase: "discord", message }
-      this.eventLog.error("Discord operation failed", error, requestId)
-      throw new Error(message)
+      this.eventLog.error("Discord operation failed", safeFailure, requestId)
+      throw new Error(message, { cause: safeFailure })
     }
   }
 
@@ -454,6 +485,7 @@ export class LeucoRuntime {
     this.stopping = stopped.promise
     this.lifecycle = "stopping"
     this.slackShutdown.abort(new Error("Runtime stopped during Slack operation"))
+    this.discordShutdown.abort(new Error("Runtime stopped during Discord operation"))
     this.shutdown.resolve(new Error("Runtime stopped"))
     this.generation += 1
     for (const turn of this.pending.splice(0)) {
@@ -487,6 +519,16 @@ export class LeucoRuntime {
           await awaitBoundedCleanup(
             Promise.allSettled(this.slackOperations.keys()),
             "Slack operations shutdown",
+            1500,
+          )
+        },
+      },
+      {
+        name: "Discord operations",
+        close: async () => {
+          await awaitBoundedCleanup(
+            Promise.allSettled(this.discordOperations),
+            "Discord operations shutdown",
             1500,
           )
         },
@@ -677,7 +719,7 @@ export class LeucoRuntime {
     timeouts.startIdle()
     const activeRequest = this.activeRequest
     if (activeRequest !== null) activeRequest.lastActivity = "executing Codex turn"
-    return this.codex.runTextTurn(threadId, turn.text, {
+    const reply = await this.codex.runTextTurn(threadId, turn.text, {
       cwd: this.cwd,
       requestId: turn.requestId,
       onActivity: (method) => {
@@ -686,6 +728,12 @@ export class LeucoRuntime {
         activeRequest.lastActivityAt = Date.now()
         activeRequest.lastActivity = method
       },
+    })
+    if (!(reply instanceof Error) || !isCurrent() || !isCodexHistoryCorruptionError(reply))
+      return reply
+    return this.conversations.discardCorruptedThread(turn.key, threadId, {
+      requestId: turn.requestId,
+      error: reply,
     })
   }
 

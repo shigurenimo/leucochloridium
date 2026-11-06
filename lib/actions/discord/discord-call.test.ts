@@ -49,6 +49,28 @@ describe("Discord REST boundary", () => {
       }),
     ).toEqual({ ok: true })
   })
+  it("aborts the request when the caller cancels", async () => {
+    const controller = new AbortController()
+    const fetchFn = vi.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>(
+      async (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          })
+        }),
+    )
+    const pending = discordCall({
+      botToken,
+      method: "POST",
+      endpoint: "/channels/1/messages",
+      body: {},
+      signal: controller.signal,
+      fetchFn,
+    })
+    controller.abort(new Error("runtime stopped"))
+    await expect(pending).rejects.toThrow("runtime stopped")
+    expect(fetchFn.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+  })
   it("never retries a rate-limited write or exposes the response body", async () => {
     const fetchFn = vi.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>(
       async () => new Response("private upstream data", { status: 429 }),

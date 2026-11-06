@@ -2,6 +2,7 @@ import {
   type DiscordEnvelope,
   DiscordEventSource,
   type DiscordSourceHandlers,
+  type DiscordSourceLog,
 } from "@/connectors/discord/discord-event-source"
 
 /** `DiscordEventSource` のテスト用実装。`start` 後に `emit(envelope)` でGatewayのイベントを流す。 */
@@ -24,5 +25,9 @@ export class MemoryDiscordEventSource extends DiscordEventSource {
     const handlers = this.handlers
     if (handlers === null) return
     await handlers.onEvent(envelope)
+  }
+
+  emitLog(log: DiscordSourceLog): void {
+    this.handlers?.onLog(log)
   }
 }

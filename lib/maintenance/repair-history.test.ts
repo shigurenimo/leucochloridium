@@ -60,6 +60,17 @@ it("keeps transport recovery available after history is verified", async () => {
   expect(fixture.request.mock.calls.map((call) => call[0].path)).toEqual(["/status", "/restart"])
 })
 
+it("sends the CLI requestId with the status probe and the restart request", async () => {
+  fixture.codexRunning = false
+  fixture.history.mockReturnValue({ eventLogValid: true, errors: [] })
+  const requestId = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
+  await repairRuntime("/memory", { resetState: false, requestId })
+  expect(fixture.request.mock.calls.map((call) => [call[0].path, call[0].requestId])).toEqual([
+    ["/status", requestId],
+    ["/restart", requestId],
+  ])
+})
+
 it("keeps independent transport recovery available with an existing unreadable database", async () => {
   fixture.codexRunning = false
   fixture.history.mockReturnValue({

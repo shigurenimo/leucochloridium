@@ -1,19 +1,26 @@
 import { beforeEach, expect, it, vi } from "vitest"
 import { repairRuntime } from "@/maintenance/repair-runtime"
+import type { MaintenanceOperation } from "@/maintenance/maintenance-schema"
+import type { MaintenanceStore } from "@/maintenance/maintenance-store"
+import { MemoryMaintenanceStore } from "@/maintenance/memory-maintenance-store"
 
-const fixture = vi.hoisted(() => ({
-  read: vi.fn(),
-  release: vi.fn(),
-  remove: vi.fn(),
-  request: vi.fn(),
-}))
+const fixture = vi.hoisted(() => {
+  const maintenance: { store: MaintenanceStore | null } = { store: null }
+  return { maintenance, read: vi.fn(), release: vi.fn(), remove: vi.fn(), request: vi.fn() }
+})
 vi.mock("@/cli/inspect-diagnostic-history", () => ({
   inspectDiagnosticHistory: () => ({ eventLogValid: true, errors: [] }),
 }))
 vi.mock("@/maintenance/node-maintenance-store", () => ({
   NodeMaintenanceStore: class {
     readOperation() {
-      return null
+      return fixture.maintenance.store?.readOperation() ?? null
+    }
+    updateOperation(
+      id: string,
+      transform: (operation: MaintenanceOperation) => MaintenanceOperation,
+    ) {
+      return fixture.maintenance.store?.updateOperation(id, transform) ?? null
     }
   },
 }))
@@ -39,6 +46,7 @@ vi.mock("@/fs/with-file-lock", () => ({
 }))
 vi.mock("node:fs", () => ({ existsSync: () => false, rmSync: fixture.remove }))
 beforeEach(() => {
+  fixture.maintenance.store = new MemoryMaintenanceStore()
   fixture.read
     .mockReset()
     .mockReturnValueOnce({ pid: 42, token: "old-owner" })
@@ -67,4 +75,30 @@ it("reports stale cleanup only after confirmed removal", async () => {
   })
   expect(fixture.release).toHaveBeenCalledOnce()
   expect(fixture.request).not.toHaveBeenCalled()
+})
+it("records the observed exit of maintenance-recorded daemons so a reused PID cannot block later", async () => {
+  fixture.maintenance.store?.writeOperation({
+    id: "bcbad0ce-c551-4f38-902a-fd8e41c7db2e",
+    status: "failed",
+    requestedAt: 1,
+    updatedAt: 2,
+    workerPid: null,
+    oldPid: 41,
+    oldLeaseId: null,
+    recovery: null,
+    newPid: 42,
+    error: "replacement exited",
+    launch: { workingDirectory: "/memory", codexHome: null },
+  })
+  expect(await repairRuntime("/memory", { resetState: false })).toMatchObject({
+    repaired: true,
+    actions: [
+      "Removed confirmed stale daemon lease and control socket",
+      "Recorded confirmed exit of daemon PIDs in the maintenance journal",
+    ],
+  })
+  expect(fixture.maintenance.store?.readOperation()).toMatchObject({
+    oldPidExited: true,
+    newPidExited: true,
+  })
 })

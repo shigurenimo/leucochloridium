@@ -44,3 +44,15 @@ it.each<[ChatProvider, string[]]>([
     }),
   )
 })
+
+it.each([
+  [["discord", "call", "GET", "/%2e%2e/evil"], "endpoint"],
+  [["discord", "call", "GET", "/users/@me", "--body", "{}"], "body"],
+])("marks Discord input the action would reject as not started %j", (args, parameter) => {
+  expect(() => validateDaemonCommand(parseArguments(args), "discord")).toThrow(
+    expect.objectContaining({
+      code: "USAGE",
+      details: { phase: "validation", executionStarted: false, validation: { parameter } },
+    }),
+  )
+})

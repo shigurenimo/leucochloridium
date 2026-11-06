@@ -11,11 +11,30 @@ All notable changes to Leuco are documented here.
 - 旧イベント種別`supervisor.reconcile*`・`codex.recovery`とその読取schemaを削除。`recentFailures`と失敗だけの履歴抽出は、失敗・拒否したrequest、failed/uncertainの保守、errorレベルのSlack・textイベントを対象にする。
 - `codex.notification`の保存形を単一の`_leuco`エンベロープに統一。
 - 返されたturn失敗を二重に記録しない。
+- 起動時のイベントDB保守で、行数・期限による削除で空いたページを行の容量に数えないようにした。maxBytes超過時に保持期間内の新しい行を必要以上に削除しない。空きページだけで上限を超える場合もVACUUMする。
 - Codex子の環境から`LEUCO_PROJECT_ID`を除去する特別扱いを廃止。
 - `--soul`と`--no-soul`の同時指定をコマンド定義の検証エラーとして返す。
 - Discordのhelp・doctor注記、クリップボード読取とdownload期限切れのエラー文を実際の挙動に合わせた。`start`の起動確認が最大15秒であることを明記。
 - 配布物から`.docs/reliability-verification.md`を除外。`bun run verify`でcoverageの下限も検査する。
 - 内部: Slack・Discordの資格情報管理と受付判定、秘密マスク、daemonのテスト用handlerを共通化し、使われていないファイル・設定（旧TUI用のcomponents.jsonなど）を削除。
+- 終了を確認したdaemonと、後片付けを終えて所有情報を解放したdaemonのPIDをmaintenance.jsonへ`oldPidExited`/`newPidExited`として記録し、OSがそのPIDを再利用してもstart・stop・status・restart・repairがphase=identityで止まらないようにした。所有取得前に終了した置き換えdaemonも記録する。restartの結果とstatusのmaintenanceにも同じ任意項目が出る。確認記録のない既存journalはそのまま読めるが、従来どおり手動確認が必要。停止中のrepairが新たに終了を記録した場合は、actionsに`Recorded confirmed exit of daemon PIDs in the maintenance journal`を加える。この項目を含むmaintenance.jsonは0.19.0以前では読み取り不能になる。
+- 互換性注意: 記録済みPIDが生存中のときの`start`は、子を起動せず他のコマンドと同じSTATE_UNCERTAIN（終了コード5・phase=identity・executionStarted:false）を返す。従来は起動失敗のOPERATION_FAILED（終了コード1）だった。
+- 互換性注意: 所有情報がなくmaintenance.jsonが読み取り不能な場合、status・stop・restart・repair・startとdaemon所有の取得（`run --foreground`、予約を伴うsession reset・login/logoutを含む）はSTATE_UNCERTAIN（終了コード5・phase=maintenance-journal）で拒否する。statusは従来running:falseを返していた。所有者が生きていればstatus・stopは続き、maintenance.status=unreadableを示す。doctorはmaintenance-journalの失敗を出し、staleLeaseとinvalidStateを修復候補にしない。
+- 再起動workerは/stopが遅い・接続できない場合や、旧daemonが所有情報を解放したがまだ終了していない場合も、旧PIDの終了を最大20秒待ってから置き換えを起動する。従来は自動復旧などで旧daemonだけが止まり、新daemonが起動しないことがあった。終了を確認できなければuncertainとし、errorは`Old daemon is still stopping. No replacement was started.`、causesに終了待ちと/stopの原因を残す。
+- 再起動workerの非同期spawn失敗とjournal保存失敗が重なっても、daemonを停止させずdaemon.logへ両方の原因を残す。daemon.logに書けない場合はstderrへ出す。
+- repair・doctor・startがdaemonへの/status・/restartにCLIのrequestIdを渡す。repairによる再起動の操作IDとevents --requestの照合がCLI出力のrequestIdで辿れ、再起動workerの起動確認も操作IDを使う。
+- daemon.logの停止・致命的失敗・実行失敗・強制drain・lease保持の行にもlevelと先頭のrequestIdを付け（`[level] requestId=<id> 本文`）、foreground端末へ表示する。ローテーションは複製後に切り詰める方式に変え、子のstdout/stderrが常に現行のdaemon.logへ書かれる。閾値4MiB・保持3世代・0600は変わらない。ディスク満杯では古い世代から捨てて複製し、入らなければ複製せず切り詰めてwarn行を残し、追記を続ける。
+- `slack upload-file`で存在しない・ディレクトリ・FIFO・100MiB超・開けないファイルを指定した場合、daemonへ接続する前にUSAGE（終了コード2、mutationMayHaveOccurred:false、phase=validation・executionStarted:false）で返す。従来は終了コード1のOPERATION_FAILEDだった。
+- `discord call`の絶対URL・fragment・不正なpercent-encoding・traversal・GETと--bodyの併用を、CLIとdaemon入口の共通検証でUSAGEとして拒否する。外部操作の可能性ありと誤表示しない。ライブラリの`runtime.runDiscordCommand`も同じ入力をUSAGE（phase=validation・executionStarted:false）で拒否する。helpのendpointにはpatternを示す。
+- 制御APIのmultipartでcommand欄が文字列でない・4MiB超・JSON不正の場合、またはファイルが100MiB超の場合も、USAGE・phase=control-body・executionStarted:false（HTTP 400、warn）で返す。
+- 互換性注意: `config set slack` / `config set discord` で資格情報の参照IDを変更・`null`化する更新をUSAGEで拒否し、設定を書き換えない。従来は参照の差し替え後、logoutが旧トークンを削除しないまま`logged out`を返し、OSストアに旧トークンが残っていた。参照の変更は`login` / `logout`だけで行う。`ackMode`・`messageContent`は`config show`の参照IDを保ったまま変更できる。
+- Slackの`upload-file`で外部へのファイル本体送信が`--timeout-ms`に従うよう修正。従来は既定30秒で打ち切られ、大きなファイルや遅い回線では`--timeout-ms`を上げても失敗していた。Slack Web APIの各呼び出しの期限は従来どおり。
+- Codexのturnが保存履歴の不正（invalid_request_errorのinput[N].arguments）で失敗した場合、その会話の対応表を削除し、依頼は再実行せずCODEX_HISTORY_RESETで再送を案内する。同じキーで再起動と失敗を繰り返さない。元のエラーはcauseとturn.errorのcausesに残る。turn失敗のエラー名は`CodexTurnError`になる。
+- Slackのリアクション起動turnの失敗を、メッセージの失敗と同じく元のrequestId・errorレベル・マスク済みcauses付きのslack.error一件とテキスト一行で記録する。標準Runtimeは従来のinfo・requestIdなしのlogイベントを作らない。ack reactionの追加・削除の失敗（missing_scopeなど）は、起動した依頼のrequestIdを付けたwarnレベルのslack.error（action=reactions.add / reactions.remove）として残し、events --summaryで確認できる。
+- `discord call`をCLIの切断とruntime停止で中断する。停止は進行中のDiscord操作を最大1500ms確認し、確認できなければ停止失敗を返す。中断時は`Discord operation cancelled; external effects may already have been accepted; inspect before replaying`を返し、自動再送しない。公開APIの`runtime.runDiscordCommand(parsed, requestId?, signal?)`に省略可能な第三引数`signal`を追加。
+- Discordの受信をturnの完了を待たずに到着順で実行queueへ渡す。後続のDiscordイベントとログが1ターン分止まらず、queueの上限とstatusの対象になり、停止時は未実行の依頼として記録される。
+- DiscordのGatewayログのlevel・action・原因を保持し、warn・errorを`events --summary`とテキストログに出す。表示は`[discord] <action>: <message>`になる。イベント失敗は`[discord] event failed: …`、turn失敗は`[discord] turn failed: …`としてerrorで記録し、turn失敗にはrequestIdを付ける。
+- Bot自身の投稿先が通常チャンネルなら覚えて`GET /channels/{id}`を繰り返さない。この照会の失敗はwarnとして記録し、イベント失敗やlastFailureにしない。
 
 ## 0.19.0 - 2026-10-31
 

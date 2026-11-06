@@ -9,6 +9,7 @@ type Props = {
   pid: number | null
   timeoutMs: number
   pollMs?: number
+  requestId?: string
   signal?: AbortSignal
   getExitError?: () => Error | null
 }
@@ -36,6 +37,7 @@ export async function waitForDaemonReady(props: Props) {
     const status = await requestDaemon({
       home: props.home,
       path: "/status",
+      requestId: props.requestId,
       signal: props.signal,
       timeoutMs: Math.max(1, Math.min(1000, Math.ceil(deadline - performance.now()))),
     })

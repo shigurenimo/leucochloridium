@@ -1,10 +1,13 @@
 import { openSync, fstatSync, closeSync, constants, fchmodSync } from "node:fs"
 import { join } from "node:path"
 import { withSyncCleanup } from "@/fs/with-sync-cleanup"
-export function openDaemonLog(home: string): number {
+export function openDaemonLog(
+  home: string,
+  access: { canRead: boolean } = { canRead: false },
+): number {
   const descriptor = openSync(
     join(home, "daemon.log"),
-    constants.O_WRONLY |
+    (access.canRead ? constants.O_RDWR : constants.O_WRONLY) |
       constants.O_APPEND |
       constants.O_CREAT |
       constants.O_NONBLOCK |

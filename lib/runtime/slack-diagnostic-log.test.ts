@@ -1,4 +1,5 @@
 import { expect, it } from "vitest"
+import { receptionRulesSchema } from "@/config/config-schema"
 import { LeucoRuntime } from "@/runtime/runtime"
 import { MemoryLeucoStore } from "@/storage/memory-leuco-store"
 import { MemoryCodexClient } from "@/engine/codex/memory-codex-client"
@@ -134,3 +135,137 @@ it.each([false, true])(
     }
   },
 )
+
+it("records a Slack reaction turn failure once under the reaction request ID", async () => {
+  const events = new LeucoEventLog()
+  const source = new LeucoMemorySlackEventSource()
+  const codex = new MemoryCodexClient()
+  codex.reply = Object.assign(new Error("reaction diagnostic failure"), { code: "TURN_FAILED" })
+  const text: Array<{ line: string; level: string | undefined; requestId: string | undefined }> = []
+  const runtime = LeucoRuntime.build({
+    store: new MemoryLeucoStore(),
+    codex,
+    eventLog: events,
+    env: {},
+    connections: [
+      new LeucoSlackConnector({
+        eventSource: source,
+        webClient: new LeucoMemorySlackWebClient({ authTest: { userId: "UBOT" } }),
+        ackMode: "off",
+        reception: receptionRulesSchema.parse({ reactionAdded: ["eyes"] }),
+      }),
+    ],
+    onLog: (line, level, requestId) => {
+      text.push({ line, level, requestId })
+    },
+  })
+  try {
+    await runtime.start()
+    await source.emit({
+      type: "events_api",
+      receivedAt: 1000,
+      payload: {
+        event: {
+          type: "reaction_added",
+          user: "UHUMAN",
+          reaction: "eyes",
+          event_ts: "2.0",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      },
+    })
+    const requestId = events.query({ type: "slack.event" })[0]?.event.requestId
+    expect(typeof requestId).toBe("string")
+    const slackErrors = events.query({ type: "slack.error" })
+    expect(slackErrors).toHaveLength(1)
+    expect(slackErrors[0]?.event).toMatchObject({
+      requestId,
+      level: "error",
+      action: "turn.failed",
+      causes: [expect.objectContaining({ code: "TURN_FAILED" })],
+    })
+    expect(
+      events
+        .query({ type: "log" })
+        .filter(
+          (entry) =>
+            entry.event.type === "log" && entry.event.line.includes("reaction turn failed"),
+        ),
+    ).toHaveLength(0)
+    expect(text.filter((entry) => entry.line.includes("reaction turn failed"))).toEqual([
+      expect.objectContaining({ level: "error", requestId }),
+    ])
+  } finally {
+    await runtime.stop()
+    events.close()
+  }
+})
+
+it("records failed ack reactions as request-scoped Slack warnings", async () => {
+  const events = new LeucoEventLog()
+  const source = new LeucoMemorySlackEventSource()
+  const codex = new MemoryCodexClient()
+  codex.reply = "done"
+  const text: Array<{ line: string; level: string | undefined; requestId: string | undefined }> = []
+  const runtime = LeucoRuntime.build({
+    store: new MemoryLeucoStore(),
+    codex,
+    eventLog: events,
+    env: {},
+    connections: [
+      new LeucoSlackConnector({
+        eventSource: source,
+        webClient: new LeucoMemorySlackWebClient({
+          authTest: { userId: "UBOT" },
+          reactionsAdd: (reaction) => {
+            if (reaction.name === "hourglass_flowing_sand")
+              throw Object.assign(new Error("missing_scope"), {
+                code: "slack_webapi_platform_error",
+              })
+          },
+        }),
+      }),
+    ],
+    onLog: (line, level, requestId) => {
+      text.push({ line, level, requestId })
+    },
+  })
+  try {
+    await runtime.start()
+    await source.emit({
+      type: "events_api",
+      receivedAt: 1000,
+      payload: {
+        event: {
+          type: "message",
+          channel: "C1",
+          user: "UHUMAN",
+          text: "<@UBOT> hello",
+          ts: "1.0",
+        },
+      },
+    })
+    const requestId = events.query({ type: "slack.event" })[0]?.event.requestId
+    expect(typeof requestId).toBe("string")
+    const warnings = events.query({ summary: true, type: "slack.error" })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.event).toMatchObject({
+      requestId,
+      level: "warn",
+      action: "reactions.add",
+      error: "missing_scope",
+      causes: [expect.objectContaining({ code: "slack_webapi_platform_error" })],
+    })
+    expect(
+      events
+        .query({ type: "log" })
+        .filter((entry) => entry.event.type === "log" && entry.event.line.includes("reactions.")),
+    ).toHaveLength(0)
+    expect(text.filter((entry) => entry.line.includes("reactions.add failed"))).toEqual([
+      expect.objectContaining({ level: "warn", requestId }),
+    ])
+  } finally {
+    await runtime.stop()
+    events.close()
+  }
+})

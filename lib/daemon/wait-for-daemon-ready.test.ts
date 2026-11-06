@@ -48,6 +48,20 @@ it("retains the last status separately from a previous failed observation", asyn
   expect(String(failure)).not.toContain("still starting")
 })
 
+it("sends the caller requestId with every status probe", async () => {
+  const requestId = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+  vi.mocked(requestDaemon)
+    .mockResolvedValueOnce(waiting)
+    .mockResolvedValueOnce({ ...waiting, ready: true })
+  const pending = waitForDaemonReady({ ...props, requestId })
+  await vi.advanceTimersByTimeAsync(10)
+  await pending
+  expect(vi.mocked(requestDaemon).mock.calls.map((call) => call[0].requestId)).toEqual([
+    requestId,
+    requestId,
+  ])
+})
+
 it("only confirms readiness for the spawned child PID", async () => {
   vi.mocked(requestDaemon)
     .mockResolvedValueOnce({ ...waiting, ready: true, pid: 99 })

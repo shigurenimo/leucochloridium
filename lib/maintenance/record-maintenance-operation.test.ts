@@ -187,6 +187,24 @@ it("does not resurrect an event error carried by an older worker snapshot", () =
     eventLogCauses: expect.arrayContaining([expect.objectContaining({ code: "EIO" })]),
   })
 })
+it("keeps another process's exit confirmations over an older worker snapshot until the PID changes", () => {
+  const recorded = { ...operation, oldPid: 42, newPid: 43 }
+  const store = fixture.state.store!
+  store.writeOperation({ ...recorded, oldPidExited: true, newPidExited: true })
+  expect(
+    recordMaintenanceOperation("/memory", { ...recorded, status: "starting" }, recorded.id),
+  ).toBe(true)
+  expect(store.readOperation()).toMatchObject({ oldPidExited: true, newPidExited: true })
+  expect(
+    recordMaintenanceOperation(
+      "/memory",
+      { ...recorded, status: "starting", newPid: 44, newPidExited: true },
+      recorded.id,
+    ),
+  ).toBe(true)
+  expect(store.readOperation()).toMatchObject({ oldPidExited: true, newPid: 44 })
+  expect(store.readOperation()?.newPidExited).toBeUndefined()
+})
 it("marks journal recovery annotation failure as uncertain after progress was committed", () => {
   const prior = {
     ...operation,

@@ -58,6 +58,12 @@ async function message(id: string, overrides: Record<string, unknown> = {}): Pro
   })
 }
 const codex = new MemoryCodexClient()
+// Gateway delivery returns once the turn is queued, so wait for Codex to observe it.
+async function waitForTurns(count: number): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (codex.turns.length < count && Date.now() < deadline) await Bun.sleep(10)
+  assert.equal(codex.turns.length, count)
+}
 const connector = new DiscordConnector({
   source: gateway,
   api: (method, endpoint, body) => discordCall({ botToken, method, endpoint, body }),
@@ -85,11 +91,11 @@ try {
   }
   assert.equal(readiness.ready, true)
   await message("1")
-  assert.equal(codex.turns.length, 0, "Unaddressed message started Codex")
   await message("2", { mentions: [{ id: "bot" }] })
-  assert.equal(codex.turns.length, 1)
+  await waitForTurns(1)
+  assert.ok(codex.turns[0]?.text.includes('"id":"2"'), "Unaddressed message started Codex")
   await message("3", { guild_id: undefined })
-  assert.equal(codex.turns.length, 2)
+  await waitForTurns(2)
   await cli([
     "discord",
     "call",

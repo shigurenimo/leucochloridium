@@ -1,5 +1,12 @@
 import { assertRecordedDaemonsStopped } from "@/maintenance/assert-recorded-daemons-stopped"
-import { getDaemonLeaseId } from "@/daemon/get-daemon-lease-id"
+import { recordDaemonExits } from "@/maintenance/record-daemon-exits"
+import { recordReplacementExit } from "@/maintenance/record-replacement-exit"
+import {
+  RESTART_REPLACEMENT_READY_TIMEOUT_MS,
+  RESTART_WORKER_PUBLICATION_TIMEOUT_MS,
+  RESTART_WORKER_START_DELAY_MS,
+} from "@/maintenance/restart-worker-limits"
+import { stopReplacedDaemon } from "@/maintenance/stop-replaced-daemon"
 import { errorDetails } from "@/error-details"
 import { recordMaintenanceOperation } from "@/maintenance/record-maintenance-operation"
 import { launchDaemonProcess } from "@/daemon/launch-daemon-process"
@@ -31,8 +38,9 @@ const update = (
     process.exit(0)
   }
 }
+const launched: { state: ReturnType<typeof launchDaemonProcess> | null } = { state: null }
 try {
-  const publicationDeadline = performance.now() + 5000
+  const publicationDeadline = performance.now() + RESTART_WORKER_PUBLICATION_TIMEOUT_MS
   while (performance.now() < publicationDeadline) {
     const published = store.readOperation()
     if (published?.id !== operation.id) process.exit(0)
@@ -44,32 +52,25 @@ try {
   }
   if (current.value.workerPid !== process.pid)
     throw new Error("Restart worker ownership was not published; no daemon was stopped or started")
-  await Bun.sleep(500)
-  const previous = readDaemonLease(home)
-  if (previous && isProcessAlive(previous.pid)) {
-    if (previous.pid !== operation.oldPid || getDaemonLeaseId(previous) !== operation.oldLeaseId)
-      throw new Error(
-        "Daemon identity changed after restart was requested; refusing to stop another process",
-      )
-    update("stopping")
-    await requestDaemon({
-      home,
-      path: "/stop",
-      body: {},
-      timeoutMs: 5000,
-      expectedLease: previous,
-      requestId: operation.id,
-    })
-    const exited = await waitForDaemonExit(previous.pid, 20_000).then(
-      () => true,
-      () => false,
-    )
-    if (!exited) {
-      update("uncertain", "Old daemon is still stopping. No replacement was started.")
-      process.exit(0)
-    }
-  }
-  assertRecordedDaemonsStopped(operation, isProcessAlive)
+  await Bun.sleep(RESTART_WORKER_START_DELAY_MS)
+  await stopReplacedDaemon({
+    operation: current.value,
+    lease: readDaemonLease(home),
+    isAlive: isProcessAlive,
+    requestStop: (lease, timeoutMs) =>
+      requestDaemon({
+        home,
+        path: "/stop",
+        body: {},
+        timeoutMs,
+        expectedLease: lease,
+        requestId: operation.id,
+      }),
+    waitForExit: waitForDaemonExit,
+    onStopping: () => update("stopping"),
+  })
+  assertRecordedDaemonsStopped(current.value, isProcessAlive)
+  recordDaemonExits(store, (pid) => !isProcessAlive(pid))
   update("starting")
   const launch = operation.launch
   const args = ["run", "--foreground"]
@@ -85,12 +86,14 @@ try {
     cwd: launch.workingDirectory,
     env,
   })
+  launched.state = state
   update("starting", null, state.pid)
   await waitForDaemonReady({
     home,
     pid: state.pid,
-    timeoutMs: 30000,
+    timeoutMs: RESTART_REPLACEMENT_READY_TIMEOUT_MS,
     pollMs: 200,
+    requestId: operation.id,
     getExitError: () => {
       if (!state.exited && state.error === null) return null
       const cause = createDaemonStartupError({
@@ -119,6 +122,7 @@ try {
   )
     current.value = { ...current.value, newPid: error.details.pid }
   current.value = { ...current.value, causes: errorDetails(error) }
+  recordReplacementExit(store, launched.state)
   update(
     error instanceof CliError && error.code === "STATE_UNCERTAIN" ? "uncertain" : "failed",
     error instanceof Error ? error.message : "Restart worker failed",

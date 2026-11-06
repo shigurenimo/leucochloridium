@@ -12,6 +12,7 @@ import { slackRateLimitDelayMs } from "@/connectors/slack/slack-rate-limit-delay
 type LeucoFetchSlackWebClientProps = {
   botToken: string
   requestTimeoutMs?: number
+  uploadTimeoutMs?: number
   fetchFn?: SlackFetchPort
   signal?: AbortSignal
 }
@@ -140,7 +141,8 @@ export class LeucoFetchSlackWebClient extends LeucoSlackWebClient {
       url: uploadUrl,
       init: { method: "POST", body: form, redirect: "error" },
       label: "slack file upload",
-      timeoutMs: this.props.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      timeoutMs:
+        this.props.uploadTimeoutMs ?? this.props.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
       fetchFn: this.props.fetchFn ?? globalThis.fetch,
       signal: this.props.signal,
     }).run(async (response) => {

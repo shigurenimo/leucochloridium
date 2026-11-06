@@ -54,7 +54,11 @@ type Props = {
   isReady: () => boolean
   /** For input already validated by turnSchema, records returned failures with the requestId so the handler does not report them again. */
   runTextTurn: (key: string, text: string, requestId?: string) => Promise<string | Error>
-  runDiscordCommand: (parsed: CliArguments, requestId: string) => Promise<unknown>
+  runDiscordCommand: (
+    parsed: CliArguments,
+    requestId: string,
+    signal: AbortSignal,
+  ) => Promise<unknown>
   runSlackCommand: (parsed: CliArguments, options?: SlackCommandOptions) => Promise<unknown>
   stop: (requestId: string) => void
   awaitStop: () => Promise<void>
@@ -149,7 +153,7 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
           [props.token],
         )
         validateDaemonCommand(parsed, "discord")
-        return Response.json(await props.runDiscordCommand(parsed, requestId))
+        return Response.json(await props.runDiscordCommand(parsed, requestId, request.signal))
       }
       if (request.method === "POST" && path === "/slack") {
         if (!props.isReady())
@@ -185,7 +189,10 @@ export function handleDaemonRequest(props: Props): (request: Request) => Promise
             executionStarted: false,
           })
         if (file instanceof Blob && file.size > MAX_FILE_TRANSFER_BYTES)
-          throw new Error("Upload exceeds 100 MiB")
+          throw new CliError("USAGE", "Upload exceeds 100 MiB", {
+            phase: "control-body",
+            executionStarted: false,
+          })
         const upload = file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : undefined
         const reply = await props.runSlackCommand(parsed, {
           upload,

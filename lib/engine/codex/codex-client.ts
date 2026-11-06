@@ -9,6 +9,7 @@ import { CodexStderrLog } from "@/engine/codex/codex-stderr-log"
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { LeucoCodexProtocol } from "@/engine/codex/codex-protocol"
 import { CodexRequestTimeoutError } from "@/engine/codex/codex-request-timeout-error"
+import { CodexTurnError } from "@/engine/codex/codex-turn-error"
 import {
   agentMessageDeltaSchema,
   commandExecutionOutputDeltaSchema,
@@ -573,9 +574,7 @@ export class LeucoCodexClient {
           const turn = parsed.data.turn
           if (turn.status !== "completed") {
             teardown()
-            const message =
-              getTurnErrorMessage(turn.error) ?? `codex turn ${turn.id} ${turn.status}`
-            reject(new Error(message))
+            reject(new CodexTurnError(turn.id, turn.status, getTurnErrorMessage(turn.error)))
             return
           }
           const finalText = text.getText()

@@ -3,7 +3,7 @@ import { basename } from "node:path"
 import { z } from "zod"
 import type { CliArguments } from "@/cli/parse-arguments"
 import { requiredCliFlag } from "@/cli/required-cli-flag"
-import { SLACK_METHOD_PATTERN } from "@/cli/command-catalog"
+import { DEFAULT_CLI_TIMEOUT_MS, SLACK_METHOD_PATTERN } from "@/cli/command-catalog"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 import { fetchSlackFile } from "@/actions/slack/fetch-slack-file"
 import { assertSlackFileResponse } from "@/actions/slack/assert-slack-file-response"
@@ -32,7 +32,12 @@ export async function executeSlackCommand(props: Props): Promise<unknown> {
     const content = props.upload
     if (content === undefined || content.byteLength > MAX_FILE_TRANSFER_BYTES)
       throw new Error("Upload content is missing or exceeds 100 MiB")
-    const client = new LeucoFetchSlackWebClient({ botToken: botToken, signal: props.signal })
+    // The byte transfer scales with file size, so it shares the caller's deadline instead of the per-call API budget.
+    const client = new LeucoFetchSlackWebClient({
+      botToken: botToken,
+      uploadTimeoutMs: Number(parsed.flags["timeout-ms"] ?? DEFAULT_CLI_TIMEOUT_MS),
+      signal: props.signal,
+    })
     return client.filesUpload({
       content,
       filename,

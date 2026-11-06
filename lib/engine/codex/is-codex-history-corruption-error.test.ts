@@ -1,4 +1,5 @@
 import { CodexRpcError } from "@/engine/codex/codex-rpc-error"
+import { CodexTurnError } from "@/engine/codex/codex-turn-error"
 import { describe, expect, it } from "vitest"
 import { isCodexHistoryCorruptionError } from "@/engine/codex/is-codex-history-corruption-error"
 
@@ -19,6 +20,33 @@ describe("isCodexHistoryCorruptionError", () => {
     expect(isCodexHistoryCorruptionError(new CodexRpcError(-32603, message))).toBe(false)
     expect(isCodexHistoryCorruptionError(new CodexRpcError(429, message))).toBe(false)
     const quoted = new CodexRpcError(-32600, "model is unavailable")
+    quoted.message = message
+    expect(isCodexHistoryCorruptionError(quoted)).toBe(false)
+  })
+
+  it("detects the same rejection reported by a failed Codex turn", () => {
+    const error = new CodexTurnError(
+      "turn-1",
+      "failed",
+      "[ObjectParam] [input[381].arguments.bad] invalid_request_error: property name is too long",
+    )
+
+    expect(isCodexHistoryCorruptionError(error)).toBe(true)
+  })
+
+  it("does not discard history for turn results without Codex's own matching text", () => {
+    const message =
+      "[ObjectParam] [input[381].arguments.bad] invalid_request_error: property name is too long"
+    expect(
+      isCodexHistoryCorruptionError(new CodexTurnError("turn-1", "interrupted", message)),
+    ).toBe(false)
+    expect(isCodexHistoryCorruptionError(new CodexTurnError("turn-1", "failed", null))).toBe(false)
+    expect(
+      isCodexHistoryCorruptionError(
+        new CodexTurnError("turn-1", "failed", "invalid_request_error: model is not available"),
+      ),
+    ).toBe(false)
+    const quoted = new CodexTurnError("turn-1", "failed", "usage limit reached")
     quoted.message = message
     expect(isCodexHistoryCorruptionError(quoted)).toBe(false)
   })

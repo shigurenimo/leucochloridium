@@ -28,6 +28,9 @@ export function recordMaintenanceOperation(
         })()
       : store.updateOperation(expectedId, (current) => ({
           ...safe,
+          // Exit confirmations come only from the fresh journal, and only while the PID is unchanged.
+          oldPidExited: current.oldPid === safe.oldPid ? current.oldPidExited : undefined,
+          newPidExited: current.newPid === safe.newPid ? current.newPidExited : undefined,
           ...(current.eventLogError === undefined ? {} : { eventLogError: current.eventLogError }),
           ...(current.eventLogCauses === undefined
             ? {}

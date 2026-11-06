@@ -45,6 +45,7 @@ export const DAEMON_READY_TIMEOUT_MS = 15_000
 export const DEFAULT_CLI_LIMIT = 100
 export const DEFAULT_CLI_THREAD = "cli"
 export const SLACK_METHOD_PATTERN = "^[a-zA-Z][a-zA-Z0-9.]+$"
+export const DISCORD_ENDPOINT_PATTERN = "^/[A-Za-z0-9_%@:-][A-Za-z0-9_%@/:-]*(?:\\?[^#\\s]*)?$"
 const SLACK_TOKEN_KINDS = CHAT_PROVIDERS.slack.tokens.map((token) => token.kind)
 export const SLACK_RETRY_NOTE = `Each Slack Web API call may retry once only after an explicit HTTP 429 and successful response cleanup. Retry-After wait is capped at ${SLACK_RATE_LIMIT_MAX_DELAY_MS} ms (missing/invalid: ${SLACK_RATE_LIMIT_DEFAULT_DELAY_MS} ms). Cancellation prevents the retry. Transport errors, timeouts, other HTTP failures, uncertain outcomes and file-byte transfers are not automatically retried.`
 
@@ -113,9 +114,9 @@ const LIMIT: Parameter = {
 const CREDENTIAL_REFERENCE_NOTE =
   "Updates check the expected credential reference inside the settings lock. Immediately before OS cleanup, settings are checked again; changed or unreadable references preserve credentials for inspection. Inspect config before retrying."
 const OWNERSHIP_OBSERVATION_NOTE =
-  "Missing/stale ownership with a live maintenance oldPid/newPid is STATE_UNCERTAIN (phase=identity), not running:false. No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe."
+  "Missing/stale ownership with a live maintenance oldPid/newPid whose exit is not recorded (oldPidExited/newPidExited) is STATE_UNCERTAIN (phase=identity), not running:false; an unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal). No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe."
 const RECORDED_DAEMON_NOTE =
-  "Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair; inspect the PID and operation before retrying."
+  "Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair (STATE_UNCERTAIN, phase=identity) unless maintenance records oldPidExited/newPidExited for that PID; observed exits and orderly ownership releases are recorded so a reused PID number does not block. An unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal); preserve and inspect it before retrying."
 const RESERVATION_RELEASE_NOTE =
   "Success is printed only after the daemon reservation is released. STATE_UNCERTAIN with phase=reservation-release means local state may have changed; inspect it before repeating the command."
 const LOGIN_CLEANUP_NOTE =
@@ -200,7 +201,7 @@ export const COMMANDS: CommandDefinition[] = [
     effect: "execute",
     daemon: "none",
     result:
-      "Maintenance operation with id/status/workerPid/oldPid/newPid/timestamps/launch/error. Accepted does not mean ready; inspect status. Concurrent calls reuse the active operation.",
+      "Maintenance operation with id/status/workerPid/oldPid/newPid/oldPidExited/newPidExited/timestamps/launch/error. Accepted does not mean ready; inspect status. Concurrent calls reuse the active operation.",
     resultSchema: z.toJSONSchema(operationSchema),
     notes: [
       "A separate process performs shutdown/startup and records maintenance.json. It survives termination of the requesting Codex.",
@@ -413,6 +414,7 @@ export const COMMANDS: CommandDefinition[] = [
       "Restart after changes except schedules.",
       RESTART_SETTINGS_NOTE,
       "Slack and Discord settings contain a credential reference, never tokens. Copy one token at a time and use leuco slack login bot / leuco slack login app or leuco discord login.",
+      "config set never changes a credential reference: setting slack or discord to null or to another credential is a USAGE error without writing. Use login or logout instead. To change slack.ackMode or discord.messageContent, pass the whole object with the unchanged credential from config show.",
       "Do not rewrite settings.json directly.",
       "Bulk schedules are checked like schedules add: new IDs or changed runAt values must be valid cron or a timestamp no more than 60 seconds in the past. Unchanged stored past one-shots remain valid for catch-up.",
       "Schedule objects accept only id, name, runAt, prompt and enabled. Unknown fields (including timezone) are USAGE errors, never silently discarded. Cron uses the host local time zone.",
@@ -631,8 +633,9 @@ export const COMMANDS: CommandDefinition[] = [
         name: "endpoint",
         type: "string",
         required: true,
+        pattern: DISCORD_ENDPOINT_PATTERN,
         description:
-          "API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs and traversal are rejected.",
+          "API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs, fragments, invalid percent-encoding and traversal (including encoded dot segments or backslashes) are rejected before daemon dispatch.",
       },
     ],
     options: [
@@ -640,7 +643,7 @@ export const COMMANDS: CommandDefinition[] = [
         name: "body",
         type: "json-object",
         description:
-          "JSON request body for non-GET requests. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.",
+          "JSON request body for non-GET requests; GET with --body is rejected before daemon dispatch. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.",
       },
     ],
     effect: "external-write",
@@ -820,6 +823,7 @@ export const COMMANDS: CommandDefinition[] = [
       "The daemon receives bytes and never reads the supplied path.",
       "Do not automatically retry after an uncertain upload result.",
       SLACK_RETRY_NOTE,
+      "The external file-byte transfer is bounded by --timeout-ms; raise it for large files on slow links. Each Slack Web API call keeps its own per-call deadline.",
       "Caller disconnect or timeout cancels pending Slack work and retry waits; an upload or share may already have been accepted.",
     ],
     examples: [
@@ -1009,6 +1013,7 @@ export const COMMANDS: CommandDefinition[] = [
       "If a verified live daemon reports SQLite history but events.db is missing, eventLogValid=false and CHECK_FAILED. No database is created or replaced. An absent database is allowed for stopped daemons and memory-fallback. Inspect status and text logs before recovery.",
       "Codex starting, stopping or transport cleanup remains unhealthy, but should be observed before requesting another restart.",
       "A stopped daemon is unhealthy even when configuration is valid. For Slack or Discord, checks that leuco is on the invoking CLI's PATH; restart after fixing PATH so the daemon inherits it.",
+      "An unreadable maintenance.json reports daemon.running:null and a maintenance-journal failure; staleLease and invalidState are not offered for repair.",
     ],
     examples: [["doctor", "--json"]],
   },

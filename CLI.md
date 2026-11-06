@@ -62,7 +62,7 @@ leuco start [options]
   --no-soul (boolean, optional): Ignore the saved SOUL for this invocation. Does not disable native Codex instructions.
   Result: Ready daemon status.
   Note: Only one daemon per LEUCO_HOME.
-  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair; inspect the PID and operation before retrying.
+  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair (STATE_UNCERTAIN, phase=identity) unless maintenance records oldPidExited/newPidExited for that PID; observed exits and orderly ownership releases are recorded so a reused PID number does not block. An unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal); preserve and inspect it before retrying.
   Note: Control-path preparation must succeed before a new daemon lease is published. An unexpected directory at control.sock is preserved and reported as an OS error; failed preparation does not leave a new live owner in status.
   Note: Readiness observation is capped at 15000ms; a shorter CLI deadline ends it first.
   Note: If observation times out, inspect status and logs; do not start another daemon.
@@ -80,9 +80,9 @@ leuco restart [options]
   --cwd (string, optional): Working directory. Relative paths resolve against the invoking CLI directory; otherwise saved cwd or current directory.
   --soul (string, optional): Append this file to native Codex developer instructions. Read once on startup.
   --no-soul (boolean, optional): Ignore the saved SOUL for this invocation. Does not disable native Codex instructions.
-  Result: Maintenance operation with id/status/workerPid/oldPid/newPid/timestamps/launch/error. Accepted does not mean ready; inspect status. Concurrent calls reuse the active operation.
+  Result: Maintenance operation with id/status/workerPid/oldPid/newPid/oldPidExited/newPidExited/timestamps/launch/error. Accepted does not mean ready; inspect status. Concurrent calls reuse the active operation.
   Note: A separate process performs shutdown/startup and records maintenance.json. It survives termination of the requesting Codex.
-  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair; inspect the PID and operation before retrying.
+  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair (STATE_UNCERTAIN, phase=identity) unless maintenance records oldPidExited/newPidExited for that PID; observed exits and orderly ownership releases are recorded so a reused PID number does not block. An unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal); preserve and inspect it before retrying.
   Note: Classified daemon failures retain error.code and details, including worker-publication phase, operationId, workerPid or journalWritten. Unconfirmed publication exits 5; accepted work may already exist. Inspect status before another restart.
   Note: The ownership snapshot must still match before an operation is reused or created. An identity conflict with executionStarted:false creates no restart request, including when an owner appeared after an offline snapshot.
   Note: Restart preserves recorded --cwd, --soul/--no-soul and CODEX_HOME; new flags replace recorded overrides. Settings without an invocation override are read fresh. To use newly saved cwd/SOUL values, stop then start without those flags.
@@ -101,7 +101,7 @@ leuco repair [options]
   --reset-state (boolean, optional): Explicitly archive invalid state.json byte-for-byte, including malformed UTF-8, and create empty runtime mappings. Requires daemon stopped. Valid state is not reset; Codex history, settings and OS credentials are never deleted.
   Result: {repaired,actions,restart,note,issues?}. restart is an accepted operation or null, not a claim that recovery is complete.
   Note: Invalid settings/journals are preserved for inspection, never replaced automatically.
-  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair; inspect the PID and operation before retrying.
+  Note: Missing or stale ownership metadata does not prove process exit. Live oldPid/newPid records in maintenance block replacement startup and metadata repair (STATE_UNCERTAIN, phase=identity) unless maintenance records oldPidExited/newPidExited for that PID; observed exits and orderly ownership releases are recorded so a reused PID number does not block. An unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal); preserve and inspect it before retrying.
   Note: Codex starting, stopping or transport cleanup is an observation state, not a restart trigger by itself. Inspect status/events; an independent failed input connection can still require recovery.
   Note: Missing live SQLite history returns repaired:false and restart:null; inspect doctor causes before recovery. No database is created or reset. Existing unreadable history remains visible in issues; independent transport recovery can still be accepted.
   Note: State reset acquires state.lock and rechecks validity before archiving. If another writer made state valid, it returns STATE_CONFLICT with phase=state-reset and preserves those mappings; run leuco session list before retrying.
@@ -121,7 +121,7 @@ leuco stop
   Effect: local-write; daemon: none.
   Result: {stopped:true}, or {running:false} if already stopped.
   Note: Stopping can interrupt running work. It does not undo external effects.
-  Note: Missing/stale ownership with a live maintenance oldPid/newPid is STATE_UNCERTAIN (phase=identity), not running:false. No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe.
+  Note: Missing/stale ownership with a live maintenance oldPid/newPid whose exit is not recorded (oldPidExited/newPidExited) is STATE_UNCERTAIN (phase=identity), not running:false; an unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal). No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe.
   Note: Ownership cleanup checks both PID and token. If ownership changed, the current metadata and control path are retained; an old instance cannot remove them.
   Note: After shutdown acknowledgement, process-exit observation is bounded to 15 seconds and respects the caller deadline. STATE_UNCERTAIN with phase=process-exit distinguishes resourcesStopped from unconfirmed process exit; inspect status before starting again.
   Note: Control requests get 1000 ms to drain during shutdown, then remaining connections are force-closed. Interrupted requests can already have effects; inspect their requestId history before retrying.
@@ -136,7 +136,7 @@ leuco status
   Effect: read; daemon: none.
   Result: {running:false}, or {running:true,ready,pid,cwd}.
   Note: running:true does not imply ready:true.
-  Note: Missing/stale ownership with a live maintenance oldPid/newPid is STATE_UNCERTAIN (phase=identity), not running:false. No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe.
+  Note: Missing/stale ownership with a live maintenance oldPid/newPid whose exit is not recorded (oldPidExited/newPidExited) is STATE_UNCERTAIN (phase=identity), not running:false; an unreadable maintenance.json is STATE_UNCERTAIN (phase=maintenance-journal). No stop is sent to an unverified owner. Doctor retains the PID with running:null and ownership:unknown; state reset is not considered safe.
   Note: maintenance.eventLogError and eventLogCauses describe secondary event-DB failures. maintenance.json is authoritative for restart progress; its masked diagnostic annotation does not depend on stderr being writable. Doctor reports a current mirror failure, and historical causes remain after recovery.
   Note: runtime.control.pendingRequests counts HTTP control requests, including this status query and incomplete uploads. It is separate from Codex turns and Slack API operations.
   Note: For schedule connections, health.cleanup reports pending one-shot deletion retries and nextRetryAt (earliest epoch milliseconds, null when none). Pending cleanup keeps health.state=error and a bounded masked lastFailure even after a successful settings read; inspect storage rather than restarting healthy transports. This is an in-memory observation, not a replay queue. Removed, disabled or retimed entries are pruned on the next schedule read.
@@ -193,6 +193,7 @@ leuco config set <key> <value>
   Note: Restart after changes except schedules.
   Note: Restart preserves recorded --cwd, --soul/--no-soul and CODEX_HOME; new flags replace recorded overrides. Settings without an invocation override are read fresh. To use newly saved cwd/SOUL values, stop then start without those flags.
   Note: Slack and Discord settings contain a credential reference, never tokens. Copy one token at a time and use leuco slack login bot / leuco slack login app or leuco discord login.
+  Note: config set never changes a credential reference: setting slack or discord to null or to another credential is a USAGE error without writing. Use login or logout instead. To change slack.ackMode or discord.messageContent, pass the whole object with the unchanged credential from config show.
   Note: Do not rewrite settings.json directly.
   Note: Bulk schedules are checked like schedules add: new IDs or changed runAt values must be valid cron or a timestamp no more than 60 seconds in the past. Unchanged stored past one-shots remain valid for catch-up.
   Note: Schedule objects accept only id, name, runAt, prompt and enabled. Unknown fields (including timezone) are USAGE errors, never silently discarded. Cron uses the host local time zone.
@@ -302,8 +303,8 @@ leuco discord call <method> <endpoint> [options]
   Execute one explicit Discord REST API v10 operation through the daemon.
   Effect: external-write; daemon: required.
   Argument method (string, required): HTTP method. Writes are never automatically retried. Choices: GET, POST, PUT, PATCH, DELETE.
-  Argument endpoint (string, required): API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs and traversal are rejected.
-  --body (json-object, optional): JSON request body for non-GET requests. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.
+  Argument endpoint (string, required): API-relative path such as /channels/123/messages. GET query parameters belong in this path; absolute URLs, fragments, invalid percent-encoding and traversal (including encoded dot segments or backslashes) are rejected before daemon dispatch.
+  --body (json-object, optional): JSON request body for non-GET requests; GET with --body is rejected before daemon dispatch. Do not supply tokens. Use allowed_mentions:{parse:[]} when posting to avoid unintended mentions.
   Result: Discord JSON, or {ok:true} for a successful empty response. Stored tokens are redacted.
   Note: Obtain channel/message IDs from incoming events or verified API data. Final agent answers stay internal; posting requires this explicit command.
   Note: No SDK or token is passed to Codex. HTTP errors including rate limits are returned without automatically retrying writes.
@@ -376,6 +377,7 @@ leuco slack upload-file --channel <channel> --file <file> [options]
   Note: The daemon receives bytes and never reads the supplied path.
   Note: Do not automatically retry after an uncertain upload result.
   Note: Each Slack Web API call may retry once only after an explicit HTTP 429 and successful response cleanup. Retry-After wait is capped at 30000 ms (missing/invalid: 1000 ms). Cancellation prevents the retry. Transport errors, timeouts, other HTTP failures, uncertain outcomes and file-byte transfers are not automatically retried.
+  Note: The external file-byte transfer is bounded by --timeout-ms; raise it for large files on slow links. Each Slack Web API call keeps its own per-call deadline.
   Note: Caller disconnect or timeout cancels pending Slack work and retry waits; an upload or share may already have been accepted.
   Example: leuco slack upload-file --channel C123 --file /absolute/report.pdf --thread-ts 123.456 --json
 ```
@@ -450,5 +452,6 @@ leuco doctor
   Note: If a verified live daemon reports SQLite history but events.db is missing, eventLogValid=false and CHECK_FAILED. No database is created or replaced. An absent database is allowed for stopped daemons and memory-fallback. Inspect status and text logs before recovery.
   Note: Codex starting, stopping or transport cleanup remains unhealthy, but should be observed before requesting another restart.
   Note: A stopped daemon is unhealthy even when configuration is valid. For Slack or Discord, checks that leuco is on the invoking CLI's PATH; restart after fixing PATH so the daemon inherits it.
+  Note: An unreadable maintenance.json reports daemon.running:null and a maintenance-journal failure; staleLease and invalidState are not offered for repair.
   Example: leuco doctor --json
 ```

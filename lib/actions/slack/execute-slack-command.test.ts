@@ -3,7 +3,10 @@ import { executeSlackCommand } from "@/actions/slack/execute-slack-command"
 import { LeucoFetchSlackWebClient } from "@/connectors/slack/leuco-fetch-slack-web-client"
 import { fetchSlackFile } from "@/actions/slack/fetch-slack-file"
 vi.mock("@/actions/slack/fetch-slack-file", () => ({ fetchSlackFile: vi.fn() }))
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe("daemon Slack actions without local filesystem access", () => {
   it("uploads caller-provided bytes without reading the supplied path", async () => {
@@ -28,6 +31,37 @@ describe("daemon Slack actions without local filesystem access", () => {
       threadTs: null,
       initialComment: null,
     })
+  })
+  it("bounds the external byte transfer by the caller's --timeout-ms without completing the share", async () => {
+    vi.useFakeTimers()
+    const fetchFn = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url: string | URL | Request): Promise<Response> => {
+        if (String(url).endsWith("/files.getUploadURLExternal"))
+          return Response.json({
+            ok: true,
+            upload_url: "https://files.slack.com/upload/test",
+            file_id: "F1",
+          })
+        return new Promise(() => {})
+      })
+    const observed: { failure: unknown } = { failure: null }
+    const pending = executeSlackCommand({
+      botToken: "synthetic-bot-token",
+      upload: new Uint8Array([1]),
+      parsed: {
+        words: ["slack", "upload-file"],
+        flags: { file: "report.txt", channel: "C123", "timeout-ms": "45000" },
+      },
+    }).catch((error: unknown) => {
+      observed.failure = error
+    })
+    await vi.advanceTimersByTimeAsync(44_999)
+    expect(observed.failure).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    await pending
+    expect(String(observed.failure)).toContain("slack file upload timed out after 45000ms")
+    expect(fetchFn).toHaveBeenCalledTimes(2)
   })
   it("refuses a path-only upload request", async () => {
     await expect(

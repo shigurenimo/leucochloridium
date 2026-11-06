@@ -130,8 +130,9 @@ Codex CLI 0.163.0の`app-server generate-json-schema`が出力するItemComplete
 - `lib/daemon/request-daemon.test.ts`：不正なHTTPエラー本文・過大なJSON応答・キャンセルを無視する読み取り・後片付けの停止・同じ通信所有者による再送拒否を確認する。scripts/verify-cli-contract.tsでも実Unix socketでステータス保持、実際に16MiBを超える応答、ヘッダー後の本文停止を検証する。
 - `lib/fs/read-regular-text.test.ts`：FS境界の古いサイズ情報を再現し、実際の読み取りが上限を越えて続かないことを確認する。上限ちょうど・0バイト・分割UTF-8・BOM・無効な上限・読み取りとcloseの両方の失敗も検査する。実ファイルでの分割UTF-8と上限はscripts/verify-storage-cleanup.tsで確認する。
 - `lib/runtime/runtime-credentials.test.ts` と `lib/runtime/assert-slack-reply-active.test.ts`：呼び出し元・停止時のキャンセル、requestId付きの原因保持、未確認のSlack停止、遅れて返る応答の期限付き破棄を確認する。停止確認は1500ms、応答破棄は1000ms。CLIの切断はSlack通信へ伝えるが、Slackがすでに受理した書き込みの取り消しは保証しない。
+- `lib/runtime/runtime-discord.test.ts`・`lib/actions/discord/execute-discord-command.test.ts`・`lib/actions/discord/discord-call.test.ts`：呼び出し元・停止時のDiscord操作のキャンセル、signalがREST呼び出しまで届くこと、requestId付きの原因保持、未確認のDiscord停止、停止後に返った応答を返さないことを確認する。停止確認は1500ms。CLIの切断はDiscord通信へ伝えるが、Discordがすでに受理した書き込みの取り消しは保証しない。
 - `scripts/verify-slack-proxy.ts`：実CLIを期限切れにし、Unix socket経由でキャンセルがダウンロード通信へ届き、出力ファイルを作らず、同じrequestIdの履歴へ未確定な外部操作を記録することを確認する。
-- `lib/connectors/slack/slack-http-deadlines.test.ts`：Slack APIの通信・本文・応答破棄の期限、HTTPと後片付け両方の原因、upload失敗後の共有なし、失敗した429応答の再試行なしを確認する。期限はHTTP試行ごとで、既存の429再試行は最大一回。タイムアウトは外部で書き込みが受理されなかった保証にはならない。
+- `lib/connectors/slack/slack-http-deadlines.test.ts`：Slack APIの通信・本文・応答破棄の期限、HTTPと後片付け両方の原因、upload失敗後の共有なし、失敗した429応答の再試行なしを確認する。期限はHTTP試行ごとで、既存の429再試行は最大一回。タイムアウトは外部で書き込みが受理されなかった保証にはならない。外部uploadのファイル本体送信だけはAPI呼び出しと別の期限を持ち、`execute-slack-command.test.ts`でCLIの`--timeout-ms`に従うことと、期限切れ後に共有を完了しないことを確認する。
 - `scripts/verify-slack-http.ts`：ネットワークを使わない子プロセスで、停止したfetch・本文・連続する空チャンク・1バイトずつの応答・応答破棄がBunの実タイマーで終了することを確認する。親にも強制終了の期限を設ける。
 - `lib/actions/slack/fetch-slack-file.test.ts`：リダイレクト全体の期限、キャンセルを無視するfetch、終了不能な応答、元の原因と後片付けの失敗、最終応答引き渡し後の呼び出し元キャンセルを確認する。
 - `lib/actions/slack/assert-slack-file-response.test.ts`：HTTP失敗時の応答破棄を期限付きにし、HTTPステータスを後片付けの失敗で隠さないことを確認する。
@@ -257,7 +258,9 @@ stderrの上限で絵文字や秘密が分断されるケースと、省略後�
 
 Runtimeの起動・turn、scheduleの保存判断、SlackのError付き／本文だけの障害へ長いメッセージを注入し、lastFailureの4,000文字上限と省略前のマスクを単体で確認する。元のErrorとイベントの原因コードも確認する。偽Codexの実turn失敗でも、statusのメッセージに省略マーカーが残り、隔離homeの合成制御トークンが出ないことを実CLIで検査する。
 
-実プロセスのPIDを所有情報へ記録して再起動を受け付けた直後に、隔離homeの所有ファイルを削除／停止済みPIDへ差し替える。workerの終了・uncertain・newPidなしを確認し、同じhomeへのrestart再試行・start・repairでも置き換えが起動せず、journalと差し替えた所有情報が保持されることを検査する。実CodexやSlackは起動しない。oldPid/newPidと自己PIDの扱いは共通判定の単体で確認する。
+実プロセスのPIDを所有情報へ記録して再起動を受け付けた直後に、隔離homeの所有ファイルを削除／停止済みPIDへ差し替える。workerの終了・uncertain・newPidなしを確認し、同じhomeへのrestart再試行・repairとstart（startも終了コード5・phase=identity・executionStarted:false）でも置き換えが起動せず、journalと差し替えた所有情報が保持されることを検査する。実CodexやSlackは起動しない。oldPid/newPidと自己PIDの扱いは共通判定の単体で確認する。
+
+実CLIの再起動の後、置き換えdaemonへ直接SIGTERMを送り、stopを経由しない正常終了でもjournalにoldPidExited/newPidExitedとdaemon.jsonの削除が残ることを確認する。その番号を生存中の検証プロセスPIDへ書き換えても、status・stopがrunning:falseを返すことでPID再利用を模擬する。起動に失敗した置き換え（Codex不在）と、存在しない--cwdで所有取得前に終了した置き換えでも、newPidExitedが残ることを確認する。journalを不正な内容にした場合は、status・stop・restart・repair・startが終了コード5・phase=maintenance-journal・executionStarted:falseで拒否し、journalと所有情報を変更しないこと、doctorがrunning:nullとmaintenance-journalの失敗を返すことを検査する。確認の記録、役割PID変更時の破棄、保存失敗時の継続、後片付け失敗時に記録しないことは、Memory境界の単体で確認する（record-daemon-exits・record-replacement-exit・release-daemon-ownership・record-maintenance-operation・daemon-lease・stop-daemon・start-daemon・repair-ownership）。
 
 所有情報が消失／停止済みPIDへ変わった実FSの再起動試験で、statusとstopが終了コード5・phase=identityを返し、stopがexecutionStarted:falseとなることを検査する。doctorに生存PID・running:null・ownership:unknownが残り、staleLeaseや状態リセット可能を返さないことも確認する。oldPid/newPidと不在／古いleaseの4通りはMemory境界の単体で確認し、未認証のcontrol要求が送られないことを検査する。
 
@@ -295,7 +298,7 @@ Date.parseが受け付ける年・日付のみ、zoneなし、非閏年2月29日
 
 - `verify-single-companion.ts` は実JSON-RPCのモデル参照失敗を起こし、CLIのrequestIdで取得したturn.errorにCodexRpcErrorのcode=-32600（診断上は文字列）が残ることを確認する。
 
-- `is-codex-history-corruption-error.test.ts` は同じ履歴validation文言でもローカル・内部・429・表示本文の改変では置き換え対象にしないことを確認する。`verify-single-companion.ts` は同じ文言の-32603と-32600を実JSON-RPCで送り、前者で対応表と未送信の依頼を保ち、明示回復後に同じ会話を再開し、後者だけ新規会話で一度実行することを確認する。
+- `is-codex-history-corruption-error.test.ts` は同じ履歴validation文言でもローカル・内部・429・表示本文の改変では置き換え対象にしないことを確認する。`verify-single-companion.ts` は同じ文言の-32603と-32600を実JSON-RPCで送り、前者で対応表と未送信の依頼を保ち、明示回復後に同じ会話を再開し、後者だけ新規会話で一度実行することを確認する。`codex-client.test.ts` はCodexがstatus=failedのturn/completedでerror.messageに履歴不正を返した場合に、その文言をCodexTurnError.turnMessageへ保ち履歴不正と判定されることを確認する。`turn-history-corruption.test.ts` はturnがstatus=failedで履歴不正を返した場合に該当キーの対応表だけを削除し、依頼を再実行せずCODEX_HISTORY_RESETとwarnのcausesを残し、次の依頼が新しい会話で始まることを確認する。同じ文言のローカル例外・中断・別のturn失敗では対応表を保ち、削除の保存失敗では両方の原因を返す。
 
 - `inspect-runtime-health.test.ts` はscheduleだけのerrorでは再起動を勧めず、独立したCodex・Slack障害を隠さないことを確認する。`verify-reliability.ts` は実CLIのdoctorが予定のエラーを返し、repairが/restartを呼ばず、状態回復後のdoctorが正常へ戻ることを確認する。
 

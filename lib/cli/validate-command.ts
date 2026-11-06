@@ -3,6 +3,7 @@ import { GLOBAL_OPTIONS } from "@/cli/command-catalog"
 import type { Parameter } from "@/cli/command-catalog"
 import { resolveCommand } from "@/cli/resolve-command"
 import { CliError } from "@/cli/cli-error"
+import { assertDiscordCallInput } from "@/cli/assert-discord-call-input"
 
 export function validateCommand(parsed: CliArguments): void {
   const resolved = resolveCommand(parsed.words)
@@ -48,6 +49,8 @@ export function validateCommand(parsed: CliArguments): void {
         parameter,
         parameter.variadic ? resolved.arguments.slice(index).join(" ") : resolved.arguments[index],
       )
+  if (definition.name === "discord call")
+    assertDiscordCallInput(resolved.arguments[0] ?? "", resolved.arguments[1] ?? "", parsed.flags)
 }
 
 function validateParameter(parameter: Parameter, value: string | true | undefined): void {
